@@ -58,6 +58,30 @@ def fabricate_log(directory, name, statuses, stems=STEMS):
     return path
 
 
+
+def heap_records():
+    """Synthetic controls shaped like the producer, never native evidence."""
+    result = []
+    for tid, (frames, rate, size, lossless) in rc.HEAP_TRACKS.items():
+        first = "process_first_use" if tid == "vorbis_44100" else "track_first_use_after_shared"
+        for phase in (first, "warm"):
+            result.append({"schema": "s02.codec-heap.v1", "id": tid, "phase": phase, "scope": rc.HEAP_SCOPE,
+                           "release": "net_zero", "frames": frames, "decoded_fnv1a64": lossless or "1234567890abcdef",
+                           "bridge_frames": (frames * 160 + 146) // 147 if rate == 44100 else frames,
+                           "bridge_fnv1a64": "1234567890abcdef", "peak_requested_bytes": size,
+                           "net_requested_bytes": 0, "allocations": 1, "reallocations": 0,
+                           "deallocations": 1, "bytes_requested": size, "elapsed_ms": 0})
+    return result
+
+
+def heap_log(directory, name, status="ok", records=None):
+    path = fabricate_log(directory, name, {(rc.HEAP_STEM, rc.HEAP_TEST): status}, stems={rc.HEAP_STEM})
+    with open(path, "a", encoding="utf-8") as f:
+        for record in heap_records() if records is None else records:
+            f.write(rc.HEAP_MARKER + json.dumps(record) + "\n")
+    return path
+
+
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         self.ledger = load(rc.os.path.join(HERE, "negotiated.json"))
@@ -105,6 +129,16 @@ class LedgerTests(unittest.TestCase):
 
 
 class CaseRegistryTests(unittest.TestCase):
+    def test_original_case_mapping_is_unchanged(self):
+        import hashlib
+        cases, problem = rc.load_cases()
+        self.assertEqual(problem, "")
+        self.assertEqual(len(cases), 61)
+        original = [(c["id"], c["stem"], c["tests"], c["rows"]) for c in cases if c["id"] != "S02-HEAP-PROBE"]
+        self.assertEqual(len(original), 60)
+        digest = hashlib.sha256(json.dumps(original, separators=(",", ":")).encode()).hexdigest()
+        self.assertEqual(digest, "fc2b88c928d431fc24e62ad7daf807cfdec803b78d333ab224f65aa21b28b743")
+
     def test_every_rust_test_is_registered_exactly_once(self):
         cases, problem = rc.load_cases()
         self.assertEqual(problem, "")
@@ -118,6 +152,7 @@ class CaseRegistryTests(unittest.TestCase):
                 os.makedirs(os.path.dirname(os.path.join(tmp, rel)), exist_ok=True)
                 shutil.copy(os.path.join(rc.REPO, rel), os.path.join(tmp, rel))
             extra = os.path.join(tmp, rc.RUST_TEST_FILES[0][0])
+            os.chmod(extra, os.stat(extra).st_mode | 0o200)
             with open(extra, "a", encoding="utf-8") as f:
                 f.write("\n#[test]\nfn s02_a_test_nobody_registered() {}\n")
             derived = rc.derive_rust_tests(tmp)
@@ -131,6 +166,17 @@ class CaseRegistryTests(unittest.TestCase):
         result = rc.meta_coverage(bad)
         self.assertEqual(result.status, "failed")
         self.assertIn("s02_no_such_test", result.detail)
+
+    def test_ignored_new_rust_test_is_not_silently_omitted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for rel, _stem in rc.RUST_TEST_FILES:
+                os.makedirs(os.path.dirname(os.path.join(tmp, rel)), exist_ok=True)
+                shutil.copy(os.path.join(rc.REPO, rel), os.path.join(tmp, rel))
+            extra = os.path.join(tmp, rc.RUST_TEST_FILES[-1][0])
+            os.chmod(extra, os.stat(extra).st_mode | 0o200)
+            with open(extra, "a", encoding="utf-8") as f:
+                f.write("\n#[test]\n#[ignore]\nfn unregistered_ignored_probe() {}\n")
+            self.assertIn((rc.HEAP_STEM, "unregistered_ignored_probe"), rc.derive_rust_tests(tmp))
 
     def test_the_macro_generated_bridge_tests_are_found(self):
         names = {n for _, n in rc.derive_rust_tests()}
@@ -148,6 +194,9 @@ class JudgeTests(unittest.TestCase):
     def judge(self, statuses, name="log.txt"):
         logs = rc.Logs()
         logs.add(fabricate_log(self.tmp.name, name, statuses))
+        status = statuses.get((rc.HEAP_STEM, rc.HEAP_TEST))
+        if status is not None:
+            logs.add(heap_log(self.tmp.name, "heap-" + name, status))
         return {c["id"]: rc.judge_rust_case(c, logs) for c in self.cases}, logs
 
     def test_green_control_every_case_passes_and_every_ledger_row_resolves(self):
@@ -196,16 +245,380 @@ class JudgeTests(unittest.TestCase):
         self.assertNotEqual(results["S02-BRG-RESET"].status, "passed")
 
     def test_host_counts_are_read_from_the_log_and_labelled(self):
-        _, logs = self.judge(self.all_ok, "counts.txt")
-        with open(logs.files[0][0], "a", encoding="utf-8") as f:
+        path = fabricate_log(self.tmp.name, "counts.txt", self.all_ok)
+        with open(path, "a", encoding="utf-8") as f:
             f.write("test x ... S02-STATS id=vorbis_44100 packets=40 blocks=30 frames=22080 bytes_in=21295 decode_errors=0 empty_packets=1 "
                     "max_block_frames=1024 max_out_capacity_samples=2048\n")
             f.write("S02-ERR id=vorbis_44100 max_abs_lsb=2 rms_lsb=0.7100\n")
+        logs = rc.Logs()
+        logs.add(path)
         counts = rc.host_counts(logs)
         self.assertIn("not CPU, heap or stack", counts["scope"])
         self.assertEqual(counts["tracks"]["vorbis_44100"]["max_block_frames"], 1024)
         self.assertEqual(counts["errors"]["vorbis_44100"]["max_abs_lsb"], 2)
         self.assertEqual(counts["worst"]["max_block_frames"]["track"], "vorbis_44100")
+
+
+
+class BoundedLogTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def path(self, name):
+        return os.path.join(self.tmp.name, name)
+
+    def test_real_regular_log_captured_with_original_path_and_digest(self):
+        import hashlib
+        path = fabricate_log(self.tmp.name, "regular.log", {("s02_decode", "small_test"): "ok"}, stems={"s02_decode"})
+        with open(path, "rb") as f:
+            original = f.read()
+        logs = rc.Logs()
+        logs.add(path)
+        self.assertEqual(logs.files, [(path, hashlib.sha256(original).hexdigest())])
+        self.assertEqual(logs.test_status("s02_decode", "small_test"), "ok")
+        self.assertEqual(logs.captured[logs.files[0]][0], original.decode("utf-8"))
+
+    def test_fifo_directory_oversize_and_invalid_utf8_are_refused(self):
+        fifo = self.path("fifo")
+        os.mkfifo(fifo)
+        oversized = self.path("large.log")
+        with open(oversized, "wb") as f:
+            f.truncate(rc.MAX_LOG_BYTES + 1)
+        invalid = self.path("invalid.log")
+        with open(invalid, "wb") as f:
+            f.write(b"\xff")
+        for path in (fifo, self.tmp.name, oversized, invalid):
+            with self.subTest(path=path):
+                with self.assertRaises((ValueError, OSError)):
+                    rc.Logs().add(path)
+        permitted = self.path("small.log")
+        with open(permitted, "wb") as f:
+            f.write(b"valid UTF-8\n")
+        self.assertEqual(rc.read_log(permitted)[1], "valid UTF-8\n")
+
+    def test_growing_past_the_limit_is_refused_even_after_small_stat(self):
+        oversized = self.path("grew.log")
+        with open(oversized, "wb") as f:
+            f.truncate(rc.MAX_LOG_BYTES + 1)
+        real = os.stat(oversized)
+        claimed = mock.Mock(st_mode=real.st_mode, st_size=1)
+        with mock.patch.object(rc.os, "fstat", return_value=claimed):
+            with self.assertRaisesRegex(ValueError, "grew beyond"):
+                rc.read_log(oversized)
+        with open(self.path("good.log"), "wb") as f:
+            f.write(b"good")
+        self.assertEqual(rc.read_log(self.path("good.log"))[0], b"good")
+
+    def test_changed_original_does_not_change_result_heap_or_counts(self):
+        path = heap_log(self.tmp.name, "heap-captured.log")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("S02-STATS id=vorbis_44100 packets=40 bytes_in=21295\n")
+        logs = rc.Logs()
+        logs.add(path)
+        prior = list(logs.files)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("changed original; not the captured log\n")
+        self.assertEqual(logs.files, prior)
+        self.assertEqual(logs.test_status(rc.HEAP_STEM, rc.HEAP_TEST), "ok")
+        self.assertEqual(rc.heap_evidence(logs)[0].status, "passed")
+        self.assertEqual(rc.host_counts(logs)["tracks"]["vorbis_44100"]["packets"], 40)
+        self.assertNotEqual(prior[0][1], rc.sha256_file(path))
+
+    def test_actual_aggregate_byte_limit_counts_duplicates_and_refuses_one_over(self):
+        full = self.path("eight-mib.log")
+        with open(full, "wb") as f:
+            f.write(b"#" * (rc.MAX_LOG_BYTES - 1) + b"\n")
+        one = self.path("one-byte.log")
+        with open(one, "wb") as f:
+            f.write(b"x")
+        logs = rc.Logs()
+        for _ in range(rc.MAX_JUDGED_BYTES // rc.MAX_LOG_BYTES):
+            logs.add(full)
+        self.assertEqual(logs.judged_bytes, rc.MAX_JUDGED_BYTES)
+        self.assertEqual(logs.judged_inputs, 4)
+        self.assertEqual(len(logs.files), 1)
+        self.assertEqual(len(logs.repeated_inputs), 3)
+        self.assertEqual(len(logs.private_snapshot_directories), 1)
+        with self.assertRaisesRegex(ValueError, "aggregate"):
+            logs.add(one)
+        self.assertEqual(logs.judged_bytes, rc.MAX_JUDGED_BYTES)
+        self.assertEqual(len(logs.files), 1)
+        self.assertEqual(len(logs.private_snapshot_directories), 1)
+
+    def test_actual_count_limit_allows_64_repeated_inputs_and_refuses_65th(self):
+        path = fabricate_log(self.tmp.name, "bounded-count.log", {("s02_decode", "small_test"): "ok"}, stems={"s02_decode"})
+        logs = rc.Logs()
+        for _ in range(rc.MAX_JUDGED_INPUTS):
+            logs.add(path)
+        self.assertEqual(logs.judged_inputs, 64)
+        self.assertEqual(logs.judged_bytes, os.stat(path).st_size * 64)
+        self.assertEqual(len(logs.repeated_inputs), 63)
+        self.assertEqual(logs.test_status("s02_decode", "small_test"), "ok")
+        with self.assertRaisesRegex(ValueError, "count limit"):
+            logs.add(path)
+        self.assertEqual(logs.judged_inputs, 64)
+        self.assertEqual(len(logs.private_snapshot_directories), 1)
+
+    def test_excess_cli_input_fails_without_judging_partial_logs(self):
+        import io
+        path = fabricate_log(self.tmp.name, "cli.log", {("s02_decode", "small_test"): "ok"}, stems={"s02_decode"})
+        with mock.patch.object(rc, "run") as run, mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(rc.main(["--judge"] + [path] * 65), 2)
+            run.assert_not_called()
+            self.assertIn("count limit", err.getvalue())
+            self.assertIn("private snapshot retained:", err.getvalue())
+
+    def test_actual_two_logs_preserve_codec_and_heap_attribution(self):
+        codec = fabricate_log(self.tmp.name, "codec.log", {("s02_decode", "small_test"): "ok"}, stems={"s02_decode"})
+        probe = heap_log(self.tmp.name, "heap.log")
+        logs = rc.Logs()
+        logs.add(codec)
+        logs.add(probe)
+        self.assertEqual(logs.judged_inputs, 2)
+        self.assertEqual(logs.judged_bytes, os.stat(codec).st_size + os.stat(probe).st_size)
+        self.assertEqual(logs.test_status("s02_decode", "small_test"), "ok")
+        self.assertEqual(rc.heap_evidence(logs)[0].status, "passed")
+        self.assertEqual(len(logs.private_snapshot_directories), 2)
+        for directory in logs.private_snapshot_directories:
+            self.assertEqual(os.stat(directory).st_mode & 0o777, 0o700)
+
+    def test_aggregate_growth_after_stat_is_refused(self):
+        path = self.path("growing-aggregate.log")
+        with open(path, "wb") as f:
+            f.write(b"ab")
+        info = os.stat(path)
+        with mock.patch.object(rc.os, "fstat", return_value=mock.Mock(st_mode=info.st_mode, st_size=1)):
+            with self.assertRaisesRegex(ValueError, "aggregate"):
+                rc.read_log(path, 1)
+        self.assertEqual(rc.read_log(path, 2)[0], b"ab")
+
+    def test_receipt_names_retained_private_snapshot_directories(self):
+        path = fabricate_log(self.tmp.name, "recorded.log", {("s02_decode", "small_test"): "ok"}, stems={"s02_decode"})
+        logs = rc.Logs()
+        logs.add(path)
+        receipt_path = rc.write_receipt(self.tmp.name, "full", [rc.Result("control", "passed")], {}, logs, run_id="snapshot-control")
+        receipt = load(receipt_path)
+        self.assertEqual(receipt["private_snapshot_directories"], logs.private_snapshot_directories)
+        self.assertEqual(receipt["judged_logs"][0]["path"], "recorded.log")
+        self.assertEqual(receipt["judged_logs"][0]["sha256"], logs.files[0][1])
+
+    def test_same_path_different_capture_retains_d01_conflict_and_repeats(self):
+        path = fabricate_log(self.tmp.name, "versions.log", {("s02_decode", "same_test"): "ok"}, stems={"s02_decode"})
+        logs = rc.Logs()
+        logs.add(path)
+        logs.add(path)
+        self.assertEqual(logs.repeated_inputs, ["versions.log"])
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("     Running tests/s02_decode.rs (target/debug/deps/s02_decode-0123456789abcdef)\n"
+                    "running 1 tests\ntest same_test ... FAILED\n"
+                    "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n")
+        logs.add(path)
+        self.assertEqual(len(logs.files), 2)
+        self.assertNotEqual(logs.files[0][1], logs.files[1][1])
+        self.assertEqual(logs.test_status("s02_decode", "same_test"), "CONFLICT")
+        self.assertIn("... ok", logs.captured[logs.files[0]][0])
+        self.assertIn("... FAILED", logs.captured[logs.files[1]][0])
+
+
+class ReplayFidelityTests(unittest.TestCase):
+    """Exercise the real existing CLI over retained snapshots, not an equivalent-input recipe."""
+
+    def setUp(self):
+        import subprocess  # noqa: F401
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = os.path.join(self.tmp.name, "private runtime")
+        self.root = root
+        os.makedirs(os.path.join(root, "tests"))
+        shutil.copytree(os.path.join(rc.REPO, "tests", "s02"), os.path.join(root, "tests", "s02"),
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        os.symlink(os.path.join(rc.REPO, "tests", "d01"), os.path.join(root, "tests", "d01"))
+        os.symlink(os.path.join(rc.REPO, "crates"), os.path.join(root, "crates"))
+        os.symlink(os.path.join(rc.REPO, "docs"), os.path.join(root, "docs"))
+        os.makedirs(os.path.join(root, "scripts", "e2e"))
+        os.symlink(os.path.join(rc.REPO, "scripts", "test"), os.path.join(root, "scripts", "test"))
+        self.runner = os.path.join(root, "scripts", "e2e", "s02")
+        shutil.copy(os.path.join(rc.REPO, "scripts", "e2e", "s02"), self.runner)
+        for name in ("Cargo.lock", "rust-toolchain.toml"):
+            original = os.path.join(rc.REPO, name)
+            if os.path.isfile(original):
+                os.symlink(original, os.path.join(root, name))
+        for folder in ("codec", "probe"):
+            os.makedirs(os.path.join(self.tmp.name, folder))
+        cases, problem = rc.load_cases()
+        self.assertEqual(problem, "")
+        statuses = {(c["stem"], test): "ok" for c in cases for test in c["tests"]}
+        self.codec = fabricate_log(os.path.join(self.tmp.name, "codec"), "same name.log", statuses)
+        self.probe = heap_log(os.path.join(self.tmp.name, "probe"), "same name.log")
+
+    def actual_run(self, command, directory):
+        import subprocess
+        os.mkdir(directory)
+        done = subprocess.run(command + ["--receipts", directory], cwd=self.tmp.name,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+        receipts = [x for x in os.listdir(directory) if x.startswith("s02-") and x.endswith(".json")]
+        self.assertEqual(len(receipts), 1, done.stderr + done.stdout)
+        return done, load(os.path.join(directory, receipts[0]))
+
+    def test_replay_actual_two_logs_after_mutation_with_same_basename(self):
+        import shlex
+        first, receipt = self.actual_run([self.runner, "--tier", "smoke", "--judge", self.codec, self.probe],
+                                         os.path.join(self.tmp.name, "first receipt"))
+        self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
+        case = next(r for r in receipt["results"] if r["id"] == "S02-HEAP-PROBE")
+        self.assertEqual(case["status"], "passed")
+        attempts = receipt["judged_attempts"]
+        self.assertEqual([a["original_path"] for a in attempts], [self.codec, self.probe])
+        self.assertEqual([a["duplicate"] for a in attempts], [False, False])
+        self.assertNotEqual(attempts[0]["snapshot_path"], attempts[1]["snapshot_path"])
+        self.assertEqual(os.path.basename(attempts[0]["snapshot_path"]), "same name.log")
+        for attempt in attempts:
+            self.assertTrue(os.path.isabs(attempt["snapshot_path"]))
+            self.assertEqual(rc.sha256_file(attempt["snapshot_path"]), attempt["sha256"])
+        with open(self.codec, "w", encoding="utf-8") as f:
+            f.write("changed codec original\n")
+        with open(self.probe, "w", encoding="utf-8") as f:
+            f.write("changed probe original\n")
+        replay_args = shlex.split(receipt["replay"])
+        self.assertEqual(os.path.realpath(replay_args[0]), os.path.realpath(self.runner))
+        self.assertEqual(replay_args[replay_args.index("--judge") + 1:], [a["snapshot_path"] for a in attempts])
+        second, replayed = self.actual_run(replay_args, os.path.join(self.tmp.name, "second receipt"))
+        self.assertEqual(second.returncode, first.returncode, second.stderr + second.stdout)
+        self.assertEqual(replayed["counts"], receipt["counts"])
+        self.assertEqual(replayed["results"], receipt["results"])
+        self.assertEqual(replayed["host_heap"], receipt["host_heap"])
+
+    def test_replay_preserves_duplicate_refusal_and_order(self):
+        import shlex
+        first, receipt = self.actual_run([self.runner, "--tier", "smoke", "--judge", self.codec, self.probe, self.codec],
+                                         os.path.join(self.tmp.name, "duplicate first"))
+        self.assertEqual(first.returncode, 3, first.stderr + first.stdout)
+        original = next(r for r in receipt["results"] if r["id"] == "S02-HEAP-PROBE")
+        self.assertEqual(original["status"], "blocked")
+        attempts = receipt["judged_attempts"]
+        self.assertEqual([a["original_path"] for a in attempts], [self.codec, self.probe, self.codec])
+        self.assertEqual([a["duplicate"] for a in attempts], [False, False, True])
+        self.assertEqual(attempts[0]["snapshot_path"], attempts[2]["snapshot_path"])
+        args = shlex.split(receipt["replay"])
+        self.assertEqual(args[args.index("--judge") + 1:], [a["snapshot_path"] for a in attempts])
+        second, replayed = self.actual_run(args, os.path.join(self.tmp.name, "duplicate second"))
+        self.assertEqual(second.returncode, 3, second.stderr + second.stdout)
+        self.assertEqual(replayed["counts"], receipt["counts"])
+        self.assertEqual(replayed["results"], receipt["results"])
+        self.assertEqual([a["duplicate"] for a in replayed["judged_attempts"]], [False, False, True])
+
+
+class HeapEvidenceTests(unittest.TestCase):
+    """Paired synthetic controls for the actual frozen record schema and D01 attribution."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.counter = 0
+
+    def evidence(self, records, status="ok"):
+        self.counter += 1
+        path = heap_log(self.tmp.name, "heap%d.txt" % self.counter, status, records)
+        logs = rc.Logs()
+        logs.add(path)
+        return rc.heap_evidence(logs)
+
+    def test_permitted_first_and_warm_records_with_unknown_first_net(self):
+        records = heap_records()
+        records[0]["net_requested_bytes"] = 37
+        records[0]["release"] = "unknown_nonzero_net"
+        result, evidence = self.evidence(records)
+        self.assertEqual(result.status, "passed", result.detail)
+        self.assertEqual(len(evidence["records"]), 18)
+        self.assertIn("not streaming steady-state, RSS or board admission", evidence["scope"])
+
+    def test_missing_duplicate_unknown_and_wrong_phase_are_not_passes(self):
+        original = heap_records()
+        variants = [original[:-1], original + [copy.deepcopy(original[0])]]
+        for field, value in (("id", "unknown"), ("phase", "process_first_use")):
+            bad = copy.deepcopy(original)
+            bad[2][field] = value
+            variants.append(bad)
+        for bad in variants:
+            self.assertNotEqual(self.evidence(bad)[0].status, "passed")
+        self.assertEqual(self.evidence(original)[0].status, "passed")
+
+    def test_bad_fields_and_wrong_values_fail_with_paired_good_record(self):
+        original = heap_records()
+        variants = []
+        for field, value in (("schema", "wrong"), ("scope", "board"), ("frames", 0),
+                             ("bridge_frames", 0), ("allocations", 0), ("peak_requested_bytes", 0),
+                             ("bytes_requested", 0), ("decoded_fnv1a64", "oops"),
+                             ("release", "net_zero"), ("net_requested_bytes", True)):
+            bad = copy.deepcopy(original)
+            bad[1][field] = value
+            if field == "release":
+                bad[1]["net_requested_bytes"] = 1
+            variants.append(bad)
+        for bad in variants:
+            self.assertEqual(self.evidence(bad)[0].status, "failed")
+        bad = copy.deepcopy(original)
+        bad[1]["bridge_fnv1a64"] = "0000000000000000"
+        self.assertEqual(self.evidence(bad)[0].status, "failed")
+        self.assertEqual(self.evidence(original)[0].status, "passed")
+
+    def test_lossless_digest_and_output_pair_are_checked(self):
+        original = heap_records()
+        bad = copy.deepcopy(original)
+        next(x for x in bad if x["id"] == "alac_44100_16")["decoded_fnv1a64"] = "0000000000000000"
+        self.assertEqual(self.evidence(bad)[0].status, "failed")
+        self.assertEqual(self.evidence(original)[0].status, "passed")
+
+    def test_failed_ignored_and_missing_native_test_never_qualify(self):
+        case = {"id": "S02-HEAP-PROBE", "group": "heap", "stem": rc.HEAP_STEM, "tests": [rc.HEAP_TEST]}
+        self.assertEqual(rc.judge_rust_case(case, None).status, "blocked")
+        for status, wanted in (("FAILED", "failed"), ("ignored", "blocked"), ("ok", "passed")):
+            self.counter += 1
+            path = heap_log(self.tmp.name, "test%d.txt" % self.counter, status)
+            logs = rc.Logs()
+            logs.add(path)
+            self.assertEqual(rc.judge_rust_case(case, logs).status, wanted)
+
+    def test_repeated_input_and_ambiguous_probe_are_blocked(self):
+        self.counter += 1
+        path = heap_log(self.tmp.name, "repeat%d.txt" % self.counter)
+        logs = rc.Logs()
+        logs.add(path)
+        self.assertEqual(rc.heap_evidence(logs)[0].status, "passed")
+        logs.add(path)
+        self.assertEqual(rc.heap_evidence(logs)[0].status, "blocked")
+        logs = rc.Logs()
+        logs.add(path)
+        case = {"id": "S02-HEAP-PROBE", "group": "heap", "stem": rc.HEAP_STEM, "tests": [rc.HEAP_TEST]}
+        logs.conflicting_tests.add((rc.HEAP_STEM, rc.HEAP_TEST))
+        self.assertEqual(rc.judge_rust_case(case, logs).status, "blocked")
+        logs.conflicting_tests.clear()
+        logs.tests = {(None, rc.HEAP_TEST): "ok"}
+        logs.ambiguous_names.add(rc.HEAP_TEST)
+        self.assertEqual(rc.judge_rust_case(case, logs).status, "blocked")
+
+    def test_actual_q00_critical_loss_prevents_qualification(self):
+        diag = rc.case_log.load(rc.REPO)
+        result = rc.Result("S02-HEAP-PROBE", "passed", "synthetic control", "heap")
+        for capacity, complete in ((None, True), (100, False)):
+            target = diag.FaultableSink(capacity_bytes=capacity)
+            log = rc.case_log.CaseLog.open(rc.REPO, "heap-control", "full", target=target)
+            log.record(result.case_id, result.group, result.status, result.detail)
+            evidence = log.finish(rc.summarize([result]))
+            self.assertEqual(evidence.complete, complete, evidence.reasons)
+            self.assertEqual(rc.final_exit([result], evidence), 0 if complete else 1)
+
+    def test_malformed_and_duplicate_json_keys_fail(self):
+        for raw in ('{', '{"id":"x","id":"y"}'):
+            self.counter += 1
+            path = heap_log(self.tmp.name, "bad%d.txt" % self.counter)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(rc.HEAP_MARKER + raw + "\n")
+            logs = rc.Logs()
+            logs.add(path)
+            self.assertEqual(rc.heap_evidence(logs)[0].status, "failed")
+        self.assertEqual(self.evidence(heap_records())[0].status, "passed")
 
 
 def read_bytes(path):

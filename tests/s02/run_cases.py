@@ -46,6 +46,8 @@ import re
 import secrets
 import shlex
 import subprocess
+import stat
+import tempfile
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -78,11 +80,13 @@ JUDGED_ARTIFACTS = (
     "crates/franken-codec/Cargo.toml", "crates/franken-codec/src/lib.rs", "crates/franken-codec/src/decode.rs",
     "crates/franken-codec/src/rate_bridge.rs", "crates/franken-codec/src/rate_table.rs",
     "crates/franken-codec/tests/s02_decode.rs", "crates/franken-codec/tests/s02_bridge.rs", "crates/franken-codec/tests/s02_admission.rs",
+    "crates/franken-alloc-probe/Cargo.toml", "crates/franken-alloc-probe/src/lib.rs", "crates/franken-alloc-probe/tests/s02_codec_heap.rs",
     "crates/franken-codec/src/admission.rs", "tests/s02/admission.json", "tests/s02/test_admission.py",
     "crates/franken-codec/tests/vectors/s02_vectors.json", "crates/franken-codec/tests/vectors/s02_bridge_vectors.json",
 )
 RUST_TEST_FILES = (("crates/franken-codec/tests/s02_decode.rs", "s02_decode"), ("crates/franken-codec/tests/s02_bridge.rs", "s02_bridge"),
-                   ("crates/franken-codec/tests/s02_admission.rs", "s02_admission"))
+                   ("crates/franken-codec/tests/s02_admission.rs", "s02_admission"),
+                   ("crates/franken-alloc-probe/tests/s02_codec_heap.rs", "s02_codec_heap"))
 TEST_FN = re.compile(r"#\[test\]\s*((?:#\[[^\]]*\]\s*)*)fn\s+([A-Za-z0-9_]+)")
 MACRO_ENTRY = re.compile(r"^\s+(s02_[A-Za-z0-9_]+)\s*=>\s*\"[^\"]+\"\s*,?\s*$", re.M)
 STATS_LINE = re.compile(r"S02-STATS id=(\S+)((?: [a-z_]+=\d+)+)")
@@ -108,7 +112,72 @@ def _load_d01_parser() -> Any:
 case_log = _load("s02_case_log", os.path.join(HERE, "case_log.py"))
 ledger_check = _load("s02_ledger_check", os.path.join(HERE, "ledger_check.py"))
 d01 = _load_d01_parser()
-Logs = d01.Logs
+MAX_LOG_BYTES = 8 * 1024 * 1024
+MAX_JUDGED_BYTES = 32 * 1024 * 1024
+MAX_JUDGED_INPUTS = 64
+
+
+def read_log(path: str, remaining_bytes: int = MAX_LOG_BYTES) -> Tuple[bytes, str]:
+    """Capture one bounded regular input without blocking on a FIFO or device."""
+    limit = min(MAX_LOG_BYTES, remaining_bytes)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_LOG_BYTES:
+            raise ValueError("central log must be a regular file no larger than 8 MiB")
+        if info.st_size > limit:
+            raise ValueError("aggregate judged-log byte limit exceeded")
+        data = source.read(limit + 1)
+    if len(data) > limit:
+        if limit == MAX_LOG_BYTES:
+            raise ValueError("central log grew beyond 8 MiB")
+        raise ValueError("aggregate judged-log byte limit exceeded")
+    return data, data.decode("utf-8", errors="strict")
+
+
+class Logs(d01.Logs):
+    """D01 attribution and all S02 consumers share captured input bytes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.captured: Dict[Tuple[str, str], Tuple[str, Any]] = {}
+        self.judged_inputs = 0
+        self.judged_bytes = 0
+        self.private_snapshot_directories: List[str] = []
+        self.judged_attempts: List[dict] = []
+        self._snapshot_by_digest: Dict[str, str] = {}
+
+    def add(self, path: str) -> None:
+        if self.judged_inputs >= MAX_JUDGED_INPUTS:
+            raise ValueError("judged-log input count limit exceeded")
+        self.judged_inputs += 1
+        path = os.fspath(path)
+        data, text = read_log(path, MAX_JUDGED_BYTES - self.judged_bytes)
+        self.judged_bytes += len(data)  # Duplicates consume intake budget too.
+        digest = hashlib.sha256(data).hexdigest()
+        if digest in self._digests:
+            self.repeated_inputs.append(os.path.basename(path))
+            self.judged_attempts.append({"original_path": os.path.abspath(path), "sha256": digest,
+                                         "snapshot_path": self._snapshot_by_digest[digest], "duplicate": True})
+            return
+        # Retain this mode-0700 private snapshot: the project forbids deleting even
+        # temporary files. D01 sees exactly these captured bytes, never the original.
+        directory = tempfile.mkdtemp(prefix="s02-log-snapshot-")
+        self.private_snapshot_directories.append(directory)
+        snapshot = os.path.join(directory, os.path.basename(path) or "central.log")
+        fd = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as target:
+            target.write(data)
+        per_file = d01.Logs()
+        per_file.add(snapshot)
+        super().add(snapshot)
+        if not self.files or self.files[-1][1] != digest or per_file.files[-1][1] != digest:
+            raise ValueError("private snapshot digest mismatch")
+        self.files[-1] = (path, digest)
+        self.captured[(path, digest)] = (text, per_file)
+        self._snapshot_by_digest[digest] = os.path.abspath(snapshot)
+        self.judged_attempts.append({"original_path": os.path.abspath(path), "sha256": digest,
+                                     "snapshot_path": self._snapshot_by_digest[digest], "duplicate": False})
 
 
 class Result:
@@ -248,8 +317,7 @@ def derive_rust_tests(repo: str = REPO) -> List[Tuple[str, str]]:
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
         for attrs, name in TEST_FN.findall(text):
-            if "ignore" not in attrs:
-                found.append((stem, name))
+            found.append((stem, name))
         found.extend((stem, name) for name in MACRO_ENTRY.findall(text))
     return found
 
@@ -314,19 +382,134 @@ def judge_rust_case(case: dict, logs: Optional[Any]) -> Result:
         return Result(cid, "failed", "; ".join(problems), group)
     if blocked:
         return Result(cid, "blocked", "; ".join(blocked), group)
+    if cid == "S02-HEAP-PROBE":
+        result, _ = heap_evidence(logs)
+        return result
     return Result(cid, "passed", "%d Rust test(s) ok" % len(case["tests"]), group)
+
+
+
+# These are the nine existing stereo inputs in the frozen producer, including its exact
+# expected decoded frames, input rate and encoded byte count. Lossy output hashes are
+# observations, not golden values: the native test applies the existing error tolerance.
+HEAP_TRACKS = {
+    "vorbis_44100": (22080, 44100, 21592, None),
+    "vorbis_48000": (24000, 48000, 23205, None),
+    "mp3_44100": (22050, 44100, 9239, None),
+    "mp3_48000": (24000, 48000, 8877, None),
+    "alac_44100_16": (22050, 44100, 58875, "0ffca3cb285a2d14"),
+    "alac_48000_24": (24000, 48000, 112328, "9ae44ac037d91f8c"),
+    "aac_lc_44100": (24576, 44100, 7315, None),
+    "aac_lc_48000": (26624, 48000, 7511, None),
+    "pcm_s16be_44100": (22050, 44100, 88200, "6102078e21639f83"),
+}
+HEAP_TEST = "s02_codec_internal_heap_tracks_owned_inputs_and_warm_release"
+HEAP_STEM = "s02_codec_heap"
+HEAP_FIELDS = {"schema", "id", "phase", "scope", "release", "frames", "decoded_fnv1a64",
+               "bridge_frames", "bridge_fnv1a64", "peak_requested_bytes", "net_requested_bytes",
+               "allocations", "reallocations", "deallocations", "bytes_requested", "elapsed_ms"}
+HEAP_SCOPE = "calling_thread_owned_input_decode_seek_rate"
+HEAP_MARKER = "S02-HEAP "
+
+
+def _unique_object(pairs: List[Tuple[str, Any]]) -> dict:
+    obj = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError("duplicate JSON key")
+        obj[key] = value
+    return obj
+
+
+def heap_evidence(logs: Optional[Any]) -> Tuple[Result, dict]:
+    """Consume exactly one dedicated, attributed native test log and its 18 bounded records."""
+    empty = {"scope": "host calling-thread requested bytes including full output and seek overlap; not streaming steady-state, RSS or board admission", "records": []}
+    def verdict(status: str, detail: str) -> Tuple[Result, dict]:
+        return Result("S02-HEAP-PROBE", status, detail, "heap"), empty
+    if logs is None:
+        return verdict("blocked", "no heap probe log")
+    if logs.repeated_inputs:
+        return verdict("blocked", "repeated judged input cannot establish unique heap evidence")
+    records: Dict[Tuple[str, str], dict] = {}
+    containing = []
+    probe_reports = 0
+    for path, digest in logs.files:
+        text, probe_log = logs.captured[(path, digest)]
+        headers, heap_lines = [], []
+        for line in text.splitlines():
+            if re.match(r"^\s*test " + re.escape(HEAP_TEST) + r"\s+\.\.\.", line):
+                probe_reports += 1
+            if (header := d01.RUNNING.match(line)):
+                headers.append(header.group(1))
+            if "S02-HEAP" in line:
+                if len(line) > 2048 or HEAP_MARKER not in line or len(heap_lines) >= 18:
+                    return verdict("failed", "malformed, oversize or excess heap record")
+                heap_lines.append(line)
+        if not heap_lines:
+            continue
+        containing.append(path)
+        # D01 attributes this single captured binary without reopening the input.
+        if headers != [HEAP_STEM] or probe_log.unattributed_logs or probe_log.tests.get((HEAP_STEM, HEAP_TEST)) != "ok":
+            return verdict("blocked", "heap records lack a dedicated D01-attributed passing probe binary")
+        for line in heap_lines:
+            if len(line) > 2048 or line.count(HEAP_MARKER) != 1:
+                return verdict("failed", "oversize or multiple heap records on one line")
+            try:
+                record = json.loads(line.split(HEAP_MARKER, 1)[1], object_pairs_hook=_unique_object)
+            except (ValueError, TypeError):
+                return verdict("failed", "malformed heap record")
+            if not isinstance(record, dict) or set(record) != HEAP_FIELDS:
+                return verdict("failed", "unexpected heap record fields")
+            tid, phase = record["id"], record["phase"]
+            if not isinstance(tid, str) or tid not in HEAP_TRACKS or not isinstance(phase, str):
+                return verdict("failed", "unknown heap fixture or phase")
+            first = "process_first_use" if tid == "vorbis_44100" else "track_first_use_after_shared"
+            if phase not in (first, "warm"):
+                return verdict("failed", "incorrect first-use phase")
+            key = (tid, phase)
+            if key in records or len(records) >= 18:
+                return verdict("failed", "duplicate or excess heap observation")
+            frames, rate, size, lossless = HEAP_TRACKS[tid]
+            nums = ("frames", "bridge_frames", "peak_requested_bytes", "allocations", "reallocations", "deallocations", "bytes_requested", "elapsed_ms")
+            if any(type(record[k]) is not int or not 0 <= record[k] < 2**128 for k in nums):
+                return verdict("failed", "invalid numeric heap field")
+            net = record["net_requested_bytes"]
+            if type(net) is not int or not -(2**63) <= net < 2**63:
+                return verdict("failed", "invalid net requested bytes")
+            if (record["schema"] != "s02.codec-heap.v1" or record["scope"] != HEAP_SCOPE or
+                    record["release"] != ("net_zero" if net == 0 else "unknown_nonzero_net") or
+                    (phase == "warm" and net != 0)):
+                return verdict("failed", "invalid scope, release or warm net")
+            if (record["frames"] != frames or record["bridge_frames"] != ((frames * 160 + 146) // 147 if rate == 44100 else frames) or
+                    record["peak_requested_bytes"] < size or record["bytes_requested"] < size or record["allocations"] == 0):
+                return verdict("failed", "fixture frame or allocator invariant failed")
+            for field in ("decoded_fnv1a64", "bridge_fnv1a64"):
+                if not isinstance(record[field], str) or not re.fullmatch(r"[0-9a-f]{16}", record[field]):
+                    return verdict("failed", "invalid output digest")
+            if lossless is not None and record["decoded_fnv1a64"] != lossless:
+                return verdict("failed", "lossless source digest mismatch")
+            records[key] = record
+    if probe_reports != 1:
+        return verdict("blocked", "expected exactly one probe test result")
+    if len(containing) != 1 or len(records) != 18:
+        return verdict("blocked", "expected one attributed probe log with all 18 observations")
+    for tid in HEAP_TRACKS:
+        first = "process_first_use" if tid == "vorbis_44100" else "track_first_use_after_shared"
+        a, b = records.get((tid, first)), records.get((tid, "warm"))
+        if a is None or b is None:
+            return verdict("blocked", "missing fixture phase")
+        if any(a[k] != b[k] for k in ("frames", "decoded_fnv1a64", "bridge_frames", "bridge_fnv1a64")):
+            return verdict("failed", "warm output differs from first use")
+    evidence = {"scope": empty["scope"], "records": [records[k] for k in sorted(records)]}
+    return Result("S02-HEAP-PROBE", "passed", "18 attributed host calling-thread heap observations", "heap"), evidence
 
 
 def host_counts(logs: Optional[Any]) -> Dict[str, Any]:
     """The S02-STATS / S02-ERR lines of the judged logs. Counts and errors of the host run, not a measurement of any device."""
     counts: Dict[str, Dict[str, int]] = {}
     errors: Dict[str, Dict[str, float]] = {}
-    for path, _digest in (logs.files if logs else []):
-        try:
-            with open(path, encoding="utf-8", errors="replace") as handle:
-                text = handle.read()
-        except OSError:
-            continue
+    for path, digest in (logs.files if logs else []):
+        text, _per_file = logs.captured[(path, digest)]
         for track, rest in STATS_LINE.findall(text):
             counts[track] = {k: int(v) for k, v in (kv.split("=") for kv in rest.split())}
         for track, peak, rms in ERR_LINE.findall(text):
@@ -374,7 +557,7 @@ def run(tier: str, logs: Optional[Any]) -> Tuple[List[Result], dict]:
         results.append(fn())
     for case in cases:
         results.append(judge_rust_case(case, logs))
-    meta = {"cases_json_sha256": sha256_file(CASES), "host_counts": host_counts(logs), "ledger": ledger_table(cases, results)}
+    meta = {"cases_json_sha256": sha256_file(CASES), "host_counts": host_counts(logs), "host_heap": heap_evidence(logs)[1], "ledger": ledger_table(cases, results)}
     return results, meta
 
 
@@ -408,8 +591,9 @@ def versions() -> Dict[str, Any]:
 
 
 def replay_command(tier: str, logs: Optional[Any]) -> str:
-    names = [os.path.basename(path) for path, _ in logs.files] if logs else []
-    return f"scripts/e2e/s02 --tier {tier}" + (" --judge " + " ".join(shlex.quote(n) for n in names) if names else "")
+    names = [attempt["snapshot_path"] for attempt in logs.judged_attempts] if logs else []
+    runner = shlex.quote(os.path.join(REPO, "scripts", "e2e", "s02"))
+    return f"{runner} --tier {tier}" + (" --judge " + " ".join(shlex.quote(n) for n in names) if names else "")
 
 
 def final_exit(results: List[Result], evidence: Optional[Any]) -> int:
@@ -468,7 +652,9 @@ def write_receipt(directory: str, tier: str, results: List[Result], meta: dict, 
         "finished_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "counts": summarize(results), "exit_code": final_exit(results, evidence),
         "judged_logs": [{"path": os.path.basename(p), "sha256": h} for p, h in (logs.files if logs else [])],
+        "judged_attempts": list(logs.judged_attempts) if logs else [],
         "repeated_inputs_skipped": list(logs.repeated_inputs) if logs else [],
+        "private_snapshot_directories": list(logs.private_snapshot_directories) if logs else [],
         "identical_repeated_observations": logs.identical_repeats if logs else 0,
         "unattributed_logs": list(logs.unattributed_logs) if logs else [],
         "replay": replay_command(tier, logs),
@@ -498,10 +684,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.judge:
         logs = Logs()
         for path in args.judge:
-            if not os.path.isfile(path):
-                print(f"error: log not found: {path}", file=sys.stderr)
+            try:
+                logs.add(path)
+            except (OSError, ValueError) as err:
+                print(f"error: cannot capture log {path}: {err}", file=sys.stderr)
+                for directory in logs.private_snapshot_directories:
+                    print(f"private snapshot retained: {directory}", file=sys.stderr)
                 return 2
-            logs.add(path)
+        for directory in logs.private_snapshot_directories:
+            print(f"private snapshot retained: {directory}", file=sys.stderr)
     results, meta = run(args.tier, logs)
     if args.list:
         for r in results:

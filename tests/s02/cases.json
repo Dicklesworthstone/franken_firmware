@@ -661,6 +661,16 @@
    ],
    "rows": [],
    "description": "Removing Vorbis from the input changes no other verdict (the requirement set is not coupled)."
+  },
+  {
+   "id": "S02-HEAP-PROBE",
+   "group": "heap",
+   "stem": "s02_codec_heap",
+   "tests": [
+    "s02_codec_internal_heap_tracks_owned_inputs_and_warm_release"
+   ],
+   "rows": [],
+   "description": "Calling-thread requested-byte observations for the nine existing stereo fixtures, first-use and warm; not RSS or board admission."
   }
  ]
 }

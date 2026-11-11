@@ -16,6 +16,7 @@ description = "Test-only counting global allocator proving render paths do not a
 unsafe_code = "deny"
 
 [dev-dependencies]
+franken-codec = { path = "../franken-codec" }
 franken-clock.workspace = true
 franken-board-profile.workspace = true
 franken-dsp.workspace = true
