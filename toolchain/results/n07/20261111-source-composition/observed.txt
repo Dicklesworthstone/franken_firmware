@@ -1,0 +1,201 @@
+Selected actual output. Site/worker paths omitted; complete private capture hashes and source roots are in source-inputs.json.
+
+=== complete_stream_speaker native 30104858719683211 ===
+    Finished `test` profile [unoptimized] target(s) in 1m 10s
+running 496 tests
+test source_media::tests::s02_all_cooldown_does_not_advance_real_decoder_then_recovers ... ok
+test source_media::tests::s02_actual_policy_group_epoch_advance_fences_old_queued_and_pending ... ok
+test source_media::tests::s02_arbiter_replacement_fences_pending_and_queued_then_new_owner_continues ... ok
+test source_media::tests::s02_buffered_pcm_retains_decode_snapshot_across_member_aba ... ok
+test source_media::tests::s02_equal_epoch_foreign_policy_group_cannot_touch_selection ... ok
+test source_media::tests::s02_isolated_no_peer_does_not_decode_and_expired_pending_skips_once ... ok
+test source_media::tests::s02_isolated_two_peer_slow_peer_does_not_stop_healthy_pcm ... ok
+test source_media::tests::s02_lifetime_bound_exceeded_fences_queued_media_before_pump ... ok
+test source_media::tests::s02_mono_is_duplicated_to_both_wire_channels ... ok
+test source_media::tests::s02_nonzero_anchor_uses_absolute_frame_rounding ... ok
+test source_media::tests::s02_older_same_group_view_leaves_pending_and_queue_intact ... ok
+test source_media::tests::s02_policy_group_identity_is_bounded_before_reader_setup ... ok
+test source_media::tests::s02_postdecode_fresh_time_expires_once_without_publication_or_reads ... ok
+test source_media::tests::s02_postdecode_live_clock_publishes_real_pcm_through_n04 ... ok
+test source_media::tests::s02_predecode_aggregate_byte_headroom_preserves_real_decoder_until_drain ... ok
+test source_media::tests::s02_predecode_undersized_mtu_leaves_real_reader_and_decoder_untouched ... ok
+test source_media::tests::s02_format_change_drains_old_tail_before_new_epoch ... ok
+test source_media::tests::s02_real_fixture_retry_then_authenticated_wire_to_n04_pcm ... ok
+test source_media::tests::s02_same_policy_identity_cannot_claim_a_second_source_selection ... ok
+test source_media::tests::s02_same_snapshot_allows_unchanged_membership_continuation ... ok
+test source_media::tests::s02_seek_discards_pending_and_starts_fresh_epoch ... ok
+test source_media::tests::s02_source_cannot_pump_an_unrelated_carrier ... ok
+test source_media::tests::s02_stale_or_foreign_source_cannot_fence_current_carrier_epoch ... ok
+test source_media::tests::s02_strict_publication_also_uses_fresh_postdecode_clock ... ok
+test source_media::tests::s02_unbound_source_cannot_pump_queued_protected_media ... ok
+test source_media::tests::s02_rate_tail_once_and_partial_refusal_preserve_data ... ok
+test source_media::tests::s02_chain_drains_old_tail_then_sends_new_epoch_to_n04 ... ok
+test source_media::tests::s02_441_fixture_full_carrier_n04_matches_closed_form_pcm_and_tail ... ok
+test result: ok. 496 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.33s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 16 tests
+test the_harness_options_are_still_refused_without_the_harness ... ok
+test the_catalog_option_still_prints_the_catalog_as_json_and_not_the_services ... ok
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 7 tests
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.04s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 256 tests
+test carrier::tests::n07_all_peer_admission_observes_retry_time_and_latches_rollback ... ok
+test carrier::tests::n07_all_peer_accepted_queue_is_fenced_on_route_and_membership_change ... ok
+test carrier::tests::n07_all_peer_n01_deadline_uses_separate_group_and_interface_clocks ... ok
+test carrier::tests::n07_all_peer_n01_invalid_stale_cancel_and_membership_refuse_before_mutation ... ok
+test carrier::tests::n07_all_peer_n01_backpressure_preserves_queues_then_delivers_each_pcm_once ... ok
+test carrier::tests::n07_all_peer_n01_membership_change_and_unfenced_small_mtu_are_checked ... ok
+test carrier::tests::n07_all_peer_n01_repair_refused_and_overlap_capacity_exact_boundary ... ok
+test carrier::tests::n07_all_peer_n01_respects_profile_sequence_headroom_and_live_path ... ok
+test carrier::tests::n07_all_peer_same_snapshot_recovers_link_fence_and_mtu_backpressure ... ok
+test carrier::tests::n07_all_peer_snapshot_fences_foreign_sender_and_same_id_aba ... ok
+test carrier::tests::n07_clocked_n01_after_cutoff_never_sends_queued_media ... ok
+test carrier::tests::n07_clocked_n01_backward_view_fences_until_fresh_epoch ... ok
+test carrier::tests::n07_clocked_n01_lifetime_bound_fence_blocks_queued_media_until_new_epoch ... ok
+test carrier::tests::n07_clocked_n01_last_sequence_recovery_is_not_stale_playback ... ok
+test carrier::tests::n07_clocked_n01_held_retry_respects_group_cutoff ... ok
+test carrier::tests::n07_clocked_n01_missing_view_allows_only_existing_stall_probe ... ok
+test carrier::tests::n07_all_peer_audio_survives_legacy_and_fec_aggregate_pressure ... ok
+test carrier::tests::n07_clocked_n01_missing_view_preserves_legacy_progress_and_blocks_protected ... ok
+test carrier::tests::n07_clocked_n01_pump_uses_group_deadline_and_delivers_real_pcm ... ok
+test carrier::tests::n07_clocked_n01_mixed_queues_preserve_each_deadline_domain ... ok
+test carrier::tests::n07_isolated_fanout_all_unavailable_waits_then_expired_skips_once ... ok
+test carrier::tests::n07_clocked_n01_rejects_missing_wrong_duplicate_and_late_views ... ok
+test carrier::tests::n07_isolated_fanout_partial_capacity_rotates_and_validates_every_profile ... ok
+test carrier::tests::n07_isolated_fanout_continues_healthy_peer_and_never_replays_skipped_pcm ... ok
+test carrier::tests::n07_isolated_retry_cooldown_cannot_steal_healthy_peer_capacity ... ok
+test carrier::tests::n07_n01_claim_blocks_legacy_queue_held_and_cached_probe_bypass ... ok
+test carrier::tests::n07_n01_selected_fence_survives_unrelated_group_mutation ... ok
+test carrier::tests::n07_n01_exclusive_source_blocks_competitors_and_pump_bypass ... ok
+test carrier::tests::n07_n01_selected_pump_never_sends_other_selected_group ... ok
+test carrier::tests::n07_n01_selected_same_group_route_change_invalidates_and_fences ... ok
+test carrier::tests::n07_n01_predecode_checks_actual_full_block_not_configured_floor ... ok
+test carrier::tests::n07_n01_predecode_eligibility_tracks_live_capacity_and_snapshot ... ok
+test carrier::tests::n07_n01_unrelated_group_change_retains_lifetime_fence_authority ... ok
+test carrier::tests::n07_n01_source_claim_rejects_old_protected_state ... ok
+test carrier::tests::n07_n01_selected_source_continues_after_unrelated_group_changes_and_rollback ... ok
+test carrier::tests::n07_selected_pump_cannot_emit_unclaimed_other_group_protected_probe ... ok
+test result: ok. 256 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 7 tests
+test the_fingerprint_function_matches_the_published_fnv_1a_test_vectors ... ok
+test the_committed_vectors_replay_with_no_mismatch_and_the_shape_the_judge_requires ... ok
+test the_planted_rejections_are_refused_and_the_permitted_positives_are_accepted ... ok
+test the_byte_order_probe_describes_the_machine_that_ran_it ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+running 10 tests
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== strict_workspace_all_target_clippy native 30104858719683223 ===
+    Finished `dev` profile [unoptimized] target(s) in 1m 10s
+
+=== four_test_p01_leaf native 30104858719683224 ===
+running 4 tests
+test the_declared_contract_is_valid_before_any_defect_is_planted ... ok
+test every_vector_id_is_unique_and_every_kind_is_known ... ok
+test the_contract_digest_is_the_pinned_value_and_independent_of_the_file_layout ... ok
+    Finished `test` profile [unoptimized] target(s) in 5.89s
+test the_shared_vectors_replay_exactly ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+=== retained failed attempt 30104858719683183, exit 101 ===
+test source_media::tests::s02_buffered_pcm_retains_decode_snapshot_across_member_aba ... FAILED
+test source_media::tests::s02_441_fixture_full_carrier_n04_matches_closed_form_pcm_and_tail ... FAILED
+assertion failed: source.pending.is_some()
+test result: FAILED. 494 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.52s
+test carrier::tests::n07_isolated_retry_cooldown_cannot_steal_healthy_peer_capacity ... FAILED
+assertion `left == right` failed
+  left: Ok(false)
+ right: Ok(true)
+test result: FAILED. 255 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+
+=== retained failed attempt 30104858719683197, exit 101 ===
+error: large size difference between variants
+    | | |_____- the largest variant contains at least 544 bytes
+    | |___^ the entire enum is at least 544 bytes
+
+=== retained failed attempt 30104858719683203, exit 101 ===
+error: large size difference between variants
+    | | |_____- the largest variant contains at least 544 bytes
+    | |___^ the entire enum is at least 544 bytes
+
+=== canonical d01 Python controls ===
+Ran 59 tests in 3.139s
+OK
+
+=== canonical n07 Python controls ===
+Ran 44 tests in 5.296s
+OK
+
+=== canonical s02 Python controls ===
+Ran 69 tests in 2.959s
+OK (skipped=1)
+
+=== actual n07 evidence pipeline ===
+PASS    META-SCENARIOS  the scenario file equals a fresh generation from model.py
+PASS    META-TESTS  every Rust n07_ test is mapped to a case and every mapped test exists
+PASS    META-COUNTERS  the model's counter lists equal the Rust structs' fields, in order
+PASS    META-DEFAULTS  the Rust baseline limits equal the model's
+PASS    META-SIZING  the Rust unit test's hand-written sizing table equals the model's, 11 rows
+PASS    META-E04  link.rs carries all 7 committed E04 radio duties by id
+PASS    META-CONTRACT  the contract names every case
+PASSED  N07-E01  zero loss, two peers, paced: every block in order, control ahead, overhead measured
+PASSED  N07-E02  a peer that stops reporting is isolated: bounded state, fresh audio on recovery, the others untouched
+PASSED  N07-E03  saturated pacer and aggregate cap: control first in its pump, media keeps its share
+PASSED  N07-E04  epoch fence: queued audio dropped, stale sends and stale reports refused
+PASSED  N07-E05  MTU, admission budget and address family refuse or fence without fragmenting
+PASSED  N07-E06  simulated link-down ages audio out; address change keeps identity and refuses the old path
+PASSED  N07-E07  seeded loss and reorder on one hop: the replay window and reports cope, the clean peer is unaffected
+PASSED  N07-E08  loopback-only binding; unauthentic reports move nothing (and the peer's own does); idle FEC telemetry is exact, not ignored
+PASSED  N07-U01  unit: payload sizing, the pacer's deadlines, the report codec, the limit bounds, address policy
+PASSED  N07-U02  unit over an in-memory port: N01 signing, report attribution, send faults and retries, control and media budgets, window credit, retransmission probes, the sequence budget and long-outage recovery against a genuine N01 receiver, the held datagram in every queue bound, rebind, media sink, discards, MTU fence, several streams on one interface under one bucket, one admission sum, one work cap and one aggregate cap, reports routed by stream, a source restart on sender and receiver
+PASSED  N07-U03  unit and seeded property: link lifecycle, backoff, address families, lease guard (also across an outage), WAN decoupling, identity directory
+PASSED  N07-E09  the ownership matrix carries E04's seven radio duties and blockers verbatim and claims nothing E04 does not know
+PASSED  N07-E10  the P02 port over the platform datagram boundary on a simulated host kernel, and the carrier gate (host-only evidence)
+PASSED  N07-E11  zero loss into MediaPlayout: every block equals the source oracle, block 0 prepared while armed, overhead measured
+PASSED  N07-E12  a stalled room: bounded sender state, the others lose nothing, recovery hears fresh audio only
+PASSED  N07-E13  saturated pacer: a stop goes out in the pump it was submitted, a control flood is bounded, media still flows
+PASSED  N07-E14  link down/up, sender address change with a real rebind, a room moving, a refused address: identity kept, no old audio
+PASSED  N07-E15  a spent reconnect budget is reported once, shown as a local degraded state, and a good address recovers
+PASSED  N07-E16  epoch restart: stale send refused, queued audio fenced, stale packet and stale report refused, audio resumes muted
+PASSED  N07-E17  MTU drop and an EMSGSIZE from the kernel fence a peer; nothing is fragmented; recovery on the MTU's word
+PASSED  N07-E18  seeded loss and reorder below the carrier: exactly the undropped blocks are heard, the lost ones concealed
+PASSED  N07-E19  a stalled network side with a live renderer: it plays what it holds, then silence; the backlog it reads on return is late and unplayed
+PASSED  N07-E20  a refusal spends the sequence budget; the expired protected datagram's first copy is late through the real endpoint, earns credit, renders nothing; fresh audio follows
+PASSED  N07-E21  the protected datagram arrives late and earns the credit; both probes are replays that change no credit and render nothing
+PASSED  N07-E22  a source restart under a new stream identity (fresh id, newer epoch) is followed through the real endpoint, loopback sockets and N04: the old queue is dropped, an old-stream datagram is refused, audio resumes muted, credit restarts
+N07: 25 cases, 25 passed, 0 failed, 0 meta checks failed
+
+=== actual s02 evidence pipeline ===
+ledger spotify.ogg_vorbis             host_decode_verified
+ledger spotify.mp3                    host_decode_verified
+ledger spotify.mp3_160_enc            not_requested_by_pin
+ledger spotify.aac                    not_requested_by_pin
+ledger spotify.flac                   not_requested_by_pin
+ledger airplay.alac_44100_s16         host_decode_verified
+ledger airplay.alac_48000_s24         host_decode_verified
+ledger airplay.aac_lc_stereo          host_decode_verified
+ledger airplay.aac_lc_multichannel    blocked
+ledger airplay.pcm_s16be              host_decode_verified
+host count (not a device measurement) max_block_frames = 4096 (alac_48000_24)
+host count (not a device measurement) max_out_capacity_samples = 8192 (alac_48000_24)
+host count (not a device measurement) bytes_in = 112328 (alac_48000_24)
+host count (not a device measurement) packets = 48 (chain_vorbis_44100_48000)
+host count (not a device measurement) decode_errors = 0 (vorbis_48000)
+diag run=s02-full-3377fae9d40cbb33: evidence COMPLETE; events=143 critical=143 dropped=0 critical_lost=0 bytes=43210 sha256=2a2bbba2cfac
+S02 e2e tier=full: QUALIFIED  planned=71 passed=71 failed=0 blocked=0

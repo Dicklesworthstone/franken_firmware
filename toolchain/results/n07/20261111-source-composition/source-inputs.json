@@ -1,0 +1,565 @@
+{
+  "base_commit": "8478fbd242756f84b74a0a1d880b623c5683c332",
+  "canonical_python_controls": {
+    "d01": {
+      "errors": 0,
+      "failed": 0,
+      "optional_skipped": 0,
+      "passed": 59,
+      "private_log_sha256": "fc7f6751b1154791d8d21f06bbe570ee8aac618a538ca4c178703f345a67f2d2",
+      "run": 59
+    },
+    "n07": {
+      "errors": 0,
+      "failed": 0,
+      "optional_skipped": 0,
+      "passed": 44,
+      "private_log_sha256": "72e5a143ccd512eb6eea0b4b75cf9e60286b7dc43f4f75950f09225de170ed9b",
+      "run": 44
+    },
+    "s02": {
+      "errors": 0,
+      "failed": 0,
+      "optional_skipped": 1,
+      "passed": 68,
+      "private_log_sha256": "c5be065ebc3512576a5b8627e83d1b964b8985ed98488366ddd7c54f8c506f4d",
+      "run": 69
+    }
+  },
+  "excluded_paths": [
+    ".beads/.gitignore",
+    ".beads/config.yaml"
+  ],
+  "export_input_count": 1565,
+  "failed_n07_original_consumer_receipt_sha256": "e9317b6a88ff32ae127be164a3fcfe4cd29308b61739a5db704c5944a9dcb046",
+  "focused_source_bindings": [
+    {
+      "current_bytes": 15623,
+      "current_public_sha256": "8b2878c589123d4d9f372c78fd94b8695eeffa394b58a9ae1c0b6da0aa4bd376",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 15623,
+      "native_sha256": "8b2878c589123d4d9f372c78fd94b8695eeffa394b58a9ae1c0b6da0aa4bd376",
+      "path": "Cargo.lock"
+    },
+    {
+      "current_bytes": 1767,
+      "current_public_sha256": "6aaae8aac3d87262cd7057749b84bb4df921dcee810dd5d03cfdddc1c4ebe107",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 1767,
+      "native_sha256": "6aaae8aac3d87262cd7057749b84bb4df921dcee810dd5d03cfdddc1c4ebe107",
+      "path": "Cargo.toml"
+    },
+    {
+      "current_bytes": 13165,
+      "current_public_sha256": "dfa0147af46aa8eeda28326a9a740adb46d367a65a0b2034bce8434680e9cfeb",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 13165,
+      "native_sha256": "dfa0147af46aa8eeda28326a9a740adb46d367a65a0b2034bce8434680e9cfeb",
+      "path": "crates/franken-board-profile/tests/p01_contract.rs"
+    },
+    {
+      "current_bytes": 101786,
+      "current_public_sha256": "1d38f3e62b0db6151581e87b75ab5e9e375379573434ca93551b45aaf51c446d",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 101786,
+      "native_sha256": "1d38f3e62b0db6151581e87b75ab5e9e375379573434ca93551b45aaf51c446d",
+      "path": "crates/franken-board-profile/tests/vectors/p01_contract_vectors.json"
+    },
+    {
+      "current_bytes": 26658,
+      "current_public_sha256": "d1906b5073e52ef3b5e05170c0e919b9f8a2f85c3ab9cd8579dab8b405915574",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 26658,
+      "native_sha256": "d1906b5073e52ef3b5e05170c0e919b9f8a2f85c3ab9cd8579dab8b405915574",
+      "path": "crates/franken-board-profile/tests/vectors/p01_workspace_contract.json"
+    },
+    {
+      "current_bytes": 49378,
+      "current_public_sha256": "a1c1b5ee49b32c4b88f6d408228adbfd0cf5414b5223392c4715e9b24ffe1160",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 49378,
+      "native_sha256": "a1c1b5ee49b32c4b88f6d408228adbfd0cf5414b5223392c4715e9b24ffe1160",
+      "path": "crates/franken-codec/src/decode.rs"
+    },
+    {
+      "current_bytes": 1565,
+      "current_public_sha256": "9cfe3631f73dac1cf18ef718f0d8cf0304ead90c18316c0fd3718c2355aaeb8c",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 1565,
+      "native_sha256": "9cfe3631f73dac1cf18ef718f0d8cf0304ead90c18316c0fd3718c2355aaeb8c",
+      "path": "crates/franken-codec/src/lib.rs"
+    },
+    {
+      "current_bytes": 15927,
+      "current_public_sha256": "a4283d0474b6439b60859624d9528440a49f4f47dcdcaf8d79e51027bb270bf4",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 15927,
+      "native_sha256": "a4283d0474b6439b60859624d9528440a49f4f47dcdcaf8d79e51027bb270bf4",
+      "path": "crates/franken-codec/src/rate_bridge.rs"
+    },
+    {
+      "current_bytes": 15532,
+      "current_public_sha256": "a461f461fc9cb092b24fce4518e0a8b15bfc96276774e9c984fa443d85961c3a",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 15532,
+      "native_sha256": "a461f461fc9cb092b24fce4518e0a8b15bfc96276774e9c984fa443d85961c3a",
+      "path": "crates/franken-codec/tests/s02_reader.rs"
+    },
+    {
+      "current_bytes": 17922,
+      "current_public_sha256": "e30d9af8998ceff21c9b498c090b3b0d74e04f9a06daca66f3cdf4c9c7dbf4eb",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 17922,
+      "native_sha256": "e30d9af8998ceff21c9b498c090b3b0d74e04f9a06daca66f3cdf4c9c7dbf4eb",
+      "path": "crates/franken-codec/tests/vectors/s02_vectors.json"
+    },
+    {
+      "current_bytes": 2249,
+      "current_public_sha256": "6ed72b3aec97a32bd135e2ab05a2436bccdda41c9171d97b2fbfa4cf3353eed3",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 2249,
+      "native_sha256": "6ed72b3aec97a32bd135e2ab05a2436bccdda41c9171d97b2fbfa4cf3353eed3",
+      "path": "crates/franken-speaker/Cargo.toml"
+    },
+    {
+      "current_bytes": 2552,
+      "current_public_sha256": "b3695a84643db43349a39a98a7cc2ae0956883474c89f3dfd69b0b9a12098ae3",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 2552,
+      "native_sha256": "b3695a84643db43349a39a98a7cc2ae0956883474c89f3dfd69b0b9a12098ae3",
+      "path": "crates/franken-speaker/src/lib.rs"
+    },
+    {
+      "current_bytes": 70553,
+      "current_public_sha256": "cb58670ca976da523d8d84758b20b4f8d8b13c09fbdff5fd8b01a5923686dc4c",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 70553,
+      "native_sha256": "cb58670ca976da523d8d84758b20b4f8d8b13c09fbdff5fd8b01a5923686dc4c",
+      "path": "crates/franken-speaker/src/net_carrier.rs"
+    },
+    {
+      "current_bytes": 122681,
+      "current_public_sha256": "6e467e686266471f1286092e3cc43c5422bd6b5ac7f7a0271c111876f968c4d1",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 122681,
+      "native_sha256": "6e467e686266471f1286092e3cc43c5422bd6b5ac7f7a0271c111876f968c4d1",
+      "path": "crates/franken-speaker/src/net_carrier/tests.rs"
+    },
+    {
+      "current_bytes": 126966,
+      "current_public_sha256": "68a157b19b9533123c575c1824b03e89571d072ff07962340e30de5cae0f2be0",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 126966,
+      "native_sha256": "68a157b19b9533123c575c1824b03e89571d072ff07962340e30de5cae0f2be0",
+      "path": "crates/franken-speaker/src/source_media.rs"
+    },
+    {
+      "current_bytes": 231405,
+      "current_public_sha256": "61d8c6ecb710e633745bfe490746330359f2b9964f246673feacffa675e18ead",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 231405,
+      "native_sha256": "61d8c6ecb710e633745bfe490746330359f2b9964f246673feacffa675e18ead",
+      "path": "crates/franken-stream/src/carrier.rs"
+    },
+    {
+      "current_bytes": 208781,
+      "current_public_sha256": "2a65e13205b6de73bce316bcf55324d6a5e3088fb77d3b76e84012fbc2e65baf",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 208781,
+      "native_sha256": "2a65e13205b6de73bce316bcf55324d6a5e3088fb77d3b76e84012fbc2e65baf",
+      "path": "crates/franken-stream/src/carrier/tests.rs"
+    },
+    {
+      "current_bytes": 96227,
+      "current_public_sha256": "3017a16aabc601509f6f5b2667f6d5306a01350328918374a1ca9a41aae1e26f",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 96227,
+      "native_sha256": "3017a16aabc601509f6f5b2667f6d5306a01350328918374a1ca9a41aae1e26f",
+      "path": "crates/franken-stream/src/lib.rs"
+    },
+    {
+      "current_bytes": 47661,
+      "current_public_sha256": "29caa107510aff4632ab66f3c60060d9dcbaaa908342676d227330fa4894d912",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 47661,
+      "native_sha256": "29caa107510aff4632ab66f3c60060d9dcbaaa908342676d227330fa4894d912",
+      "path": "crates/franken-stream/src/playout.rs"
+    },
+    {
+      "current_bytes": 35232,
+      "current_public_sha256": "85313ff746544783039f026e2f626da94fd4e35219e46cf0969ea54f4e7b059c",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 35232,
+      "native_sha256": "85313ff746544783039f026e2f626da94fd4e35219e46cf0969ea54f4e7b059c",
+      "path": "crates/franken-stream/tests/n07_carrier.rs"
+    },
+    {
+      "current_bytes": 3992,
+      "current_public_sha256": "5abcceb8f72aba43cee23639f86d611c15d6d7bf4cb06a145bdb46284ad1c68a",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 3992,
+      "native_sha256": "5abcceb8f72aba43cee23639f86d611c15d6d7bf4cb06a145bdb46284ad1c68a",
+      "path": "crates/franken-stream/tests/n07_ownership.rs"
+    },
+    {
+      "current_bytes": 31034,
+      "current_public_sha256": "46eeac759651f477487c9692ecd3cf454b009085e48fdff80dd10c08c1595224",
+      "executable": false,
+      "matches_native_export": false,
+      "native_bytes": 29157,
+      "native_sha256": "48d0abd540392ee16bc17d0cf928ae2b4591406cde19ab1d0ae9b73ec728ec93",
+      "path": "docs/contracts/s02.md"
+    },
+    {
+      "current_bytes": 31,
+      "current_public_sha256": "ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 31,
+      "native_sha256": "ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0",
+      "path": "rust-toolchain.toml"
+    },
+    {
+      "current_bytes": 81143,
+      "current_public_sha256": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 81143,
+      "native_sha256": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7",
+      "path": "scripts/test/test_support/diagnostics.py"
+    },
+    {
+      "current_bytes": 40111,
+      "current_public_sha256": "5b36223403dc74be776c4cf6f806e3bb64bbf2876fdd8ea3279b489f2e6994b8",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 40111,
+      "native_sha256": "5b36223403dc74be776c4cf6f806e3bb64bbf2876fdd8ea3279b489f2e6994b8",
+      "path": "tests/d01/run_cases.py"
+    },
+    {
+      "current_bytes": 65068,
+      "current_public_sha256": "4e4ee81bf90acd9ceb9ef6a5dcec6dc5237da6a040fee56162b997be868f5af9",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 65068,
+      "native_sha256": "4e4ee81bf90acd9ceb9ef6a5dcec6dc5237da6a040fee56162b997be868f5af9",
+      "path": "tests/d01/test_d01.py"
+    },
+    {
+      "current_bytes": 43317,
+      "current_public_sha256": "87913f05d592b1e9b63a0e8c3a45828222415599997a08c0544e4b156b6965af",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 43317,
+      "native_sha256": "87913f05d592b1e9b63a0e8c3a45828222415599997a08c0544e4b156b6965af",
+      "path": "tests/n07/model.py"
+    },
+    {
+      "current_bytes": 39904,
+      "current_public_sha256": "92ee38c592ab0702951aed25a6b286f413c2b2705fd60a9a151e164c0256d727",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 39904,
+      "native_sha256": "92ee38c592ab0702951aed25a6b286f413c2b2705fd60a9a151e164c0256d727",
+      "path": "tests/n07/run_cases.py"
+    },
+    {
+      "current_bytes": 58865,
+      "current_public_sha256": "5fc4e6d1226f2e1a15aec855c9c6eaf8b298be4a133a8a88bd947ed6f4d41a76",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 58865,
+      "native_sha256": "5fc4e6d1226f2e1a15aec855c9c6eaf8b298be4a133a8a88bd947ed6f4d41a76",
+      "path": "tests/n07/test_judge.py"
+    },
+    {
+      "current_bytes": 21369,
+      "current_public_sha256": "141ac51e1824b56d051f258337024ae668e2233b5a96c698c573cd3fb4ef72fd",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 21369,
+      "native_sha256": "141ac51e1824b56d051f258337024ae668e2233b5a96c698c573cd3fb4ef72fd",
+      "path": "tests/s02/cases.json"
+    },
+    {
+      "current_bytes": 39277,
+      "current_public_sha256": "f36d051809847e4ac57c3531266537851d1ec450ed3b8a087519331ad01abc87",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 39277,
+      "native_sha256": "f36d051809847e4ac57c3531266537851d1ec450ed3b8a087519331ad01abc87",
+      "path": "tests/s02/run_cases.py"
+    },
+    {
+      "current_bytes": 54184,
+      "current_public_sha256": "f88aadcf428f28996df1cb4399581834b14ae8659f387888ba41a267386a1e52",
+      "executable": false,
+      "matches_native_export": true,
+      "native_bytes": 54184,
+      "native_sha256": "f88aadcf428f28996df1cb4399581834b14ae8659f387888ba41a267386a1e52",
+      "path": "tests/s02/test_s02.py"
+    }
+  ],
+  "inventory_sha256": "0dbd12a53b39db19f47d7fefd4babc598731dcd9ceed73e623997616f748dcd4",
+  "landed_source_commits": {
+    "carrier": "5ce986c9e33f639cd1443c3eecc351d91ee5002e",
+    "consumer": "be80d67b49f5a20b788e5266ac40b089cc05f712",
+    "speaker": "b568271d8c695bcfbd049aae0e21d3837851ae7d"
+  },
+  "n07_actual_consumer": {
+    "cases": 25,
+    "failed": 0,
+    "meta_passed": 7,
+    "native_capture_sha256": "a1c9bb1c8ca9d2dc4351b92769bf8ca7a269dee00199bcd35ad7050844781520",
+    "passed": 25,
+    "private_receipt_sha256": "7beea62e541f2757a696a8b63b5845c91060b66f1aad7757a027e161f7fd5f5e"
+  },
+  "publication_root_mode": "0755",
+  "receipt_selected_input_count": 1563,
+  "retained_native_history": [
+    {
+      "all_source_bindings_verified": true,
+      "capture_sha256": "6a4f2686fc07918396f9ce027b0213c79d7c7c66b11c0f98a19ab93e73031c62",
+      "exit_code": 101,
+      "inventory_sha256": "1333e95304fa20a2612de5664feaa9a0cda5ffeb600312818b6d5c748de0e459",
+      "native_job": "30104858719683183",
+      "receipt_root": "1e1b6bfa870d27acab3b5340e094c6f89adeb1ccc2e406e8f4b9aaa0f38a51a4"
+    },
+    {
+      "all_source_bindings_verified": true,
+      "capture_sha256": "abe82550ae0ad5d594db589446bae3a0810a039b41f707461ce6d7fcede6ee8b",
+      "exit_code": 0,
+      "inventory_sha256": "11805d2a39b98d97a9e5ef96b97b82d48c53efffc455d21d98ad7db3dc474e6a",
+      "native_job": "30104858719683194",
+      "receipt_root": "cdd51629e214ba1cac7cffa1e203bf477492b0569bb73a8844827d550d2ec32b"
+    },
+    {
+      "all_source_bindings_verified": true,
+      "capture_sha256": "3f6bae4ef1e899c161ee3e70221aca42f8a2933f71ba71c480652ca2874da778",
+      "exit_code": 101,
+      "inventory_sha256": "11805d2a39b98d97a9e5ef96b97b82d48c53efffc455d21d98ad7db3dc474e6a",
+      "native_job": "30104858719683197",
+      "receipt_root": "aa786c9d0cc4359c0b6718a6089ceec31abb55aebdf6b6d2bb257f3e52fa27b6"
+    },
+    {
+      "all_source_bindings_verified": true,
+      "capture_sha256": "013bbdd03f0f103c1885eba1131516dc15a811d225d5024ff2300ae0df9d5f0f",
+      "exit_code": 101,
+      "inventory_sha256": "693b9a181cc0f2174a0d071b200caa950bf5f3952e7f4e26487aab848cb68ff6",
+      "native_job": "30104858719683203",
+      "receipt_root": "1384b3be704d546d1c590fcef22c8a32f6132996e80b7c0af97ceb61203139f3"
+    }
+  ],
+  "s02_actual_consumer": {
+    "counts": {
+      "blocked": 0,
+      "failed": 0,
+      "passed": 71
+    },
+    "diagnostics": {
+      "complete": true,
+      "log": {
+        "bytes": 43210,
+        "critical_lost": false,
+        "dropped": 0,
+        "events": 143,
+        "sha256": "2a2bbba2cface37a42ac47a8c4939301e209062940e55d00e6a1fba89cf96745",
+        "truncated": false
+      },
+      "reasons": []
+    },
+    "native_codec_capture_reused_as_component": "30104858719683157",
+    "native_vec_heap_capture_reused_as_component": "30104858719683147",
+    "private_receipt_sha256": "06df234c7ba2c96f4b62ab21c87cd33b0d89a1e6a6b9b248e5cef1f2da4b0b02"
+  },
+  "schema": "ffw.source-carrier-host-qualification.v1",
+  "scope": "Host library/test/evidence qualification only. Runtime owner, native providers, legacy kernels, physical output, stack/RSS and board admission remain open. The S02 contract append is a noncompiler follow-on.",
+  "source_files_read_only": true,
+  "source_overlays": [
+    {
+      "base_sha256": "a31181cbc92e7eb375e6a7427a6fd913360e4d5c2bbdebf6f9732a1c78ef615f",
+      "executable": false,
+      "path": "crates/franken-codec/src/decode.rs",
+      "sha256": "a1c1b5ee49b32c4b88f6d408228adbfd0cf5414b5223392c4715e9b24ffe1160"
+    },
+    {
+      "base_sha256": "c101b4457f6147457d8742173b7e97e4bdb9e6789ef2e118bc9701f4828bc618",
+      "executable": false,
+      "path": "crates/franken-codec/src/lib.rs",
+      "sha256": "9cfe3631f73dac1cf18ef718f0d8cf0304ead90c18316c0fd3718c2355aaeb8c"
+    },
+    {
+      "base_sha256": null,
+      "executable": false,
+      "path": "crates/franken-codec/tests/s02_reader.rs",
+      "sha256": "a461f461fc9cb092b24fce4518e0a8b15bfc96276774e9c984fa443d85961c3a"
+    },
+    {
+      "base_sha256": "0d3c2e504fc312521baaf3f5d2a865ff3520d1823bdce9fecc8fa461a7fba5d3",
+      "executable": false,
+      "path": "docs/contracts/s02.md",
+      "sha256": "48d0abd540392ee16bc17d0cf928ae2b4591406cde19ab1d0ae9b73ec728ec93"
+    },
+    {
+      "base_sha256": "481d6558cbbc34ec8ea6e84e0f8aca7640ace874884fdb4a336651e6902e1afd",
+      "executable": false,
+      "path": "tests/s02/cases.json",
+      "sha256": "141ac51e1824b56d051f258337024ae668e2233b5a96c698c573cd3fb4ef72fd"
+    },
+    {
+      "base_sha256": "f321a3d4c603a422e65bc32898aabb7046132601cd25d9fd32af8fa287ba7ee2",
+      "executable": false,
+      "path": "tests/s02/run_cases.py",
+      "sha256": "f36d051809847e4ac57c3531266537851d1ec450ed3b8a087519331ad01abc87"
+    },
+    {
+      "base_sha256": "6fad1b7755e5715ccc2cae498f0c03f85c96aa9bf2986bc321e6aa47e2043075",
+      "executable": false,
+      "path": "tests/s02/test_s02.py",
+      "sha256": "f88aadcf428f28996df1cb4399581834b14ae8659f387888ba41a267386a1e52"
+    },
+    {
+      "base_sha256": "1a2b826c5727b1d791527a69fa097494591f51f4d544424de6aa09156d88db75",
+      "executable": false,
+      "path": "crates/franken-stream/src/carrier.rs",
+      "sha256": "61d8c6ecb710e633745bfe490746330359f2b9964f246673feacffa675e18ead"
+    },
+    {
+      "base_sha256": "dc4cfd3d14b504790cc839252dc75e6abe661e5afc55fcafe4a8bfa714af02d9",
+      "executable": false,
+      "path": "crates/franken-stream/src/carrier/tests.rs",
+      "sha256": "2a65e13205b6de73bce316bcf55324d6a5e3088fb77d3b76e84012fbc2e65baf"
+    },
+    {
+      "base_sha256": null,
+      "executable": false,
+      "path": "crates/franken-speaker/src/source_media.rs",
+      "sha256": "68a157b19b9533123c575c1824b03e89571d072ff07962340e30de5cae0f2be0"
+    },
+    {
+      "base_sha256": "65c8c372f183c1eff4255198dacd833387db97134991bd745f82862f3c673c3b",
+      "executable": false,
+      "path": "crates/franken-speaker/src/lib.rs",
+      "sha256": "b3695a84643db43349a39a98a7cc2ae0956883474c89f3dfd69b0b9a12098ae3"
+    },
+    {
+      "base_sha256": "78fabf9a7059ac7e9d8990077f77b05df9cca845025f26d1fd943e09139188bc",
+      "executable": false,
+      "path": "crates/franken-speaker/Cargo.toml",
+      "sha256": "6ed72b3aec97a32bd135e2ab05a2436bccdda41c9171d97b2fbfa4cf3353eed3"
+    },
+    {
+      "base_sha256": "ecae67c737e47feaef3df83c0521da3ba75886c4a7daa6b7ce51fd0738acb987",
+      "executable": false,
+      "path": "Cargo.lock",
+      "sha256": "8b2878c589123d4d9f372c78fd94b8695eeffa394b58a9ae1c0b6da0aa4bd376"
+    },
+    {
+      "base_sha256": "a47cace7ee2dd0cee5bf1e48fa7853b39edaf2378d56c8caff8aa83a92adab67",
+      "executable": false,
+      "path": "crates/franken-board-profile/tests/vectors/p01_workspace_contract.json",
+      "sha256": "d1906b5073e52ef3b5e05170c0e919b9f8a2f85c3ab9cd8579dab8b405915574"
+    },
+    {
+      "base_sha256": "7c7c55be7f94d84675e92269bb38951f04703d2ba1548d6b34a63895163376d3",
+      "executable": false,
+      "path": "crates/franken-board-profile/tests/vectors/p01_contract_vectors.json",
+      "sha256": "1d38f3e62b0db6151581e87b75ab5e9e375379573434ca93551b45aaf51c446d"
+    },
+    {
+      "base_sha256": "a8be8f29be09a7197502ec05f33ed37ae4a015faa07ccbe89be3d757b9f2a083",
+      "executable": false,
+      "path": "tests/d01/run_cases.py",
+      "sha256": "5b36223403dc74be776c4cf6f806e3bb64bbf2876fdd8ea3279b489f2e6994b8"
+    },
+    {
+      "base_sha256": "3307288b7cca61734d58434faa779db8b186bbec6a9820b47399e6c9a825278c",
+      "executable": false,
+      "path": "tests/d01/test_d01.py",
+      "sha256": "4e4ee81bf90acd9ceb9ef6a5dcec6dc5237da6a040fee56162b997be868f5af9"
+    },
+    {
+      "base_sha256": "d828bf36b87f09bcce8d7a6596530ddd303772cd3b4ac90d3d95b9c7574a6bbe",
+      "executable": false,
+      "path": "tests/n07/run_cases.py",
+      "sha256": "92ee38c592ab0702951aed25a6b286f413c2b2705fd60a9a151e164c0256d727"
+    },
+    {
+      "base_sha256": "6b1a97ca425f317df1fcb6996f1254e43152c2b1ded632d65b6618797b2c076a",
+      "executable": false,
+      "path": "tests/n07/test_judge.py",
+      "sha256": "5fc4e6d1226f2e1a15aec855c9c6eaf8b298be4a133a8a88bd947ed6f4d41a76"
+    }
+  ],
+  "successful_native_gates": [
+    {
+      "acknowledged_wrapper_absent_custody_retired": true,
+      "all_source_bindings_match": true,
+      "capture_sha256": "a1c9bb1c8ca9d2dc4351b92769bf8ca7a269dee00199bcd35ad7050844781520",
+      "command_sha256": "3c7d2d7afcff69a17dfa1c02ac78424aeda5ff9e7971098332f95824aea2dbd5",
+      "exit_code": 0,
+      "native_job": "30104858719683211",
+      "purpose": "complete_stream_speaker",
+      "receipt_root": "eda6f47df955aaceebf6b774273105ce932895d0cfeb5e88662a0bce9d6266fe",
+      "selected_input_count": 1563,
+      "totals_pass_fail_ignored_measured_filtered": [
+        801,
+        0,
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "acknowledged_wrapper_absent_custody_retired": true,
+      "all_source_bindings_match": true,
+      "capture_sha256": "1762e415505615648e2e5a8b2d8fca71fa9fd56f544c628446f6a96cf4fa96db",
+      "command_sha256": "cca8e3db973b273ecabec7bd6824b50294c6fb6534e25c6e00024ef6ce6e6a7b",
+      "exit_code": 0,
+      "native_job": "30104858719683223",
+      "purpose": "strict_workspace_all_target_clippy",
+      "receipt_root": "e1f82eaac57712166cada9da3aece166050c4e30aa46475b6c94aa4f68458c19",
+      "selected_input_count": 1563
+    },
+    {
+      "acknowledged_wrapper_absent_custody_retired": true,
+      "all_source_bindings_match": true,
+      "capture_sha256": "74c03f4c9924f698346fcf621121e7c97b03223e3755eaa0d9f684a373461e6b",
+      "command_sha256": "a82f426831ebd406ae120cb2c7e0b48e035e27a7309a9c0623d768b779bbfdf5",
+      "exit_code": 0,
+      "native_job": "30104858719683224",
+      "purpose": "four_test_p01_leaf",
+      "receipt_root": "5dd062a0e4aa56dd14f722c148b369d66e9e6ba1727cdeb3cf7bb730fd6814e5",
+      "selected_input_count": 1563,
+      "totals_pass_fail_ignored_measured_filtered": [
+        4,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}
