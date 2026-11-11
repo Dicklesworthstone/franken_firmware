@@ -16,3 +16,13 @@ N06-READY-PROOF-HEAP {"schema":"n06.ready-proof-heap.v1","iterations":512,"verif
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 
 [clippy]
+
+[exact-candidate reference; completed after original snapshot]
+test tests::n06_real_ingress_scalar_decode_and_cancel_allocate_no_packet_heap ... ok
+test tests::n06_generator_and_every_gf_product_match_actual_pinned_asup ... ok
+test tests::n06_all163_subsets_match_actual_asup_and_independent_raptorq ... ok
+N06-ALLOCATION {"fixed_receiver_bytes":75328,"packet_allocation_calls":0,"packet_requested_bytes":0,"profile":"n06.host-hybrid.k4-r4.v1","recovered":2,"schema":"n06.allocation.v1","sensor_bytes":1024,"sensor_calls":1}
+N06-GENERATOR {"asup":"14032b8f2c832ee7ef1946404f5efb18162af045","basis_encodes":4,"generator":[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[1,231,134,93],[205,116,135,33],[170,185,126,59],[59,211,122,228]],"gf_products":65536,"profile":"n06.host-hybrid.k4-r4.v1","schema":"n06.generator.v1"}
+N06-SUBSETS {"asup":"14032b8f2c832ee7ef1946404f5efb18162af045","expected":163,"includes_publication_reserve":8192,"limit_work":120000,"maximum_work":103420,"observed":163,"profile":"n06.host-hybrid.k4-r4.v1","recovered":163,"schema":"n06.subsets.v1"}
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

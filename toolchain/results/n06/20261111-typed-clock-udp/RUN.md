@@ -16,6 +16,7 @@ These are the executed caller command bodies. Private worker placement is parame
 RCH_REQUIRE_REMOTE=1 rch exec --worker "$N06_LIBRARY_WORKER" --source-content-receipt -- env CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 test -p franken-control -p franken-stream -p franken-speaker --lib --locked --offline -j1 --no-fail-fast -- --show-output
 RCH_REQUIRE_REMOTE=1 rch exec --worker "$N06_LIBRARY_WORKER" --source-content-receipt -- env CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 test -p franken-alloc-probe --test n06_control_proof_heap --locked --offline -j1 --no-fail-fast -- --show-output
 RCH_REQUIRE_REMOTE=1 rch exec --worker "$N06_CLIPPY_WORKER" --source-content-receipt -- env CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 clippy --workspace --all-targets --locked --offline -j1 --keep-going -- -D warnings
+RCH_REQUIRE_REMOTE=1 rch exec --worker "$N06_REFERENCE_WORKER" --source-content-receipt -- env CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 test --manifest-path toolchain/n06-fec-profile/Cargo.toml --locked --offline -j1 -- --show-output
 ```
 
 | Gate | Native job | Actual result |
@@ -23,6 +24,7 @@ RCH_REQUIRE_REMOTE=1 rch exec --worker "$N06_CLIPPY_WORKER" --source-content-rec
 | Full control/speaker/stream libraries | 30104858719682877 | 649 + 468 + 207 = 1,324 passed; zero failed, ignored or filtered |
 | Real fixed-proof allocator integration | 30104858719682884 | 3 passed; zero failed, ignored or filtered |
 | Strict workspace/all-target Clippy | 30104858719682886 | exit 0 with `-D warnings` |
+| Exact-candidate standalone coding reference | 30104858719682889 | 3 passed; zero failed, ignored or filtered |
 
 The supervisor independently matched all 1,535 selected path/hash/length entries against the frozen 1,537-file inventory for each passing job. Only `.beads/.gitignore` and `.beads/config.yaml` were excluded. Each native lease finished with exit zero and terminal acknowledgement; wrappers were absent and staging/source/tree/pair custody was released and retired before delivery.
 
@@ -32,4 +34,6 @@ The unchanged existing consumer now requires 110 names: all prior 106 plus four 
 
 The first Clippy placement refused before native admission because the selected worker lacked the required runtime. No Cargo ran there; strict remote refused local fallback. The exact unchanged command then passed on a demonstrated eligible worker. That refusal remains retained privately.
 
-A separate exact-candidate coding-reference job is pending and is not credited in this snapshot. The [prior READY source snapshot](../20261111-ready-resources/RUN.md) records its own three passing reference tests. `N06-CARRIER` and `N06-PACED-SENDER` remain open: production still needs authenticated READY-to-active coordination and matching per-target transport delivery. Private per-target sender work is excluded from this evidence.
+The separate exact-candidate coding reference subsequently completed in job `30104858719682889`. It matches all 65,536 GF products, four basis encodes and 163/163 decoding subsets against the pinned libraries. Its allocator sensor records one allocation/1,024 bytes and zero packet allocation calls or bytes. The supervisor independently checked the same 1,535 source hashes and lengths, terminal acknowledgement, wrapper absence and complete custody retirement. `observed.txt` and `source-inputs.json` retain the actual output and source receipt.
+
+With all current-source captures present, the existing full 13-case consumer reports 11 passed, zero failed, two blocked, zero not-run and zero dropped diagnostics, with `qualified=false`; combined log digest `6a2a7923ee27d83094252e214faf02e2179e6272cfee9e740c43a048227fbc2a`. This supersedes the earlier pending reference status without erasing it. `N06-CARRIER` and `N06-PACED-SENDER` remain open: production at this source snapshot still needs authenticated READY-to-active coordination and matching per-target transport delivery. Later per-target sender work is excluded from this snapshot's source and evidence.

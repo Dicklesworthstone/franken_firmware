@@ -77,9 +77,22 @@
       "ack": true,
       "wrapper_dead": true,
       "all_custody_retired": true
+    },
+    {
+      "schema": "ffw.typed-reference-source-check.v1",
+      "build_id": "30104858719682889",
+      "receipt_root": "799164285424329cbd8c93497467d4b9569a4bf0a27e5c63c1ed1aa5cdfa5ed7",
+      "command_sha256": "64e71ba1d440e86b54a81e0f85299936344d8026ff808c1b1f037754ce063ff4",
+      "command_exit_code": 0,
+      "matched_files": 1535,
+      "ack": true,
+      "wrapper_dead": true,
+      "all_custody_retired": true,
+      "kind": "reference",
+      "wrapper_id": "rchw-91d6b4b3-1c9e-4c45-bf56-c4ceac5aa2e7"
     }
   ],
-  "reference": "pending; new exact-candidate reference82889 is not credited",
+  "reference": "3/3 exact-candidate native tests passed; earlier pending status superseded by actual output and settled custody",
   "smoke": {
     "expected": 3,
     "passed": 3,
@@ -89,5 +102,18 @@
     "diagnostics_dropped": 0,
     "qualified": false,
     "combined_log_sha256": "b71e14e22cbcdb7fcdffe21a74c7e54d244e98ebe52a9ee8ab2a860b09a51862"
+  },
+  "full": {
+    "blocked": 2,
+    "diagnostics_dropped": 0,
+    "expected": 13,
+    "failed": 0,
+    "log_sha256": "6a2a7923ee27d83094252e214faf02e2179e6272cfee9e740c43a048227fbc2a",
+    "not_run": 0,
+    "passed": 11,
+    "production_fec_profile_admitted": false,
+    "profile": "n06.host-hybrid.k4-r4.v1",
+    "qualified": false,
+    "tier": "full"
   }
 }
