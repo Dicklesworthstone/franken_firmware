@@ -14,6 +14,9 @@ These commands ran from the frozen qualification tree. RCH added its managed tar
 RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- env CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 test -p franken-control -p franken-stream -p franken-speaker --lib --locked --offline -j1 --no-fail-fast -- --show-output
 RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- env CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 test -p franken-alloc-probe --test n06_control_proof_heap --locked --offline -j1 --no-fail-fast -- --show-output
 RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- env CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 clippy --workspace --all-targets --locked --offline -j1 --keep-going -- -D warnings
+# Later independent reference recovery. The privately pinned worker selector
+# is parameterized here; no dependency or compiler option changed.
+RCH_REQUIRE_REMOTE=1 rch exec --worker "$N06_REFERENCE_WORKER" --source-content-receipt -- env CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 test --manifest-path toolchain/n06-fec-profile/Cargo.toml --locked --offline -j1 -- --show-output
 ```
 
 ## Results and limits
@@ -23,8 +26,9 @@ RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- env CARGO_INCREMENTAL=
 | Full control/speaker/stream libraries | 30104858719682862 | 645 + 468 + 207 = 1,320 passed; zero failed, ignored or filtered |
 | Fixed request-proof allocator tests | 30104858719682863 | 3 passed; zero failed, ignored or filtered |
 | Workspace/all-target Clippy | 30104858719682866 | exit 0 with `-D warnings` |
+| Later standalone coding reference | 30104858719682873 | 3 passed; zero failed, ignored or filtered; separate zero-test doctest footer |
 
-The supervisor independently checked terminal acknowledgement, wrapper termination and source/tree/pair release and retirement for all three jobs. `observed.txt` contains actual captured output, including the synthetic fixture's READY/FUTURE records and test footers. It contains no raw credentials, wire payloads or site inventory.
+The supervisor independently checked terminal acknowledgement, wrapper termination and source/tree/pair release and retirement for all four jobs, and matched all 1,535 selected source hashes and lengths for the later reference too. `observed.txt` contains actual captured output, including the synthetic fixture's READY/FUTURE records and test footers. It contains no raw credentials, wire payloads or site inventory.
 
 The two-target fixture authenticates distinct member streams and media-key commitments, reserves future receiver state while old real PCM remains consumable, emits bounded signed READY records, admits identical retries and releases charges when guards drop. READY is an expiring assertion at emission; it cannot retract sent bytes or authorize activation. Internal charge counters are not process RSS or a 32 MiB board-fit measurement.
 
@@ -32,10 +36,12 @@ The allocator fixture signs and verifies 512 changing requests through the real 
 
 All 100 library-mapped N06 tests and the three allocator tests appeared once with `ok`. These include all 17 newly required READY tests. Independent READY/FUTURE/heap/sensor checkers accept the actual output. Smoke passes 3/3 cases and remains `qualified=false`. This snapshot does not close N06 or the original two integration blockers.
 
+The later reference checks all 65,536 GF products against the pinned coding implementation and all 163 recovery subsets. Its allocation sensor observes one allocation and 1,024 requested bytes, while the tested packet path reports zero allocation calls or requested bytes. The full consumer of the successful library, allocator and reference captures reports **11 passed, zero failed, two blocked, zero not-run and zero dropped diagnostics**, with `qualified=false`. Its joined log digest is `25087dd397321a6caa01e5ffec51182244eb1c956ae458758c1f758383650b06`. The blockers are `N06-CARRIER` and `N06-PACED-SENDER`; this reference success does not satisfy them.
+
 ## Preserved unsuccessful attempts
 
 - Job 30103800983323724 stopped before Cargo with a publication permission error. The private root was mode 0500 while RCH needs to create an exclusive publication probe there. Owner write access was restored without source changes. The attribution follows source inspection, permissions and the subsequent execution; no system-call trace was captured.
 - Job 30104858719682852 executed with 1,318 passing and two failing tests. Both existing `file_medium` AF_UNIX tests failed while creating fresh relative scratch in the mode-0500 package CWD. Only that private directory's permissions changed. Source and assertions stayed unchanged, and the entire three-library command was repeated successfully above.
-- Job 30104858719682870 reached Cargo but failed offline resolution of the pinned Git Asupersync revision on the selected worker. Zero reference tests ran. The full 13-case consumer then reported 10 passed, zero failed and three blocked: missing current reference evidence and the original two integration blockers. Pinned-cache recovery is separate from the three passing gates archived here.
+- Job 30104858719682870 reached Cargo but failed offline resolution of the pinned Git Asupersync revision on the selected worker. Zero reference tests ran. The full 13-case consumer then reported 10 passed, zero failed and three blocked: missing current reference evidence and the original two integration blockers. Later job 30104858719682873 passed on a worker with the exact pinned object already cached; the original failed attempt remains a zero-run failure.
 
 New typed GroupClock ingress and localhost UDP fixture changes are a separate source wave and are excluded from this snapshot.

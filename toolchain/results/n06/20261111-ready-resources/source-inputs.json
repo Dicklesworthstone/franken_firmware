@@ -1,6 +1,6 @@
 {
   "schema": "ffw.focused-source-inputs.v1",
-  "scope": "13 changed runtime/test files; complete selected 1535-file manifests are bound by the three receipt roots.",
+  "scope": "13 changed runtime/test files; complete selected 1535-file manifests are bound by the four receipt roots.",
   "base_commit": "664402621ffbdb0ec54132d0f3bf665a8a138eb3",
   "git_build_source": "unknown",
   "focused_inputs_delivered_commit": "6c066b73db374adade9443eb79d3c4e8578b924f",
@@ -92,6 +92,23 @@
       "command_sha256": "01c4b2642fa4678fb53e37f387207922d9453a7bc5efe4e696ea7e2274158197",
       "command_exit_code": 0,
       "selected_file_count": 1535
+    },
+    "reference": {
+      "build_id": "30104858719682873",
+      "receipt_root": "213a695791242273d890845c82ccc602fa042d0bc7a06280dfbfcd270965c17f",
+      "command_sha256": "64e71ba1d440e86b54a81e0f85299936344d8026ff808c1b1f037754ce063ff4",
+      "command_exit_code": 0,
+      "selected_file_count": 1535
     }
+  },
+  "full_consumer": {
+    "expected": 13,
+    "passed": 11,
+    "failed": 0,
+    "blocked": 2,
+    "not_run": 0,
+    "diagnostics_dropped": 0,
+    "qualified": false,
+    "combined_log_sha256": "25087dd397321a6caa01e5ffec51182244eb1c956ae458758c1f758383650b06"
   }
 }
