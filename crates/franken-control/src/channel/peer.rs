@@ -448,10 +448,13 @@ impl<S: SecretStore> PeerDirectory<S> {
     }
 
     /// Change the epoch a peer's key is bound to. Every earlier snapshot of the peer goes stale.
+    /// Returns `None` without changing either binding or version if the peer is absent or its
+    /// admission generation is exhausted. Generations never wrap or reuse an earlier snapshot.
     pub fn rebind(&mut self, peer: &PeerId, bound_epoch: Option<u64>) -> Option<u64> {
         let record = self.peers.get_mut(peer)?;
+        let next_version = record.version.checked_add(1)?;
         record.bound_epoch = bound_epoch;
-        record.version += 1;
+        record.version = next_version;
         Some(record.version)
     }
 
@@ -856,6 +859,71 @@ mod tests {
         assert_eq!((after.bound_epoch, after.version), (Some(11), 2));
         assert!(peers.is_current(&after));
         assert_eq!(peers.rebind(&id("nobody"), None), None);
+    }
+
+    #[test]
+    fn rebind_generation_exhaustion_preserves_authenticated_binding_without_wrapping() {
+        for initial_version in [u64::MAX - 1, u64::MAX] {
+            let mut peers = EphemeralPeers::new();
+            let peer = id("ctl-a");
+            let message = b"generation-boundary";
+            let proof = sign("ctl-a", message);
+            peers
+                .admit(
+                    &peer,
+                    PeerRole::Controller,
+                    &test_key("ctl-a"),
+                    Some(10),
+                    initial_version,
+                )
+                .unwrap();
+            let before = peers.authenticate(&peer, message, &proof).unwrap();
+            if initial_version == u64::MAX - 1 {
+                // The last legal transition succeeds and invalidates the previous snapshot.
+                assert_eq!(peers.rebind(&peer, Some(11)), Some(u64::MAX));
+                assert!(!peers.is_current(&before));
+            }
+            let ceiling = peers.authenticate(&peer, message, &proof).unwrap();
+            assert_eq!(ceiling.version, u64::MAX);
+            assert_eq!(
+                ceiling.bound_epoch,
+                Some(if initial_version == u64::MAX - 1 {
+                    11
+                } else {
+                    10
+                })
+            );
+            let tombstones = peers.tombstones();
+            for rejected_binding in [None, Some(12), ceiling.bound_epoch] {
+                assert_eq!(peers.rebind(&peer, rejected_binding), None);
+                assert_eq!(peers.version_of(&peer), Some(u64::MAX));
+                assert_eq!(peers.authenticate(&peer, message, &proof).unwrap(), ceiling);
+                assert!(peers.is_current(&ceiling));
+                assert_eq!(peers.key_slots(), 1);
+                assert_eq!(peers.tombstones(), tombstones);
+            }
+            // Refusal does not prevent revocation, nor permit resurrection at the ceiling.
+            assert!(peers.revoke(&peer));
+            assert!(!peers.is_current(&ceiling));
+            assert_eq!(peers.key_slots(), 0);
+            assert_eq!(
+                peers.authenticate(&peer, message, &proof),
+                Err(AuthFailure::Revoked)
+            );
+            assert_eq!(
+                peers.admit(
+                    &peer,
+                    PeerRole::Controller,
+                    &test_key("ctl-a"),
+                    Some(12),
+                    u64::MAX
+                ),
+                Err(AdmitError::Resurrection {
+                    tombstone: u64::MAX,
+                    offered: u64::MAX
+                })
+            );
+        }
     }
 
     #[test]

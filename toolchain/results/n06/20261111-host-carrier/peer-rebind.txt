@@ -1,0 +1,57 @@
+Peer admission generation exhaustion: actual host observations, 2026-11-11.
+Proof class: offline-host-synthetic. No board/provider/QEMU/runtime-profile qualification.
+Base source revision: b5d1bc8153ba60a5fde84201f992349f7c5e115b plus the peer.rs SHA-256 recorded below.
+The prior public rebind changed the epoch before incrementing a u64 that could already be MAX.
+The correction checks the increment before either field mutation and returns None unchanged at exhaustion.
+No prior failing execution is claimed. The source-derived counterexample is tested after correction.
+The one new actual-HMAC test covers direct MAX and MAX-1-to-MAX success, refused bindings with exact state preservation, revocation and resurrection refusal.
+Reproduction commands normalize worker selection and omit environment; exact executed-command hashes are recorded.
+
+[workspace]
+RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- cargo +1.99.0 test -p franken-stream -p franken-speaker -p franken-control --lib --locked -j1 --no-fail-fast -- --show-output
+Native build: 30103800983323136; remote command exit: 0.
+Exact executed-command SHA-256: 501f72a96029e56eae0e9591f57fd352ac1e12258a4df2bf3974f412d756128a
+Full private capture SHA-256: 0b7d709fc488733fb637d02e2214a2ef1eab645d38759d5e77dcac30f78a02d9
+Finished `test` profile [unoptimized] target(s) in 30.47s
+test channel::peer::tests::rebind_generation_exhaustion_preserves_authenticated_binding_without_wrapping ... ok
+test result: ok. 611 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.14s
+test result: ok. 450 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.58s
+test result: ok. 206 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.73s
+Terminal ACK and source/tree/pair/staging retirement were independently reconciled.
+
+[clippy]
+RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- cargo +1.99.0 clippy -p franken-stream -p franken-speaker -p franken-control --all-targets --locked -j1 --keep-going -- -D warnings
+Native build: 30103800983323137; remote command exit: 0.
+Exact executed-command SHA-256: 5543e53ad35de1eae8f31ed47bfdde53d4846c9294f77d94bc4b7a582a59a991
+Full private capture SHA-256: 09f77ee5c26a96bf7404b3ea0f60d1a27d5911ba2de22538177469813f64b8e3
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 41.48s
+Terminal ACK and source/tree/pair/staging retirement were independently reconciled.
+
+[Full N06 adapter: actual host execution]
+scripts/e2e/n06 --tier full --judge <workspace-log-above> --judge <unchanged-reference-log> --receipts <owned-output-dir>
+The standalone reference remains the prior unchanged-input build23096, not a new execution.
+N06-AUTH: passed
+N06-CORRUPTION: passed
+N06-OVERLOAD: passed
+N06-STORM: passed
+N06-CANCEL: passed
+N06-DEADLINE: passed
+N06-RESTART: passed
+N06-TAIL: passed
+N06-REFERENCE: passed
+N06-CONSUMER: passed
+N06-REPLAY: passed
+N06-CARRIER: blocked (typed ingress exists; authenticated peer selection and end-to-end carrier qualification remain pending)
+N06-PACED-SENDER: blocked (paced FEC sender candidate exists; combined native and original acceptance qualification remain pending)
+{"blocked": 2, "diagnostics_dropped": 0, "evidence_class": "offline-host-synthetic", "expected": 13, "failed": 0, "log_sha256": "f3783dd778ef33483f2d7ab0f3cadc8b85dc9c9b40d5102c37e4857f1a877ca4", "not_run": 0, "passed": 11, "production_fec_profile_admitted": false, "profile": "n06.host-hybrid.k4-r4.v1", "qualified": false, "schema": "n06.receipt.v1", "tier": "full"}
+Expected exit3; original full acceptance remains11passed/2blocked/0failed, qualified=false.
+No N02 or N06 bead is closed by this bounded correction.
+
+[Source SHA-256 matched to both worker receipts]
+299274daa39b9043d28fe08184bbeefac304d8ada520d37d6ced06372ca4fbc6  crates/franken-control/src/channel/peer.rs
+85376c17d19579326293aa4311b849e880ca4f9531e1cfef37ac630c039abcfd  crates/franken-control/src/channel/endpoint.rs
+cfa77070b4bb518647a9ef070f1cef9425704f02eadfa927ec149c3b87616641  crates/franken-control/src/channel/fec_negotiation.rs
+b79925f9dc3d50cf92f7fbb9741d449e5b92b25ab9f9ee941b84d21e72d4f04b  crates/franken-control/src/channel/endpoint/fec_ingress_tests.rs
+97f878b5a5a0932e396dba9ba9d13a1967d94ad043dd3151cd65643ab5b81972  docs/contracts/n06.md
+6aaae8aac3d87262cd7057749b84bb4df921dcee810dd5d03cfdddc1c4ebe107  Cargo.toml
+39e70649d690a342c74157bada974cfabaf76bfbbcb4dc05a33fa0af6181c58c  Cargo.lock
