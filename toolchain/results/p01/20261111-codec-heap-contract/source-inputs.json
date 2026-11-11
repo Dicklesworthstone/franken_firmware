@@ -1,0 +1,90 @@
+{
+  "schema": "ffw.dependency-contract-evidence.v1",
+  "base_commit": "e4c21da7067449b3522035ca8ac04bc19775d170",
+  "source_overlays": [
+    {
+      "path": "crates/franken-board-profile/tests/vectors/p01_workspace_contract.json",
+      "base_sha256": "44814347a9a92eb9eb55567eb99c09e1a44db8d79705b13182951650a51294bc",
+      "sha256": "a47cace7ee2dd0cee5bf1e48fa7853b39edaf2378d56c8caff8aa83a92adab67"
+    },
+    {
+      "path": "crates/franken-board-profile/tests/vectors/p01_contract_vectors.json",
+      "base_sha256": "cb64ccaa5cccc4431a5066a13da86bcfe14e66f13f23aebb9ba8ac10473dbb05",
+      "sha256": "7c7c55be7f94d84675e92269bb38951f04703d2ba1548d6b34a63895163376d3"
+    }
+  ],
+  "freeze_sha256": "fce3cf12e79e35234e095b2d1630ceabc586ba4a3d13924f2f2ebb61477f13ed",
+  "reviewed_frozen_file_count": 1558,
+  "vector_count": 143,
+  "identity_only_changes": 30,
+  "behavioral_expected_changes": 0,
+  "contract_digest": "9a8ac67c6d1f4604c85d65c86b26dc9402be5f5f86b4d5eb3f386df96b63b0a1",
+  "host_consumer": {
+    "totals": {
+      "blocked": 7,
+      "failed": 0,
+      "passed": 254,
+      "total": 261
+    },
+    "qualified": false,
+    "receipt_sha256": "7c8bce988542a8c571294de20eb86ecde40f7107c0abf723d8c1b30af6e34880",
+    "diagnostic_log": {
+      "bytes": 176734,
+      "critical_lost": false,
+      "dropped": 0,
+      "events": 523,
+      "sha256": "e75c8e1e946bbe006dfc4fc7964bc7abd78e50fd301c7f870ce5f35ae4fa2969",
+      "truncated": false
+    }
+  },
+  "native_attempts": [
+    {
+      "build_id": "30104858719683023",
+      "class": "source_transfer_timeout",
+      "cargo_started": false,
+      "native_tests_run": 0,
+      "source_receipt": false,
+      "terminal_ack": true,
+      "wrapper_absent": true,
+      "source_tree_pair_retired": true,
+      "wrapper_exit_code": 1,
+      "remote_exit_code": null,
+      "wrapper_execution_flag": false,
+      "local_staging": "not created",
+      "log_sha256": "514cc4e9d29939b4c2421275eacc90bf0e9aafc69037961b45c7c680ca78fe61"
+    },
+    {
+      "build_id": "30104858719683026",
+      "class": "remote_disk_admission_refusal",
+      "cargo_started": false,
+      "native_tests_run": 0,
+      "source_receipt": false,
+      "terminal_ack": true,
+      "wrapper_absent": true,
+      "source_tree_pair_retired": true,
+      "wrapper_exit_code": 120,
+      "remote_exit_code": 120,
+      "wrapper_execution_flag": true,
+      "local_staging": "not created",
+      "log_sha256": "ed01fcee8865bc56f16e26029d810cc70a9d137de7bef30ae5fd2779fe4036c7"
+    },
+    {
+      "build_id": "30104858719683029",
+      "class": "source_transfer_timeout",
+      "cargo_started": false,
+      "native_tests_run": 0,
+      "source_receipt": false,
+      "terminal_ack": true,
+      "wrapper_absent": true,
+      "source_tree_pair_retired": true,
+      "wrapper_exit_code": 1,
+      "remote_exit_code": null,
+      "wrapper_execution_flag": false,
+      "local_staging": "not created",
+      "log_sha256": "8231604af4f1eb56f338ddc2f2b4f284b28a92beda8943aeddb8a3dcfdb0785b"
+    }
+  ],
+  "native_contract_tests_executed": 0,
+  "native_clippy_submitted": false,
+  "compiler_or_runtime_qualification": false
+}

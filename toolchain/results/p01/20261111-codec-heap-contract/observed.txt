@@ -1,0 +1,11 @@
+root-p01-post-codec-baseline.log
+FAIL    P01-CON-002    the repository matches the declared contract: members, edges, lockfile, profiles, owners
+FAIL    P01-META-006   the runner's own machinery (selection, expansion, exit codes, exclusive receipts) holds
+P01 cases: tier=full total=261 passed=251 failed=2 blocked=8 | covered=22, inapplicable=2, partial=6 -> NOT QUALIFIED
+diag run=p01-full-20261111T195250Z-096fa31a: evidence COMPLETE; events=523 critical=523 dropped=0 critical_lost=0 bytes=177648 sha256=66643c39b012
+root-p01-codec-edge-canonical.log
+P01 cases: tier=full total=261 passed=254 failed=0 blocked=7 | covered=22, inapplicable=2, partial=6 -> NOT QUALIFIED
+diag run=p01-full-20261111T200148Z-04d4a3f1: evidence COMPLETE; events=523 critical=523 dropped=0 critical_lost=0 bytes=176734 sha256=e75c8e1e946b
+Native jobs 30104858719683023 / 30104858719683026 / 30104858719683029: Cargo not started; zero native tests.
+Board-profile Clippy: not submitted.
+143 vectors preserved; 30 identity digest fields recomputed; zero behavioral expectations changed.
