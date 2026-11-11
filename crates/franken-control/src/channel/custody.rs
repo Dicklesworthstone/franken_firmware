@@ -86,16 +86,73 @@
 //! [`SecretStore`]: crate::contracts::secret_store::SecretStore
 //! [`SecretValue`]: crate::contracts::secret_store::SecretValue
 
-use franken_journal::{Credential, Journal, JournalError, Recovery, Source, Storage};
+use franken_journal::{Credential, Journal, JournalError, Op, Recovery, Source, Storage};
 
 use super::peer::{
-    AdmitError, MAX_PEERS, MIN_KEY_LEN, PeerDirectory, PeerId, PeerRole, RestoreError, Tombstones,
+    AdmitError, ControlProfile, MIN_KEY_LEN, PeerDirectory, PeerId, PeerRole, RestoreError,
+    Tombstones,
 };
 use super::pipeline::Cause;
 use crate::contracts::secret_store::SecretStore;
 
 /// The first bytes of every control peer's credential id in the journal.
 pub const ID_PREFIX: &[u8] = b"cp:";
+
+/// Durable profile identity uses an existing U01 mark slot, never a credential slot.
+pub const CONTROL_PROFILE_KEY: &[u8] = b"n02.prof";
+const FLEET_PROFILE_MARK: u64 = 2;
+
+/// Existing unclaimed media is legacy. Fleet media must have been claimed while blank.
+pub(super) fn profile_matches<St: Storage>(journal: &Journal<St>, profile: ControlProfile) -> bool {
+    matches!(
+        (profile, journal.state().marks.get(CONTROL_PROFILE_KEY)),
+        (ControlProfile::Legacy, None)
+            | (ControlProfile::FleetDevelopment, Some(&FLEET_PROFILE_MARK))
+    )
+}
+
+/// Claim only a freshly opened blank medium for fleet control, before installing credentials.
+pub fn claim_fleet_profile<St: Storage>(
+    journal: &mut Journal<St>,
+    recovery: &Recovery,
+) -> Result<(), JournalError> {
+    claim_fleet_profile_with_marks(journal, recovery, &[])
+}
+
+/// Claim blank fleet media and reserve the caller's marks in the same journal transaction.
+/// The fleet profile has eight shared mark slots, one of which is the profile marker.
+pub fn claim_fleet_profile_with_marks<St: Storage>(
+    journal: &mut Journal<St>,
+    recovery: &Recovery,
+    extra_marks: &[(&[u8], u64)],
+) -> Result<(), JournalError> {
+    if recovery.source != Source::Blank || journal.state() != &franken_journal::State::default() {
+        return Err(JournalError::BadConfig);
+    }
+    if extra_marks.len() > 7 {
+        return Err(JournalError::BadConfig);
+    }
+    let mut ops = Vec::with_capacity(extra_marks.len() + 1);
+    ops.push(Op::Raise {
+        key: CONTROL_PROFILE_KEY.to_vec(),
+        value: FLEET_PROFILE_MARK,
+    });
+    for (index, (key, value)) in extra_marks.iter().enumerate() {
+        if key.is_empty() || key.len() > 16 {
+            return Err(JournalError::InvalidKey);
+        }
+        if *key == CONTROL_PROFILE_KEY || extra_marks[..index].iter().any(|(other, _)| other == key)
+        {
+            return Err(JournalError::BadConfig);
+        }
+        ops.push(Op::Raise {
+            key: key.to_vec(),
+            value: *value,
+        });
+    }
+    journal.commit(&ops)?;
+    Ok(())
+}
 
 /// The format byte of a stored record.
 const FORMAT: u8 = 1;
@@ -177,19 +234,22 @@ pub enum Restored {
 /// Why the journal's peers could not be put into the directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreFailed {
-    /// The journal holds more control-peer identities than a directory knows ([`MAX_PEERS`]). Nothing was changed.
+    /// Stored control profile does not match the requested profile.
+    ProfileMismatch,
+    /// The journal exceeds the selected directory profile; the fresh directory is latched unusable.
     TooMany { max: usize },
     /// The tombstones were refused, most likely because the directory is not fresh: restore goes first, before
     /// any admission, so no admission can precede the memory of its revocation. Nothing was changed.
     Tombstones(RestoreError),
-    /// The directory refused a live peer after the tombstones were in (its key store refused the key). The
-    /// directory is **partly filled**: discard it and start again from an empty one, which fails closed.
+    /// A live peer could not be restored; partial admissions were discarded and the directory is latched.
     Admit(AdmitError),
 }
 
 /// Why a call could not be completed. No variant carries a key or a record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CustodyError {
+    /// The journal belongs to a different profile or is unclaimed. Revocation still takes effect in memory.
+    ProfileMismatch,
     /// The directory would not take the admission (already live, at or below a tombstone, no room, key too
     /// short). Nothing was written.
     Admit(AdmitError),
@@ -248,9 +308,20 @@ pub fn restore_peers<S: SecretStore, St: Storage>(
         Ok((_, recovery)) if recovery.source == Source::Unrecoverable => {
             return Ok(Restored::Unreadable(Cause::Unrecoverable));
         }
-        Ok((_, recovery)) if recovery.source == Source::Blank => return Ok(Restored::FreshMedium),
         Ok((journal, _)) => journal,
     };
+    if !directory.is_fresh_for_restore() {
+        return Err(RestoreFailed::Tombstones(RestoreError::NotFresh));
+    }
+    if !profile_matches(journal, directory.profile()) {
+        directory.discard_failed_restore();
+        return Err(RestoreFailed::ProfileMismatch);
+    }
+    if matches!(opened, Ok((_, recovery)) if recovery.source == Source::Blank)
+        && journal.state().credentials.is_empty()
+    {
+        return Ok(Restored::FreshMedium);
+    }
     let mut live = Vec::new();
     let mut revoked = Vec::new();
     let mut skipped = 0usize;
@@ -267,8 +338,11 @@ pub fn restore_peers<S: SecretStore, St: Storage>(
             (None, _) => skipped += 1,
         }
     }
-    if live.len() + revoked.len() > MAX_PEERS {
-        return Err(RestoreFailed::TooMany { max: MAX_PEERS });
+    if live.len() + revoked.len() > directory.profile().max_identities() {
+        directory.discard_failed_restore();
+        return Err(RestoreFailed::TooMany {
+            max: directory.profile().max_identities(),
+        });
     }
     let (live_count, revoked_count) = (live.len(), revoked.len());
     let snapshot = Tombstones {
@@ -279,9 +353,10 @@ pub fn restore_peers<S: SecretStore, St: Storage>(
         .restore_tombstones(&snapshot)
         .map_err(RestoreFailed::Tombstones)?;
     for (peer, role, bound, key, version) in live {
-        directory
-            .admit(&peer, role, key, bound, version)
-            .map_err(RestoreFailed::Admit)?;
+        if let Err(error) = directory.admit(&peer, role, key, bound, version) {
+            directory.discard_failed_restore();
+            return Err(RestoreFailed::Admit(error));
+        }
     }
     Ok(Restored::Peers {
         live: live_count,
@@ -305,6 +380,9 @@ pub fn admit_durably<S: SecretStore, St: Storage>(
     bound_epoch: Option<u64>,
     version: u64,
 ) -> Result<(), CustodyError> {
+    if !profile_matches(journal, directory.profile()) {
+        return Err(CustodyError::ProfileMismatch);
+    }
     directory
         .check_admit(peer, key.len(), version)
         .map_err(CustodyError::Admit)?;
@@ -329,6 +407,9 @@ pub fn revoke_durably<S: SecretStore, St: Storage>(
     peer: &PeerId,
 ) -> Result<Revoked, CustodyError> {
     let was_live = directory.revoke(peer);
+    if !profile_matches(journal, directory.profile()) {
+        return Err(CustodyError::ProfileMismatch);
+    }
     match journal.revoke(&credential_id(peer)) {
         Ok(_) | Err(JournalError::AlreadyRevoked) => Ok(Revoked::Durable),
         Err(JournalError::NotFound) if was_live => Ok(Revoked::MemoryOnly),
@@ -351,6 +432,9 @@ pub fn rebind_durably<S: SecretStore, St: Storage>(
     peer: &PeerId,
     bound_epoch: Option<u64>,
 ) -> Result<u64, CustodyError> {
+    if !profile_matches(journal, directory.profile()) {
+        return Err(CustodyError::ProfileMismatch);
+    }
     let live = directory.version_of(peer).ok_or(CustodyError::NotLive)?;
     let id = credential_id(peer);
     let mut record = match journal.credential(&id) {
@@ -388,13 +472,16 @@ mod tests {
     use super::*;
     use crate::channel::limiter::RateLimit;
     use crate::channel::peer::ephemeral::{EphemeralPeers, test_key};
-    use crate::channel::peer::{AuthFailure, compute_proof};
+    use crate::channel::peer::{
+        AuthFailure, ControlProfile, MAX_PEERS, PeerAuthority, compute_proof,
+    };
     use crate::channel::pipeline::{
         ChannelConfig, ControlChannel, HIGH_WATER_KEY, Outcome, Rejection,
         Restored as MarkRestored, SubmitResult, restore_from_open, step_then_store,
     };
     use crate::channel::request::{ControlCommand, ControlRequest, RequestBody};
     use crate::channel::testkit::fixture_session;
+    use crate::contracts::secret_store::EphemeralSecretStore;
 
     const EPOCH: u64 = 10;
     const MS: u64 = 1_000_000;
@@ -1979,6 +2066,19 @@ mod tests {
             restore_peers(&mut directory, &opened),
             Err(RestoreFailed::TooMany { max: MAX_PEERS })
         );
+        assert_eq!(
+            directory.check_admit(&id("ctl-01"), MIN_KEY_LEN, 1),
+            Err(AdmitError::RestoreFailed)
+        );
+        assert!(
+            directory
+                .authenticate(
+                    &id("ctl-01"),
+                    b"x",
+                    &compute_proof(&test_key("ctl-01"), b"x")
+                )
+                .is_err()
+        );
         for i in 0..=MAX_PEERS {
             assert_eq!(
                 directory.version_of(&id(&profile_name(i))),
@@ -2002,5 +2102,539 @@ mod tests {
             })
         );
         assert_eq!(directory.key_slots(), MAX_PEERS);
+    }
+
+    #[test]
+    fn fleet_profile_durable_admission_restore_hmac_and_tombstones() {
+        let limits = Limits::fleet_control_development();
+        let mut medium = MemStorage::new(limits.segment_bytes);
+        let make_directory = || {
+            PeerDirectory::with_profile(
+                EphemeralSecretStore::fleet_control_development(),
+                ControlProfile::FleetDevelopment,
+            )
+        };
+        {
+            let (mut journal, recovery) = Journal::open(&mut medium, limits.clone()).unwrap();
+            claim_fleet_profile(&mut journal, &recovery).unwrap();
+            let mut directory = make_directory();
+            for i in 0..33 {
+                let name = format!("fleet-{i:02}");
+                admit_durably(
+                    &mut directory,
+                    &mut journal,
+                    &id(&name),
+                    PeerRole::Controller,
+                    &test_key(&name),
+                    Some(EPOCH),
+                    1,
+                )
+                .unwrap();
+                assert!(
+                    directory
+                        .authenticate(
+                            &id(&name),
+                            b"message",
+                            &compute_proof(&test_key(&name), b"message")
+                        )
+                        .is_ok()
+                );
+            }
+            let before = journal.frames_written();
+            assert_eq!(
+                admit_durably(
+                    &mut directory,
+                    &mut journal,
+                    &id("extra"),
+                    PeerRole::Controller,
+                    &test_key("extra"),
+                    Some(EPOCH),
+                    1
+                ),
+                Err(CustodyError::Admit(AdmitError::Full))
+            );
+            assert_eq!(journal.frames_written(), before);
+            assert_eq!(
+                revoke_durably(&mut directory, &mut journal, &id("fleet-03")),
+                Ok(Revoked::Durable)
+            );
+        }
+        let image = medium.durable();
+        let mut reborn = MemStorage::from_image(limits.segment_bytes, image);
+        {
+            let opened = Journal::open(&mut reborn, limits.clone());
+            let mut directory = make_directory();
+            assert_eq!(
+                restore_peers(&mut directory, &opened),
+                Ok(Restored::Peers {
+                    live: 32,
+                    revoked: 1,
+                    skipped: 0
+                })
+            );
+            for i in 0..33 {
+                if i == 3 {
+                    continue;
+                }
+                let name = format!("fleet-{i:02}");
+                assert!(
+                    directory
+                        .authenticate(
+                            &id(&name),
+                            b"after",
+                            &compute_proof(&test_key(&name), b"after")
+                        )
+                        .is_ok()
+                );
+            }
+            let (mut journal, _) = opened.unwrap();
+            let before = journal.frames_written();
+            assert!(matches!(
+                admit_durably(
+                    &mut directory,
+                    &mut journal,
+                    &id("fleet-03"),
+                    PeerRole::Controller,
+                    &test_key("fleet-03"),
+                    Some(EPOCH),
+                    1
+                ),
+                Err(CustodyError::Admit(AdmitError::Resurrection { .. }))
+            ));
+            assert_eq!(
+                admit_durably(
+                    &mut directory,
+                    &mut journal,
+                    &id("extra"),
+                    PeerRole::Controller,
+                    &test_key("extra"),
+                    Some(EPOCH),
+                    1
+                ),
+                Err(CustodyError::Admit(AdmitError::Full))
+            );
+            assert_eq!(journal.frames_written(), before);
+            admit_durably(
+                &mut directory,
+                &mut journal,
+                &id("fleet-03"),
+                PeerRole::Controller,
+                &test_key("fleet-03"),
+                Some(EPOCH),
+                2,
+            )
+            .unwrap();
+            assert!(
+                directory
+                    .authenticate(
+                        &id("fleet-03"),
+                        b"again",
+                        &compute_proof(&test_key("fleet-03"), b"again")
+                    )
+                    .is_ok()
+            );
+        }
+        let image = reborn.durable();
+        let mut third = MemStorage::from_image(limits.segment_bytes, image);
+        let opened = Journal::open(&mut third, limits);
+        let mut directory = make_directory();
+        assert_eq!(
+            restore_peers(&mut directory, &opened),
+            Ok(Restored::Peers {
+                live: 33,
+                revoked: 0,
+                skipped: 0
+            })
+        );
+        assert_eq!(directory.version_of(&id("fleet-03")), Some(2));
+        let mut legacy = EphemeralPeers::new();
+        assert_eq!(
+            restore_peers(&mut legacy, &opened),
+            Err(RestoreFailed::ProfileMismatch)
+        );
+        assert_eq!(legacy.key_slots(), 0);
+    }
+
+    #[test]
+    fn fleet_profile_reports_store_failure_after_durable_install_and_restores_with_capacity() {
+        let limits = Limits::fleet_control_development();
+        let mut medium = MemStorage::new(limits.segment_bytes);
+        {
+            let (mut journal, recovery) = Journal::open(&mut medium, limits.clone()).unwrap();
+            claim_fleet_profile(&mut journal, &recovery).unwrap();
+            let mut small = PeerDirectory::with_profile(
+                EphemeralSecretStore::with_capacity(1),
+                ControlProfile::FleetDevelopment,
+            );
+            admit_durably(
+                &mut small,
+                &mut journal,
+                &id("first"),
+                PeerRole::Controller,
+                &test_key("first"),
+                Some(EPOCH),
+                1,
+            )
+            .unwrap();
+            assert!(matches!(
+                admit_durably(
+                    &mut small,
+                    &mut journal,
+                    &id("second"),
+                    PeerRole::Controller,
+                    &test_key("second"),
+                    Some(EPOCH),
+                    1
+                ),
+                Err(CustodyError::StoredNotLive(AdmitError::Key(_)))
+            ));
+            assert!(journal.credential(&credential_id(&id("second"))).is_some());
+            assert_eq!(small.version_of(&id("second")), None);
+        }
+        let image = medium.durable();
+        let mut reborn = MemStorage::from_image(limits.segment_bytes, image);
+        let opened = Journal::open(&mut reborn, limits);
+        let mut sufficient = PeerDirectory::with_profile(
+            EphemeralSecretStore::fleet_control_development(),
+            ControlProfile::FleetDevelopment,
+        );
+        assert_eq!(
+            restore_peers(&mut sufficient, &opened),
+            Ok(Restored::Peers {
+                live: 2,
+                revoked: 0,
+                skipped: 0
+            })
+        );
+        assert!(
+            sufficient
+                .authenticate(
+                    &id("second"),
+                    b"restored",
+                    &compute_proof(&test_key("second"), b"restored")
+                )
+                .is_ok()
+        );
+        let mut small = PeerDirectory::with_profile(
+            EphemeralSecretStore::with_capacity(1),
+            ControlProfile::FleetDevelopment,
+        );
+        assert!(matches!(
+            restore_peers(&mut small, &opened),
+            Err(RestoreFailed::Admit(AdmitError::Key(_)))
+        ));
+        assert_eq!(small.version_of(&id("first")), None);
+        assert_eq!(small.version_of(&id("second")), None);
+        assert_eq!(
+            small.check_admit(&id("first"), MIN_KEY_LEN, 1),
+            Err(AdmitError::RestoreFailed)
+        );
+    }
+
+    #[test]
+    fn durable_profile_mismatch_without_floors_latches_fresh_authority_in_both_directions() {
+        let limits = Limits::fleet_control_development();
+        let fleet = || {
+            PeerDirectory::with_profile(
+                EphemeralSecretStore::fleet_control_development(),
+                ControlProfile::FleetDevelopment,
+            )
+        };
+        let legacy = || EphemeralPeers::new();
+        let mut medium = MemStorage::new(limits.segment_bytes);
+        {
+            let (mut journal, recovery) = Journal::open(&mut medium, limits.clone()).unwrap();
+            let mut directory = fleet();
+            let before = journal.frames_written();
+            assert_eq!(
+                admit_durably(
+                    &mut directory,
+                    &mut journal,
+                    &id("revoked"),
+                    PeerRole::Controller,
+                    &test_key("revoked"),
+                    Some(EPOCH),
+                    1
+                ),
+                Err(CustodyError::ProfileMismatch)
+            );
+            assert_eq!(journal.frames_written(), before);
+            claim_fleet_profile(&mut journal, &recovery).unwrap();
+            admit_durably(
+                &mut directory,
+                &mut journal,
+                &id("revoked"),
+                PeerRole::Controller,
+                &test_key("revoked"),
+                Some(EPOCH),
+                1,
+            )
+            .unwrap();
+            assert_eq!(
+                revoke_durably(&mut directory, &mut journal, &id("revoked")),
+                Ok(Revoked::Durable)
+            );
+            assert!(
+                !journal
+                    .state()
+                    .records
+                    .contains_key(crate::channel::pipeline::SEQ_FLOORS_KEY)
+            );
+        }
+        let mut reborn = MemStorage::from_image(limits.segment_bytes, medium.durable());
+        let opened = Journal::open(&mut reborn, limits.clone());
+        let mut wrong = legacy();
+        assert_eq!(
+            restore_peers(&mut wrong, &opened),
+            Err(RestoreFailed::ProfileMismatch)
+        );
+        assert_eq!(
+            wrong.admit(
+                &id("revoked"),
+                PeerRole::Controller,
+                &test_key("revoked"),
+                Some(EPOCH),
+                1
+            ),
+            Err(AdmitError::RestoreFailed)
+        );
+        assert!(
+            wrong
+                .authenticate(
+                    &id("revoked"),
+                    b"x",
+                    &compute_proof(&test_key("revoked"), b"x")
+                )
+                .is_err()
+        );
+        let mut right = fleet();
+        assert_eq!(
+            restore_peers(&mut right, &opened),
+            Ok(Restored::Peers {
+                live: 0,
+                revoked: 1,
+                skipped: 0
+            })
+        );
+        assert!(matches!(
+            right.admit(
+                &id("revoked"),
+                PeerRole::Controller,
+                &test_key("revoked"),
+                Some(EPOCH),
+                1
+            ),
+            Err(AdmitError::Resurrection { .. })
+        ));
+        right
+            .admit(
+                &id("revoked"),
+                PeerRole::Controller,
+                &test_key("revoked"),
+                Some(EPOCH),
+                2,
+            )
+            .unwrap();
+        assert!(
+            right
+                .authenticate(
+                    &id("revoked"),
+                    b"x",
+                    &compute_proof(&test_key("revoked"), b"x")
+                )
+                .is_ok()
+        );
+
+        let mut legacy_medium = MemStorage::new(limits.segment_bytes);
+        {
+            let (mut journal, _) = Journal::open(&mut legacy_medium, limits.clone()).unwrap();
+            let mut directory = legacy();
+            admit_durably(
+                &mut directory,
+                &mut journal,
+                &id("old"),
+                PeerRole::Controller,
+                &test_key("old"),
+                Some(EPOCH),
+                1,
+            )
+            .unwrap();
+            assert!(
+                !journal
+                    .state()
+                    .records
+                    .contains_key(crate::channel::pipeline::SEQ_FLOORS_KEY)
+            );
+        }
+        let mut copy = MemStorage::from_image(limits.segment_bytes, legacy_medium.durable());
+        let opened = Journal::open(&mut copy, limits);
+        let mut wrong = fleet();
+        assert_eq!(
+            restore_peers(&mut wrong, &opened),
+            Err(RestoreFailed::ProfileMismatch)
+        );
+        assert_eq!(
+            wrong.admit(
+                &id("old"),
+                PeerRole::Controller,
+                &test_key("old"),
+                Some(EPOCH),
+                1
+            ),
+            Err(AdmitError::RestoreFailed)
+        );
+        let mut right = legacy();
+        assert_eq!(
+            restore_peers(&mut right, &opened),
+            Ok(Restored::Peers {
+                live: 1,
+                revoked: 0,
+                skipped: 0
+            })
+        );
+        assert!(
+            right
+                .authenticate(&id("old"), b"x", &compute_proof(&test_key("old"), b"x"))
+                .is_ok()
+        );
+        let mut already_live = fleet();
+        already_live
+            .admit(
+                &id("live"),
+                PeerRole::Controller,
+                &test_key("live"),
+                Some(EPOCH),
+                1,
+            )
+            .unwrap();
+        assert_eq!(
+            restore_peers(&mut already_live, &opened),
+            Err(RestoreFailed::Tombstones(RestoreError::NotFresh))
+        );
+        assert!(
+            already_live
+                .authenticate(&id("live"), b"x", &compute_proof(&test_key("live"), b"x"))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn atomic_fleet_claim_validates_marks_and_preserves_no_extra_bytes() {
+        let limits = Limits::fleet_control_development();
+        let mut medium = MemStorage::new(limits.segment_bytes);
+        {
+            let (mut journal, recovery) = Journal::open(&mut medium, limits.clone()).unwrap();
+            let before = journal.frames_written();
+            for (marks, expected) in [
+                (vec![(CONTROL_PROFILE_KEY, 3)], JournalError::BadConfig),
+                (
+                    vec![(&b"same"[..], 0), (&b"same"[..], 1)],
+                    JournalError::BadConfig,
+                ),
+                (vec![(&b""[..], 0)], JournalError::InvalidKey),
+                (
+                    vec![(&b"12345678901234567"[..], 0)],
+                    JournalError::InvalidKey,
+                ),
+            ] {
+                assert_eq!(
+                    claim_fleet_profile_with_marks(&mut journal, &recovery, &marks),
+                    Err(expected)
+                );
+                assert_eq!(journal.frames_written(), before);
+                assert!(journal.state().marks.is_empty());
+            }
+            let too_many = vec![(&b"x"[..], 0); 8];
+            assert_eq!(
+                claim_fleet_profile_with_marks(&mut journal, &recovery, &too_many),
+                Err(JournalError::BadConfig)
+            );
+            assert_eq!(journal.frames_written(), before);
+            claim_fleet_profile_with_marks(
+                &mut journal,
+                &recovery,
+                &[(HIGH_WATER_KEY, 0), (b"n06.prop", 0)],
+            )
+            .unwrap();
+            assert_eq!(journal.frames_written(), before + 1);
+            assert_eq!(journal.state().marks.get(CONTROL_PROFILE_KEY), Some(&2));
+            assert_eq!(journal.state().marks.get(HIGH_WATER_KEY), Some(&0));
+            assert_eq!(journal.state().marks.get(&b"n06.prop"[..]), Some(&0));
+            assert_eq!(
+                claim_fleet_profile_with_marks(&mut journal, &recovery, &[]),
+                Err(JournalError::BadConfig)
+            );
+        }
+        let mut old_style = MemStorage::new(limits.segment_bytes);
+        let mut delegated = MemStorage::new(limits.segment_bytes);
+        {
+            let (mut journal, _) = Journal::open(&mut old_style, limits.clone()).unwrap();
+            journal
+                .raise_mark(CONTROL_PROFILE_KEY, FLEET_PROFILE_MARK)
+                .unwrap();
+        }
+        {
+            let (mut journal, recovery) = Journal::open(&mut delegated, limits).unwrap();
+            claim_fleet_profile(&mut journal, &recovery).unwrap();
+        }
+        assert_eq!(old_style.durable(), delegated.durable());
+    }
+
+    #[test]
+    fn atomic_fleet_claim_recovers_all_or_none_at_every_storage_cut() {
+        let limits = Limits::fleet_control_development();
+        let run = |cut: Option<(usize, usize)>| {
+            let mut medium = MemStorage::new(limits.segment_bytes);
+            let (pending, accepted) = {
+                let (mut journal, recovery) = Journal::open(&mut medium, limits.clone()).unwrap();
+                let start = journal.storage().ops_done();
+                if let Some((offset, bytes)) = cut {
+                    journal.storage_mut().cut_after_ops = Some(start + offset);
+                    journal.storage_mut().cut_budget = bytes;
+                }
+                let accepted = claim_fleet_profile_with_marks(
+                    &mut journal,
+                    &recovery,
+                    &[(HIGH_WATER_KEY, 0), (b"n06.prop", 0)],
+                )
+                .is_ok();
+                let end = journal.storage().ops_done();
+                (
+                    journal.storage().pending_before()[start..end].to_vec(),
+                    accepted,
+                )
+            };
+            (medium.durable().to_vec(), pending, accepted)
+        };
+        let (image, pending, accepted) = run(None);
+        assert!(accepted);
+        assert!(!pending.is_empty());
+        let mut cuts = vec![(image, true)];
+        for (offset, &bytes) in pending.iter().enumerate() {
+            for kept in 0..=bytes {
+                let (image, _, accepted) = run(Some((offset, kept)));
+                cuts.push((image, accepted));
+            }
+        }
+        let (mut old, mut new) = (0, 0);
+        for (image, accepted) in cuts {
+            let mut restored = MemStorage::from_image(limits.segment_bytes, &image);
+            let (journal, _) = Journal::open(&mut restored, limits.clone()).unwrap();
+            let marks = &journal.state().marks;
+            let observed = (
+                marks.get(CONTROL_PROFILE_KEY).copied(),
+                marks.get(HIGH_WATER_KEY).copied(),
+                marks.get(&b"n06.prop"[..]).copied(),
+            );
+            match observed {
+                (None, None, None) => {
+                    old += 1;
+                    assert!(!accepted);
+                }
+                (Some(2), Some(0), Some(0)) => new += 1,
+                _ => panic!("partial atomic fleet claim: {observed:?}"),
+            }
+        }
+        assert!(old > 0 && new > 0);
     }
 }

@@ -1,0 +1,128 @@
+Observed native host output EXCERPTS (not full captures).
+ANSI codes, remote paths, infrastructure addresses and unrelated output omitted.
+Test rows and result lines below are copied without changing their text.
+No Sonos hardware, QEMU guest or provider execution is asserted.
+
+=== control; native build 30103800983323291; command exit 0 ===
+    Finished `test` profile [unoptimized] target(s) in 10.20s
+test channel::owner::tests::fleet_owner_failed_proposal_persistence_preserves_local_silence ... ok
+test channel::owner::tests::fleet_owner_g03_commit_retry_and_restart_use_the_same_durable_authority ... ok
+test channel::owner::tests::fleet_owner_legacy_identity_cannot_bypass_durable_control_through_raw_wire ... ok
+test channel::owner::tests::fleet_owner_new_round_cannot_refill_endpoint_fec_work_budget ... ok
+test channel::owner::tests::fleet_owner_refuses_existing_counterless_media_instead_of_reusing_round_ids ... ok
+test channel::owner::tests::fleet_owner_reserves_marks_before_unrelated_capacity_is_consumed ... ok
+test channel::owner::tests::fleet_owner_revoke_and_rebind_survive_boot_without_resurrection ... ok
+test channel::owner::tests::fleet_owner_rejects_corrupt_peer_state_and_exhausted_proposal_ids ... ok
+test channel::owner::tests::fleet_owner_restores_33_credentials_and_requires_21_real_signed_member_acks ... ok
+FLEET_OWNER host-model: restored_peers=Peers { live: 2, revoked: 0, skipped: 0 } floors=Table { identities: 1 } final_revision=5 volume=70
+test result: ok. 633 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.19s
+
+=== workspace; native build 30103800983323292; command exit 0 ===
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    Finished `test` profile [unoptimized] target(s) in 7m 02s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.74s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.84s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 95 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 102 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.65s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.28s
+test channel::owner::tests::fleet_owner_revoke_and_rebind_survive_boot_without_resurrection ... ok
+test channel::owner::tests::fleet_owner_reserves_marks_before_unrelated_capacity_is_consumed ... ok
+test channel::owner::tests::fleet_owner_refuses_existing_counterless_media_instead_of_reusing_round_ids ... ok
+test channel::owner::tests::fleet_owner_failed_proposal_persistence_preserves_local_silence ... ok
+test channel::owner::tests::fleet_owner_rejects_corrupt_peer_state_and_exhausted_proposal_ids ... ok
+test channel::owner::tests::fleet_owner_g03_commit_retry_and_restart_use_the_same_durable_authority ... ok
+test channel::owner::tests::fleet_owner_new_round_cannot_refill_endpoint_fec_work_budget ... ok
+test channel::owner::tests::fleet_owner_legacy_identity_cannot_bypass_durable_control_through_raw_wire ... ok
+test channel::owner::tests::fleet_owner_restores_33_credentials_and_requires_21_real_signed_member_acks ... ok
+FLEET_OWNER host-model: restored_peers=Peers { live: 2, revoked: 0, skipped: 0 } floors=Table { identities: 1 } final_revision=5 volume=70
+test result: ok. 633 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 176 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.86s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+test result: ok. 161 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.89s
+test u01_proc_the_old_or_new_check_rejects_a_state_that_is_neither ... ok
+test u01_proc_a_waiting_child_whose_parent_is_gone_leaves_by_itself_and_does_not_abort ... ok
+test u01_proc_a_capped_stdout_does_not_bypass_the_child_deadline_or_leave_it_alive ... ok
+test u01_proc_the_child_waits_alive_at_the_cut_and_only_the_parents_kill_ends_it ... ok
+test u01_proc_every_hostile_image_recovers_in_a_real_process_as_the_reference_says ... ok
+test u01_proc_a_clean_run_commits_every_step_and_a_fresh_process_recovers_the_exact_reference_bytes ... ok
+test u01_proc_sigkill_after_an_acknowledged_step_recovers_exactly_the_old_or_the_new_state ... ok
+test u01_proc_a_kill_at_the_cut_leaves_the_same_image_as_an_abort_at_the_same_byte ... ok
+test u01_proc_a_process_killed_at_sampled_bytes_recovers_exactly_the_old_or_the_new_state ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 44.62s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.57s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 248 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 113 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.92s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test fsonos_loopback::fleet_tests::failed_control_factory_refuses_start_without_legacy_fallback ... ok
+test fsonos_loopback::fleet_tests::fleet_loopback_authenticates_commits_and_restores_replay_floor ... ok
+test result: ok. 452 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.59s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 206 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test n07_s3_saturation_control_priority ... ok
+test n07_s4_epoch_fence ... ok
+test n07_s1_zero_loss_paced ... ok
+test n07_s5_mtu_admission_address_family ... ok
+test n07_s6_link_and_address_change ... ok
+test n07_s2_slow_peer_isolated ... ok
+test n07_s7_loss_and_reorder ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.73s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.49s
+
+=== journal; native build 30103800983323300; command exit 0 ===
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `test` profile [unoptimized] target(s) in 1m 01s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.88s
+test u01_proc_the_old_or_new_check_rejects_a_state_that_is_neither ... ok
+test u01_proc_a_waiting_child_whose_parent_is_gone_leaves_by_itself_and_does_not_abort ... ok
+test u01_proc_the_child_waits_alive_at_the_cut_and_only_the_parents_kill_ends_it ... ok
+test u01_proc_a_capped_stdout_does_not_bypass_the_child_deadline_or_leave_it_alive ... ok
+test u01_proc_every_hostile_image_recovers_in_a_real_process_as_the_reference_says ... ok
+test u01_proc_a_clean_run_commits_every_step_and_a_fresh_process_recovers_the_exact_reference_bytes ... ok
+test u01_proc_sigkill_after_an_acknowledged_step_recovers_exactly_the_old_or_the_new_state ... ok
+test u01_proc_a_kill_at_the_cut_leaves_the_same_image_as_an_abort_at_the_same_byte ... ok
+test u01_proc_a_process_killed_at_sampled_bytes_recovers_exactly_the_old_or_the_new_state ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 53.86s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.46s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== clippy; native build 30103800983323303; command exit 0 ===
+    Finished `dev` profile [unoptimized] target(s) in 52.75s

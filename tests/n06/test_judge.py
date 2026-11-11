@@ -19,8 +19,20 @@ class Controls(unittest.TestCase):
 
     def test_owned_source_registry_and_pending_integration_are_explicit(self):
         run_cases.source_registry()
-        self.assertEqual(len({name for rows in run_cases.CASES.values() for _, name in rows}), 65)
+        self.assertEqual(len({name for rows in run_cases.CASES.values() for _, name in rows}), 74)
         self.assertEqual(set(run_cases.PENDING), {"N06-CARRIER", "N06-PACED-SENDER"})
+
+    def test_durable_owner_names_are_required_by_existing_consumer_case(self):
+        required = {(stem, name) for stem, name in run_cases.CASES["N06-CONSUMER"]
+                    if stem == "franken_control"}
+        self.assertEqual(required, {
+            ("franken_control", "channel::owner::tests::" + name)
+            for name in run_cases.OWNER_TESTS
+        })
+        self.assertEqual(len(required), 9)
+        # The added native checks cannot displace the existing 65 requirements.
+        all_names = {name for rows in run_cases.CASES.values() for _, name in rows}
+        self.assertEqual(len(all_names - {name for _, name in required}), 65)
 
     def test_missing_native_never_shrinks_denominator_or_qualifies(self):
         output = io.StringIO()

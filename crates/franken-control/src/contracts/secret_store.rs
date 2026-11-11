@@ -321,6 +321,15 @@ impl EphemeralSecretStore {
             capacity: capacity.min(MAX_SECRETS),
         }
     }
+
+    /// Volatile test store for the explicitly selected 33-identity development profile.
+    #[must_use]
+    pub fn fleet_control_development() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            capacity: 33,
+        }
+    }
 }
 
 /// Shows how many entries exist and nothing about them.
@@ -608,6 +617,20 @@ mod tests {
         assert_eq!(
             store.insert(&extra, value(b"k")).unwrap_err(),
             SecretError::StoreFull { max: MAX_SECRETS }
+        );
+    }
+
+    #[test]
+    fn fleet_development_store_accepts_33_and_refuses_34() {
+        let mut store = EphemeralSecretStore::fleet_control_development();
+        for i in 0..33 {
+            let h = handle(SecretKind::ControlPeerKey, &format!("slot-{i}"));
+            store.insert(&h, value(b"key")).unwrap();
+        }
+        let extra = handle(SecretKind::ControlPeerKey, "extra");
+        assert_eq!(
+            store.insert(&extra, value(b"key")).unwrap_err(),
+            SecretError::StoreFull { max: 33 }
         );
     }
 

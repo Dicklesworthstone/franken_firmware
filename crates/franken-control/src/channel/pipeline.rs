@@ -566,6 +566,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
     pub fn new(authority: A, config: ChannelConfig) -> Result<Self, ConfigError> {
         config.validate()?;
         let ledger = OutcomeLedger::new(config.ledger_capacity, config.retention_ns)?;
+        let profile = authority.control_profile();
         Ok(Self {
             authority,
             next_session_seq: config.session_seq_base,
@@ -576,7 +577,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
             ordinary: VecDeque::new(),
             priority: VecDeque::new(),
             ledger,
-            seq_floors: SeqFloors::new(),
+            seq_floors: SeqFloors::with_profile(profile),
             unstable_retry: BTreeSet::new(),
             durability: Durability::Healthy,
             store_cause: None,
@@ -1228,7 +1229,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
     }
 
     /// Latch the durable path failed. Nothing is staged or written until the owner reopens the journal.
-    fn latch_durability(&mut self, code: &'static str) {
+    pub(super) fn latch_durability(&mut self, code: &'static str) {
         self.durability = Durability::Failed { code };
     }
 

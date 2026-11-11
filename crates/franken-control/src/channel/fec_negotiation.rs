@@ -11,7 +11,7 @@ use franken_session::UnifiedGroupSession;
 use sha2::{Digest, Sha256};
 
 use super::peer::{
-    AuthProof, Authenticated, MAX_PEERS, PROOF_LEN, PeerAuthority, PeerId, PeerRole,
+    AuthProof, Authenticated, ControlProfile, PROOF_LEN, PeerAuthority, PeerId, PeerRole,
 };
 
 pub const MAGIC: [u8; 4] = *b"FFCN";
@@ -207,6 +207,7 @@ impl VerifiedFecSelection {
 
 /// One bounded negotiation attempt over an immutable group snapshot.
 pub struct FecCoordinator {
+    profile: ControlProfile,
     expected: FecProposal,
     proposer: PeerId,
     proposer_role: PeerRole,
@@ -227,13 +228,34 @@ impl FecCoordinator {
         origin_ns: u64,
         proposal_id: u64,
     ) -> Result<Self, FecError> {
+        Self::new_with_profile(
+            session,
+            proposer,
+            proposer_role,
+            bindings,
+            (stream, origin_ns, proposal_id),
+            ControlProfile::Legacy,
+        )
+    }
+
+    /// Construct a negotiation using an explicitly selected control identity budget.
+    pub fn new_with_profile(
+        session: &UnifiedGroupSession,
+        proposer: PeerId,
+        proposer_role: PeerRole,
+        bindings: Vec<MemberBinding>,
+        timing: (u64, u64, u64),
+        profile: ControlProfile,
+    ) -> Result<Self, FecError> {
+        let (stream, origin_ns, proposal_id) = timing;
         if session.current_epoch == 0
             || session.group_id.is_empty()
             || session.group_id.len() > MAX_GROUP_BYTES
             || stream == 0
             || proposal_id == 0
             || bindings.is_empty()
-            || bindings.len() > MAX_PEERS
+            || bindings.len() > franken_session::MAX_GROUP_MEMBERS
+            || bindings.len() > profile.max_identities()
         {
             return Err(FecError::Malformed);
         }
@@ -254,7 +276,7 @@ impl FecCoordinator {
             }
         }
         if members.len() != session.members.len()
-            || peers.len() + usize::from(!peers.contains(&proposer)) > MAX_PEERS
+            || peers.len() + usize::from(!peers.contains(&proposer)) > profile.max_identities()
         {
             return Err(FecError::Unauthorized);
         }
@@ -281,6 +303,7 @@ impl FecCoordinator {
             membership_digest: digest.finalize().into(),
         };
         Ok(Self {
+            profile,
             expected,
             proposer,
             proposer_role,
@@ -311,6 +334,9 @@ impl FecCoordinator {
         authority: &A,
         session: &UnifiedGroupSession,
     ) -> Result<Ingress, FecError> {
+        if authority.control_profile() != self.profile {
+            return Err(FecError::Unauthorized);
+        }
         let DecodedMessage {
             kind,
             peer,
@@ -395,6 +421,9 @@ impl FecCoordinator {
         authority: &A,
         session: &UnifiedGroupSession,
     ) -> Result<VerifiedFecSelection, FecError> {
+        if authority.control_profile() != self.profile {
+            return Err(FecError::Unauthorized);
+        }
         if !self.snapshot_matches(session) {
             return Err(FecError::Stale);
         }
@@ -675,6 +704,238 @@ mod tests {
             rig.session.current_epoch, EPOCH,
             "selection does not perform cutover"
         );
+    }
+
+    #[test]
+    fn fleet_control_profile_requires_real_twenty_one_member_acknowledgments() {
+        use crate::channel::peer::PeerDirectory;
+        use crate::contracts::secret_store::EphemeralSecretStore;
+        use franken_session::{ChannelRole, FencedControlCommand, GroupCommandPayload};
+
+        let mut session = fixture_session(EPOCH);
+        let board = franken_board_profile::synthetic_test_fixture_catalog()
+            .into_iter()
+            .find(|profile| profile.model_number == "S5")
+            .unwrap();
+        for i in 2..21 {
+            session
+                .apply_command(FencedControlCommand {
+                    epoch: EPOCH,
+                    command_seq: i as u64 + 1,
+                    payload: GroupCommandPayload::AdmitMember {
+                        member_id: format!("member-{i:02}"),
+                        board: board.clone(),
+                        role: ChannelRole::Stereo,
+                    },
+                })
+                .unwrap();
+        }
+        let mut directory = PeerDirectory::with_profile(
+            EphemeralSecretStore::fleet_control_development(),
+            ControlProfile::FleetDevelopment,
+        );
+        let mut bindings = Vec::new();
+        for (i, member) in session.members.keys().enumerate() {
+            let peer = format!("peer-{i:02}");
+            directory
+                .admit(
+                    &id(&peer),
+                    PeerRole::Controller,
+                    &test_key(&peer),
+                    Some(EPOCH),
+                    1,
+                )
+                .unwrap();
+            bindings.push(MemberBinding {
+                member: member.clone(),
+                peer: id(&peer),
+                role: PeerRole::Controller,
+            });
+        }
+        directory
+            .admit(
+                &id("proposer"),
+                PeerRole::Controller,
+                &test_key("proposer"),
+                Some(EPOCH),
+                1,
+            )
+            .unwrap();
+        assert!(
+            FecCoordinator::new(
+                &session,
+                id("proposer"),
+                PeerRole::Controller,
+                bindings.clone(),
+                42,
+                900_000_000,
+                721
+            )
+            .is_err()
+        );
+        let mut coordinator = FecCoordinator::new_with_profile(
+            &session,
+            id("proposer"),
+            PeerRole::Controller,
+            bindings.clone(),
+            (42, 900_000_000, 721),
+            ControlProfile::FleetDevelopment,
+        )
+        .unwrap();
+        let mut channel = ControlChannel::new(directory, ChannelConfig::provisional()).unwrap();
+        let mut endpoint = Endpoint::new();
+        let mut now = 0;
+        for (index, name) in std::iter::once("proposer".to_string())
+            .chain(bindings.iter().map(|b| b.peer.as_str().to_string()))
+            .enumerate()
+        {
+            let kind = if index == 0 {
+                MessageKind::Proposal
+            } else {
+                MessageKind::Ack
+            };
+            let peer = id(&name);
+            let signed = signing_bytes(kind, &peer, 1, coordinator.proposal());
+            let wire = encode(
+                kind,
+                &peer,
+                1,
+                coordinator.proposal(),
+                &compute_proof(&test_key(&name), &signed),
+            )
+            .unwrap();
+            if index == 21 {
+                assert_eq!(
+                    coordinator.validated_selection(channel.authority(), &session),
+                    Err(FecError::MissingAcknowledgments)
+                );
+                let mut wrong = wire.clone();
+                *wrong.last_mut().unwrap() ^= 1;
+                assert_eq!(
+                    endpoint.handle_with_fec(&mut channel, &mut coordinator, now, &session, &wrong),
+                    FecHandled::Fec(Err(FecError::Authentication))
+                );
+                now += 10_000_000;
+            }
+            assert_eq!(
+                endpoint.handle_with_fec(&mut channel, &mut coordinator, now, &session, &wire),
+                FecHandled::Fec(Ok(if index == 0 {
+                    Ingress::Proposed
+                } else {
+                    Ingress::Acknowledged
+                }))
+            );
+            now += 10_000_000;
+        }
+        assert_eq!(
+            coordinator
+                .validated_selection(channel.authority(), &session)
+                .unwrap()
+                .members()
+                .len(),
+            21
+        );
+    }
+
+    #[test]
+    fn fleet_control_profile_accepts_32_bindings_and_separate_proposer_only() {
+        use franken_session::{ChannelRole, FencedControlCommand, GroupCommandPayload};
+        let mut session = fixture_session(EPOCH);
+        let board = franken_board_profile::synthetic_test_fixture_catalog()
+            .into_iter()
+            .find(|profile| profile.model_number == "S5")
+            .unwrap();
+        for i in 2..32 {
+            session
+                .apply_command(FencedControlCommand {
+                    epoch: EPOCH,
+                    command_seq: i as u64 + 1,
+                    payload: GroupCommandPayload::AdmitMember {
+                        member_id: format!("member-{i:02}"),
+                        board: board.clone(),
+                        role: ChannelRole::Stereo,
+                    },
+                })
+                .unwrap();
+        }
+        let bindings: Vec<_> = session
+            .members
+            .keys()
+            .enumerate()
+            .map(|(i, member)| MemberBinding {
+                member: member.clone(),
+                peer: id(&format!("peer-{i:02}")),
+                role: PeerRole::Controller,
+            })
+            .collect();
+        assert!(
+            FecCoordinator::new_with_profile(
+                &session,
+                id("proposer"),
+                PeerRole::Controller,
+                bindings.clone(),
+                (42, 900_000_000, 721),
+                ControlProfile::FleetDevelopment
+            )
+            .is_ok()
+        );
+        assert!(
+            FecCoordinator::new(
+                &session,
+                id("proposer"),
+                PeerRole::Controller,
+                bindings.clone(),
+                42,
+                900_000_000,
+                721
+            )
+            .is_err()
+        );
+        let mut duplicate = bindings;
+        duplicate[31].peer = duplicate[0].peer.clone();
+        assert!(matches!(
+            FecCoordinator::new_with_profile(
+                &session,
+                id("proposer"),
+                PeerRole::Controller,
+                duplicate,
+                (42, 900_000_000, 721),
+                ControlProfile::FleetDevelopment
+            ),
+            Err(FecError::Unauthorized)
+        ));
+        session
+            .apply_command(FencedControlCommand {
+                epoch: EPOCH,
+                command_seq: 33,
+                payload: GroupCommandPayload::AdmitMember {
+                    member_id: "extra".into(),
+                    board,
+                    role: ChannelRole::Stereo,
+                },
+            })
+            .unwrap();
+        let too_many: Vec<_> = session
+            .members
+            .keys()
+            .enumerate()
+            .map(|(i, member)| MemberBinding {
+                member: member.clone(),
+                peer: id(&format!("peer-{i:02}")),
+                role: PeerRole::Controller,
+            })
+            .collect();
+        assert!(matches!(
+            FecCoordinator::new_with_profile(
+                &session,
+                id("proposer"),
+                PeerRole::Controller,
+                too_many,
+                (42, 900_000_000, 721),
+                ControlProfile::FleetDevelopment
+            ),
+            Err(FecError::Malformed)
+        ));
     }
 
     #[test]

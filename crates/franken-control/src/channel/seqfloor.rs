@@ -40,7 +40,7 @@ use std::collections::BTreeMap;
 
 use sha2::{Digest, Sha256};
 
-use super::peer::{MAX_PEERS, PeerId};
+use super::peer::{ControlProfile, MAX_PEERS, PeerId};
 
 /// Bytes of an identity's tag.
 pub const TAG_LEN: usize = 6;
@@ -50,9 +50,9 @@ pub const ENTRY_LEN: usize = TAG_LEN + 8;
 pub const HEADER_LEN: usize = 2;
 /// The format byte of the record.
 pub const FORMAT: u8 = 1;
-/// Most identities a table holds: the most the peer directory ever admits.
+/// Most identities in the legacy profile.
 pub const MAX_ENTRIES: usize = MAX_PEERS;
-/// The longest an encoded table can be.
+/// The longest an encoded legacy table can be.
 pub const MAX_ENCODED_LEN: usize = HEADER_LEN + MAX_ENTRIES * ENTRY_LEN;
 /// Domain separation: a tag made for another purpose over the same label is not a floor tag.
 const TAG_CONTEXT: &[u8] = b"FFCP-v1-seqfloor";
@@ -92,6 +92,7 @@ pub enum DecodeError {
 pub struct SeqFloors {
     floors: BTreeMap<Tag, u64>,
     refusing: bool,
+    profile: ControlProfile,
 }
 
 impl SeqFloors {
@@ -101,13 +102,33 @@ impl SeqFloors {
         Self::default()
     }
 
+    #[must_use]
+    pub fn with_profile(profile: ControlProfile) -> Self {
+        Self {
+            floors: BTreeMap::new(),
+            refusing: false,
+            profile,
+        }
+    }
+
+    #[must_use]
+    pub const fn profile(&self) -> ControlProfile {
+        self.profile
+    }
+
     /// The table of a channel that could not read its record: every identity's floor is the largest number, so
     /// every relative command is answered `OutOfWindow`, and no floor can be raised.
     #[must_use]
     pub fn refusing() -> Self {
+        Self::refusing_with_profile(ControlProfile::Legacy)
+    }
+
+    #[must_use]
+    pub fn refusing_with_profile(profile: ControlProfile) -> Self {
         Self {
             floors: BTreeMap::new(),
             refusing: true,
+            profile,
         }
     }
 
@@ -148,7 +169,7 @@ impl SeqFloors {
         match next.floors.get_mut(&tag) {
             Some(floor) => *floor = (*floor).max(seq),
             None => {
-                if next.floors.len() >= MAX_ENTRIES {
+                if next.floors.len() >= self.profile.max_identities() {
                     return None;
                 }
                 next.floors.insert(tag, seq);
@@ -161,20 +182,21 @@ impl SeqFloors {
     /// together name more identities than a record holds (nothing can then be said for the rest).
     #[must_use]
     pub fn merged(&self, other: &Self) -> Self {
-        if self.refusing || other.refusing {
-            return Self::refusing();
+        if self.refusing || other.refusing || self.profile != other.profile {
+            return Self::refusing_with_profile(self.profile);
         }
         let mut floors = self.floors.clone();
         for (tag, floor) in &other.floors {
             let entry = floors.entry(*tag).or_insert(*floor);
             *entry = (*entry).max(*floor);
         }
-        if floors.len() > MAX_ENTRIES {
-            return Self::refusing();
+        if floors.len() > self.profile.max_identities() {
+            return Self::refusing_with_profile(self.profile);
         }
         Self {
             floors,
             refusing: false,
+            profile: self.profile,
         }
     }
 
@@ -183,7 +205,10 @@ impl SeqFloors {
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(HEADER_LEN + self.floors.len() * ENTRY_LEN);
-        out.push(FORMAT);
+        out.push(match self.profile {
+            ControlProfile::Legacy => FORMAT,
+            ControlProfile::FleetDevelopment => 2,
+        });
         out.push(u8::try_from(self.floors.len()).unwrap_or(u8::MAX));
         for (tag, floor) in &self.floors {
             out.extend_from_slice(tag);
@@ -198,17 +223,25 @@ impl SeqFloors {
     /// [`DecodeError`] by name: a short record, another format, more identities than the directory admits, a length
     /// that disagrees with the count, entries out of order or repeated.
     pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+        Self::decode_with_profile(bytes, ControlProfile::Legacy)
+    }
+
+    pub fn decode_with_profile(bytes: &[u8], profile: ControlProfile) -> Result<Self, DecodeError> {
         let [format, count, rest @ ..] = bytes else {
             return Err(DecodeError::Short);
         };
-        if *format != FORMAT {
+        let expected_format = match profile {
+            ControlProfile::Legacy => FORMAT,
+            ControlProfile::FleetDevelopment => 2,
+        };
+        if *format != expected_format {
             return Err(DecodeError::Format(*format));
         }
         let count = usize::from(*count);
-        if count > MAX_ENTRIES {
+        if count > profile.max_identities() {
             return Err(DecodeError::TooMany {
                 count,
-                max: MAX_ENTRIES,
+                max: profile.max_identities(),
             });
         }
         let expected = HEADER_LEN + count * ENTRY_LEN;
@@ -234,6 +267,7 @@ impl SeqFloors {
         Ok(Self {
             floors,
             refusing: false,
+            profile,
         })
     }
 }
@@ -407,5 +441,210 @@ mod tests {
         assert!(a.merged(&b).is_refusing());
         // The permitted positive: nine and the same nine merge to nine.
         assert_eq!(a.merged(&a).len(), 9);
+    }
+
+    #[test]
+    fn fleet_floors_survive_journal_compaction_and_restore_fail_closed_on_downgrade() {
+        use crate::channel::peer::PeerDirectory;
+        use crate::channel::pipeline::{
+            ChannelConfig, ControlChannel, RestoredFloors, SEQ_FLOORS_KEY,
+            restore_seq_floors_from_open,
+        };
+        use crate::contracts::secret_store::EphemeralSecretStore;
+        use franken_journal::{Journal, Limits, MemStorage, Namespace};
+
+        let profile = ControlProfile::FleetDevelopment;
+        let mut floors = SeqFloors::with_profile(profile);
+        for i in 0..33 {
+            floors = floors.raised(&id(&format!("peer-{i:02}")), i + 1).unwrap();
+        }
+        assert_eq!(floors.len(), 33);
+        assert_eq!(floors.encode().len(), 464);
+        assert!(floors.raised(&id("overflow"), 1).is_none());
+        assert_eq!(
+            SeqFloors::decode_with_profile(&floors.encode(), profile),
+            Ok(floors.clone())
+        );
+        assert!(SeqFloors::decode(&floors.encode()).is_err());
+        assert!(SeqFloors::decode_with_profile(&floors.encode()[..463], profile).is_err());
+        let limits = Limits::fleet_control_development();
+        let mut medium = MemStorage::new(limits.segment_bytes);
+        {
+            let (mut journal, recovery) = Journal::open(&mut medium, limits.clone()).unwrap();
+            crate::channel::custody::claim_fleet_profile(&mut journal, &recovery).unwrap();
+            for seq in 1..=80 {
+                floors = floors.raised(&id("peer-00"), seq).unwrap();
+                journal
+                    .put(Namespace::Records, SEQ_FLOORS_KEY, &floors.encode())
+                    .unwrap();
+            }
+            assert!(journal.compactions() > 0);
+        }
+        let image = medium.durable();
+        let mut reborn = MemStorage::from_image(limits.segment_bytes, image);
+        let opened = Journal::open(&mut reborn, limits);
+        let mut authority =
+            PeerDirectory::with_profile(EphemeralSecretStore::fleet_control_development(), profile);
+        use crate::channel::peer::ephemeral::test_key;
+        use crate::channel::peer::{PeerRole, compute_proof};
+        use crate::channel::pipeline::SubmitResult;
+        use crate::channel::request::{ControlCommand, ControlRequest, RequestBody};
+        authority
+            .admit(
+                &id("peer-32"),
+                PeerRole::Controller,
+                &test_key("peer-32"),
+                Some(10),
+                1,
+            )
+            .unwrap();
+        let mut channel = ControlChannel::new(authority, ChannelConfig::provisional()).unwrap();
+        assert_eq!(
+            restore_seq_floors_from_open(&mut channel, &opened),
+            Ok(RestoredFloors::Table { identities: 33 })
+        );
+        for i in 0..33 {
+            assert_eq!(
+                channel.seq_floors().floor_of(&id(&format!("peer-{i:02}"))),
+                Some(if i == 0 { 80 } else { i + 1 })
+            );
+        }
+        let request = |seq| {
+            let body = RequestBody::new(
+                id("peer-32"),
+                seq,
+                10,
+                Some(1),
+                ControlCommand::AdjustGroupVolume { delta: 1 },
+            )
+            .unwrap();
+            let proof = compute_proof(&test_key("peer-32"), &body.signing_bytes());
+            ControlRequest::new(body, proof)
+        };
+        assert_eq!(
+            channel.submit(0, request(33)),
+            SubmitResult::OutOfWindow { floor: 33 }
+        );
+        assert!(matches!(
+            channel.submit(0, request(34)),
+            SubmitResult::Queued { .. }
+        ));
+        let legacy = PeerDirectory::with_store(EphemeralSecretStore::with_capacity(16));
+        let mut downgraded = ControlChannel::new(legacy, ChannelConfig::provisional()).unwrap();
+        assert!(matches!(
+            restore_seq_floors_from_open(&mut downgraded, &opened),
+            Ok(RestoredFloors::Refusing(_))
+        ));
+        assert_eq!(downgraded.seq_floors().floor_of(&id("any")), Some(u64::MAX));
+    }
+
+    #[test]
+    fn fleet_boot_rejects_legacy_journal_limits_and_accepts_explicit_limits() {
+        use crate::channel::peer::PeerDirectory;
+        use crate::channel::pipeline::{Booted, ChannelConfig, ControlChannel, boot_durable};
+        use crate::contracts::secret_store::EphemeralSecretStore;
+        use franken_journal::{Limits, MemStorage};
+
+        let channel = || {
+            ControlChannel::new(
+                PeerDirectory::with_profile(
+                    EphemeralSecretStore::fleet_control_development(),
+                    ControlProfile::FleetDevelopment,
+                ),
+                ChannelConfig::provisional(),
+            )
+            .unwrap()
+        };
+        let legacy = Limits::standard();
+        let mut rejected = channel();
+        assert!(matches!(
+            boot_durable(&mut rejected, MemStorage::new(legacy.segment_bytes), legacy),
+            Ok(Booted::Latched { .. })
+        ));
+        assert!(rejected.seq_floors().is_refusing());
+        let fleet = Limits::fleet_control_development();
+        let mut accepted = channel();
+        let boot = match boot_durable(&mut accepted, MemStorage::new(fleet.segment_bytes), fleet) {
+            Ok(Booted::Durable(boot)) => boot,
+            _ => panic!("fresh fleet boot must persist its profile"),
+        };
+        assert_eq!(
+            boot.stepper
+                .journal()
+                .state()
+                .marks
+                .get(crate::channel::custody::CONTROL_PROFILE_KEY),
+            Some(&2)
+        );
+        assert!(!accepted.seq_floors().is_refusing());
+    }
+
+    #[test]
+    fn boot_refuses_profile_mismatch_in_both_directions_without_floor_record() {
+        use crate::channel::custody::{admit_durably, claim_fleet_profile};
+        use crate::channel::peer::ephemeral::test_key;
+        use crate::channel::peer::{PeerDirectory, PeerRole};
+        use crate::channel::pipeline::{Booted, ChannelConfig, ControlChannel, boot_durable};
+        use crate::contracts::secret_store::EphemeralSecretStore;
+        use franken_journal::{Journal, Limits, MemStorage};
+
+        let limits = Limits::fleet_control_development();
+        let mut fleet_medium = MemStorage::new(limits.segment_bytes);
+        {
+            let (mut journal, recovery) = Journal::open(&mut fleet_medium, limits.clone()).unwrap();
+            claim_fleet_profile(&mut journal, &recovery).unwrap();
+            let mut peer = PeerDirectory::with_profile(
+                EphemeralSecretStore::fleet_control_development(),
+                ControlProfile::FleetDevelopment,
+            );
+            admit_durably(
+                &mut peer,
+                &mut journal,
+                &id("one"),
+                PeerRole::Controller,
+                &test_key("one"),
+                Some(10),
+                1,
+            )
+            .unwrap();
+        }
+        let legacy = PeerDirectory::with_store(EphemeralSecretStore::with_capacity(16));
+        let mut legacy_channel = ControlChannel::new(legacy, ChannelConfig::provisional()).unwrap();
+        let fleet_image = MemStorage::from_image(limits.segment_bytes, fleet_medium.durable());
+        assert!(matches!(
+            boot_durable(&mut legacy_channel, fleet_image, limits.clone()),
+            Ok(Booted::Latched {
+                code: "profile_mismatch",
+                ..
+            })
+        ));
+        let mut legacy_medium = MemStorage::new(limits.segment_bytes);
+        {
+            let (mut journal, _) = Journal::open(&mut legacy_medium, limits.clone()).unwrap();
+            let mut peer = PeerDirectory::with_store(EphemeralSecretStore::with_capacity(16));
+            admit_durably(
+                &mut peer,
+                &mut journal,
+                &id("one"),
+                PeerRole::Controller,
+                &test_key("one"),
+                Some(10),
+                1,
+            )
+            .unwrap();
+        }
+        let fleet = PeerDirectory::with_profile(
+            EphemeralSecretStore::fleet_control_development(),
+            ControlProfile::FleetDevelopment,
+        );
+        let mut fleet_channel = ControlChannel::new(fleet, ChannelConfig::provisional()).unwrap();
+        let legacy_image = MemStorage::from_image(limits.segment_bytes, legacy_medium.durable());
+        assert!(matches!(
+            boot_durable(&mut fleet_channel, legacy_image, limits),
+            Ok(Booted::Latched {
+                code: "profile_mismatch",
+                ..
+            })
+        ));
     }
 }

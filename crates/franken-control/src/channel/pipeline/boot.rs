@@ -30,17 +30,38 @@
 //!   `opened` result it already has (or admits its peers after boot with `admit_durably`).
 //! * **Restore the session.** G01's.
 
-use franken_journal::{Journal, Recovery};
+use franken_journal::{Journal, JournalError, Recovery};
 // `StorageFault` is what every `Storage` method returns: an owner outside this crate (the speaker's file-backed prototype)
 // names it to implement `Storage`, with no `franken-journal` edge of its own.
 pub use franken_journal::{Limits, Storage, StorageFault};
 
 use super::persist::{
-    Cause, LatchedStepper, OwnedDurable, Reopened, Restored, RestoredFloors, reopen_from_open,
-    restore_from_open, restore_seq_floors_from_open,
+    Cause, FloorCause, LatchedStepper, OwnedDurable, REFUSING_FLOOR, Reopened, Restored,
+    RestoredFloors, reopen_from_open, restore_from_open, restore_seq_floors_from_open,
 };
 use super::{ControlChannel, HighWaterError};
-use crate::channel::peer::PeerAuthority;
+use crate::channel::peer::{ControlProfile, PeerAuthority};
+use crate::channel::seqfloor::SeqFloors;
+
+fn open_for_profile<S: Storage>(
+    storage: S,
+    limits: Limits,
+    profile: ControlProfile,
+) -> Result<(Journal<S>, Recovery), JournalError> {
+    if profile == ControlProfile::FleetDevelopment
+        && (limits.credentials.entries < profile.max_identities()
+            || limits.records.value_max < 2 + 14 * profile.max_identities())
+    {
+        return Err(JournalError::BadConfig);
+    }
+    let (mut journal, recovery) = Journal::open(storage, limits)?;
+    if profile == ControlProfile::FleetDevelopment
+        && recovery.source == franken_journal::Source::Blank
+    {
+        crate::channel::custody::claim_fleet_profile(&mut journal, &recovery)?;
+    }
+    Ok((journal, recovery))
+}
 
 /// The journal opened and the channel restored from it.
 pub struct DurableBoot<S: Storage> {
@@ -82,9 +103,32 @@ pub fn boot_durable<A: PeerAuthority, S: Storage>(
     storage: S,
     limits: Limits,
 ) -> Result<Booted<S>, HighWaterError> {
-    let opened = Journal::open(storage, limits);
+    let opened = open_for_profile(storage, limits, channel.seq_floors().profile());
+    if let Ok((journal, _)) = &opened {
+        let profile = channel.seq_floors().profile();
+        if !crate::channel::custody::profile_matches(journal, profile) {
+            channel.restore_high_water(REFUSING_FLOOR)?;
+            channel.restore_seq_floors(SeqFloors::refusing_with_profile(profile))?;
+            channel.latch_durability("profile_mismatch");
+            return Ok(Booted::Latched {
+                mark: Restored::Refusing(Cause::ProfileMismatch),
+                floors: RestoredFloors::Refusing(FloorCause::ProfileMismatch),
+                code: "profile_mismatch",
+                stepper: LatchedStepper,
+            });
+        }
+    }
     let mark = restore_from_open(channel, &opened)?;
     let floors = restore_seq_floors_from_open(channel, &opened)?;
+    if floors == RestoredFloors::Refusing(FloorCause::ProfileMismatch) {
+        channel.restore_high_water(REFUSING_FLOOR)?;
+        return Ok(Booted::Latched {
+            mark: Restored::Refusing(Cause::ProfileMismatch),
+            floors,
+            code: "profile_mismatch",
+            stepper: LatchedStepper,
+        });
+    }
     Ok(match opened {
         Ok((journal, recovery)) => Booted::Durable(Box::new(DurableBoot {
             stepper: OwnedDurable::new(journal),
@@ -120,16 +164,17 @@ pub fn reopen_durable<A: PeerAuthority, S: Storage>(
     storage: S,
     limits: Limits,
 ) -> Result<(OwnedDurable<S>, Reopened), Cause> {
-    let opened = Journal::open(storage, limits);
+    let opened = open_for_profile(storage, limits, channel.seq_floors().profile());
     let reopened = reopen_from_open(channel, &opened);
     match (reopened, opened) {
         (Reopened::StillFailed(cause), _) => Err(cause),
-        (healthy @ Reopened::Healthy { .. }, Ok((journal, _recovery))) => {
-            Ok((OwnedDurable::new(journal), healthy))
-        }
+        (
+            healthy @ (Reopened::Healthy { .. } | Reopened::DegradedRelative { .. }),
+            Ok((journal, _recovery)),
+        ) => Ok((OwnedDurable::new(journal), healthy)),
         // `reopen_from_open` clears the latch only for a journal that opened, so this is not reachable; it is answered, not
         // trusted, and leaves the latch set.
-        (Reopened::Healthy { .. }, Err(error)) => {
+        (Reopened::Healthy { .. } | Reopened::DegradedRelative { .. }, Err(error)) => {
             channel.latch_durability(error.code());
             Err(Cause::OpenFailed(error.code()))
         }

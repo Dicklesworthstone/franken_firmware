@@ -79,6 +79,16 @@ impl Limits {
         }
     }
 
+    /// Explicit host-development control profile; not a device or existing-media migration.
+    #[must_use]
+    pub const fn fleet_control_development() -> Self {
+        let mut limits = Self::standard();
+        limits.segment_bytes = 16_384;
+        limits.credentials.entries = 33;
+        limits.records.value_max = 464;
+        limits
+    }
+
     /// The small configuration the vectors and the fault tests use: 512-byte segments.
     #[must_use]
     pub const fn tiny() -> Self {
@@ -216,3 +226,37 @@ impl fmt::Display for JournalError {
 }
 
 impl std::error::Error for JournalError {}
+
+#[cfg(test)]
+mod fleet_profile_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_fleet_limits_validate_without_changing_standard() {
+        let standard = Limits::standard();
+        let fleet = Limits::fleet_control_development();
+        assert_eq!(
+            (
+                standard.segment_bytes,
+                standard.credentials.entries,
+                standard.records.value_max
+            ),
+            (8192, 16, 256)
+        );
+        assert_eq!(
+            (
+                fleet.segment_bytes,
+                fleet.credentials.entries,
+                fleet.records.value_max
+            ),
+            (16384, 33, 464)
+        );
+        assert_eq!(fleet.worst_snapshot_payload(), 9910);
+        assert_eq!(fleet.validate(), Ok(()));
+        let mut too_small = fleet;
+        too_small.segment_bytes = 10973;
+        assert_eq!(too_small.validate(), Err(JournalError::BadConfig));
+        too_small.segment_bytes = 10974;
+        assert_eq!(too_small.validate(), Ok(()));
+    }
+}

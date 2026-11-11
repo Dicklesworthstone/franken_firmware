@@ -478,6 +478,13 @@ impl Endpoint {
         &mut self.directory
     }
 
+    /// Identity reserved for legacy requests with unstable retry numbers. A composition owner
+    /// must keep authenticated stable-number traffic under a distinct enrolled identity.
+    #[must_use]
+    pub fn legacy_peer(&self) -> &PeerId {
+        &self.bridge.peer
+    }
+
     #[must_use]
     pub const fn subscriptions(&self) -> &SubscriptionTable {
         &self.gena

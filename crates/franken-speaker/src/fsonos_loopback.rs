@@ -39,9 +39,12 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use franken_control::channel::owner::{AgreementError, FleetControlOwner};
+use franken_control::channel::pipeline::Storage;
+use franken_control::contracts::secret_store::SecretStore;
 use franken_control::fsonos::gena::INCARNATION_BYTES;
 use franken_control::fsonos::ssdp::{DESCRIPTION_CONTENT_TYPE, DESCRIPTION_PATH, Device};
-use franken_control::fsonos::{HttpRequest, Ingress, Notification};
+use franken_control::fsonos::{Directory, Handled, HttpRequest, Ingress, Notification};
 use franken_session::{
     ChannelRole, FencedControlCommand, GroupCommandPayload, UnifiedGroupSession,
 };
@@ -88,13 +91,13 @@ const MAX_NAME_BYTES: usize = 64;
 const MAX_VALUE_BYTES: usize = 1024;
 const MAX_LENGTH_DIGITS: usize = 9;
 
-/// Which ingress every connection is judged as. Both are loopback; the second exists to show the endpoint refusing.
+/// Which ingress every connection is judged as. Both are confined to loopback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
     /// The local link: plain UPnP, reads and legacy commands, as a LAN controller is treated.
     LocalLink,
-    /// Every connection is treated as arriving on the tailnet with no command authorization. The endpoint must refuse all of it
-    /// (HTTP 401 and no body), reads included.
+    /// Treat each connection as tailnet ingress. Requests without command authorization are refused,
+    /// including reads; signed commands are checked by the selected control plane.
     UnauthenticatedTailnet,
 }
 
@@ -282,6 +285,90 @@ struct Extras {
     incarnation: [u8; INCARNATION_BYTES],
 }
 
+/// The control plane used by the bounded HTTP worker. The plane is constructed and used on
+/// the worker thread; its journal and key store need not themselves be `Send`.
+pub trait HttpControl {
+    fn handle_request(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        now_ns: u64,
+        request: &HttpRequest<'_>,
+    ) -> Handled;
+
+    fn directory_mut(&mut self) -> &mut Directory;
+}
+
+impl HttpControl for ControlPlane {
+    fn handle_request(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        now_ns: u64,
+        request: &HttpRequest<'_>,
+    ) -> Handled {
+        ControlPlane::handle_request(self, session, now_ns, request)
+    }
+
+    fn directory_mut(&mut self) -> &mut Directory {
+        ControlPlane::directory_mut(self)
+    }
+}
+
+/// A caller-provided durable fleet owner and its existing G03 endpoint.
+/// The caller supplies credentials, storage, admission, lease, and endpoint configuration.
+pub struct FleetSoapPlane<K: SecretStore, S: Storage> {
+    owner: FleetControlOwner<K, S>,
+    endpoint: franken_control::fsonos::Endpoint,
+}
+
+impl<K: SecretStore, S: Storage> FleetSoapPlane<K, S> {
+    /// Reserve this endpoint's legacy identity before exposing it to either SOAP or raw control.
+    /// Additional bridge identities are reserved by the caller on the supplied owner.
+    ///
+    /// # Errors
+    /// Returns an error if the owner's bounded legacy identity set cannot hold this bridge.
+    pub fn new(
+        mut owner: FleetControlOwner<K, S>,
+        endpoint: franken_control::fsonos::Endpoint,
+    ) -> Result<Self, AgreementError> {
+        owner.reserve_legacy_peer(endpoint.legacy_peer())?;
+        Ok(Self { owner, endpoint })
+    }
+}
+
+impl<K: SecretStore, S: Storage> HttpControl for FleetSoapPlane<K, S> {
+    fn handle_request(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        now_ns: u64,
+        request: &HttpRequest<'_>,
+    ) -> Handled {
+        self.owner
+            .handle_soap(&mut self.endpoint, session, now_ns, request)
+    }
+
+    fn directory_mut(&mut self) -> &mut Directory {
+        self.endpoint.directory_mut()
+    }
+}
+
+type ControlFactory = Box<
+    dyn FnOnce(
+            &UnifiedGroupSession,
+            &str,
+            [u8; INCARNATION_BYTES],
+        ) -> Result<Box<dyn HttpControl>, String>
+        + Send,
+>;
+
+fn legacy_control(
+    session: &UnifiedGroupSession,
+    member: &str,
+    incarnation: [u8; INCARNATION_BYTES],
+) -> Result<Box<dyn HttpControl>, String> {
+    ControlPlane::with_incarnation(session, member, START_NS, incarnation)
+        .map(|plane| Box::new(plane) as Box<dyn HttpControl>)
+}
+
 // ---- the public handle -----------------------------------------------------------------------------------------------
 
 /// A running shim. Dropping it stops and joins it.
@@ -295,6 +382,39 @@ pub struct FsonosLoopback {
 }
 
 impl FsonosLoopback {
+    /// Start the bounded loopback worker with an explicitly supplied control plane. The
+    /// factory runs inside the worker after host incarnation is obtained and receives the
+    /// same session and member the worker serves. A factory error fails startup.
+    ///
+    /// # Errors
+    /// Returns an error if startup or the caller's factory fails; no legacy plane is substituted.
+    pub fn start_with_control<F>(
+        session: UnifiedGroupSession,
+        member_id: &str,
+        policy: Policy,
+        limits: LoopbackLimits,
+        factory: F,
+    ) -> Result<Self, String>
+    where
+        F: FnOnce(
+                &UnifiedGroupSession,
+                &str,
+                [u8; INCARNATION_BYTES],
+            ) -> Result<Box<dyn HttpControl>, String>
+            + Send
+            + 'static,
+    {
+        Self::start_inner_with(
+            session,
+            member_id,
+            policy,
+            limits,
+            None,
+            None,
+            (host_incarnation, Box::new(factory)),
+        )
+    }
+
     /// Bind `127.0.0.1:0`, build the real control plane over `session` for `member_id` inside a worker thread, and start serving.
     ///
     /// # Errors
@@ -433,6 +553,30 @@ impl FsonosLoopback {
         events: Option<(CallbackTarget, CallbackLimits)>,
         boot: impl FnOnce() -> Result<[u8; INCARNATION_BYTES], IncarnationError>,
     ) -> Result<Self, String> {
+        Self::start_inner_with(
+            session,
+            member_id,
+            policy,
+            limits,
+            discovery,
+            events,
+            (boot, Box::new(legacy_control)),
+        )
+    }
+
+    fn start_inner_with(
+        session: UnifiedGroupSession,
+        member_id: &str,
+        policy: Policy,
+        limits: LoopbackLimits,
+        discovery: Option<(Described, DiscoveryLimits)>,
+        events: Option<(CallbackTarget, CallbackLimits)>,
+        startup: (
+            impl FnOnce() -> Result<[u8; INCARNATION_BYTES], IncarnationError>,
+            ControlFactory,
+        ),
+    ) -> Result<Self, String> {
+        let (boot, factory) = startup;
         if !limits.usable() {
             return Err("the loopback limits are unusable".to_string());
         }
@@ -473,7 +617,11 @@ impl FsonosLoopback {
         };
         let worker = thread::Builder::new()
             .name("g03-fsonos-loopback".to_string())
-            .spawn(move || worker_main(&listener, for_worker, &member, cfg, extras, &ready_tx))
+            .spawn(move || {
+                worker_main(
+                    &listener, for_worker, &member, cfg, extras, &ready_tx, factory,
+                )
+            })
             .map_err(|error| format!("spawn: {}", error.kind()))?;
         match ready_rx.recv_timeout(STARTUP) {
             Ok(Ok(())) => {
@@ -596,10 +744,11 @@ fn worker_main(
     cfg: Config,
     extras: Extras,
     ready: &mpsc::Sender<Result<(), String>>,
+    factory: ControlFactory,
 ) {
     let built = {
         let session = shared.session();
-        ControlPlane::with_incarnation(&session, member, START_NS, extras.incarnation)
+        factory(&session, member, extras.incarnation)
     };
     let mut plane = match built {
         Ok(plane) => plane,
@@ -636,7 +785,7 @@ fn worker_main(
 // ---- the worker ------------------------------------------------------------------------------------------------------
 
 struct Worker {
-    plane: ControlPlane,
+    plane: Box<dyn HttpControl>,
     now_ns: u64,
     shared: Shared,
     cfg: Config,
@@ -1110,3 +1259,6 @@ fn linger(stream: &mut TcpStream) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod fleet_tests;

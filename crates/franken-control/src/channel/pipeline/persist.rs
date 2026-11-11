@@ -128,6 +128,8 @@ pub const REFUSING_FLOOR: u64 = u64::MAX;
 /// Why the mark could not be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cause {
+    /// The journal belongs to a different control identity profile or is unclaimed.
+    ProfileMismatch,
     /// Neither segment of a medium that is not blank holds a valid state. The journal was formatted empty,
     /// and the mark, if there was one, is gone.
     Unrecoverable,
@@ -170,6 +172,8 @@ pub struct StoreFailed {
 /// Why the relative-command floors could not be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloorCause {
+    /// The journal's durable control profile does not match the authority.
+    ProfileMismatch,
     /// Neither segment of a medium that is not blank holds a valid state; the journal was formatted empty.
     Unrecoverable,
     /// Opening the journal failed. The stable code of its error.
@@ -198,18 +202,26 @@ pub fn restore_seq_floors_from_open<A: PeerAuthority, S: Storage>(
     channel: &mut ControlChannel<A>,
     opened: &Result<(Journal<S>, Recovery), JournalError>,
 ) -> Result<RestoredFloors, HighWaterError> {
+    let profile = channel.seq_floors().profile();
     let (restored, table) = match opened {
         Err(error) => (
             RestoredFloors::Refusing(FloorCause::OpenFailed(error.code())),
-            SeqFloors::refusing(),
+            SeqFloors::refusing_with_profile(profile),
         ),
         Ok((_, recovery)) if recovery.source == Source::Unrecoverable => (
             RestoredFloors::Refusing(FloorCause::Unrecoverable),
-            SeqFloors::refusing(),
+            SeqFloors::refusing_with_profile(profile),
         ),
+        Ok((journal, _)) if !crate::channel::custody::profile_matches(journal, profile) => {
+            channel.latch_durability("profile_mismatch");
+            (
+                RestoredFloors::Refusing(FloorCause::ProfileMismatch),
+                SeqFloors::refusing_with_profile(profile),
+            )
+        }
         Ok((journal, _)) => match journal.state().records.get(SEQ_FLOORS_KEY) {
-            None => (RestoredFloors::Nothing, SeqFloors::new()),
-            Some(bytes) => match SeqFloors::decode(bytes) {
+            None => (RestoredFloors::Nothing, SeqFloors::with_profile(profile)),
+            Some(bytes) => match SeqFloors::decode_with_profile(bytes, profile) {
                 Ok(table) => (
                     RestoredFloors::Table {
                         identities: table.len(),
@@ -218,7 +230,7 @@ pub fn restore_seq_floors_from_open<A: PeerAuthority, S: Storage>(
                 ),
                 Err(error) => (
                     RestoredFloors::Refusing(FloorCause::Malformed(error)),
-                    SeqFloors::refusing(),
+                    SeqFloors::refusing_with_profile(profile),
                 ),
             },
         },
@@ -267,6 +279,15 @@ pub fn restore_from_open<A: PeerAuthority, S: Storage>(
         Err(error) => Restored::Refusing(Cause::OpenFailed(error.code())),
         Ok((_, recovery)) if recovery.source == Source::Unrecoverable => {
             Restored::Refusing(Cause::Unrecoverable)
+        }
+        Ok((journal, _))
+            if !crate::channel::custody::profile_matches(
+                journal,
+                channel.seq_floors().profile(),
+            ) =>
+        {
+            channel.latch_durability("profile_mismatch");
+            Restored::Refusing(Cause::ProfileMismatch)
         }
         Ok((journal, recovery)) => match journal.state().marks.get(HIGH_WATER_KEY) {
             Some(&mark) => Restored::Mark(mark),
@@ -387,6 +408,11 @@ pub enum Reopened {
         mark: Option<u64>,
         identities: usize,
     },
+    /// The journal reopened but relative commands remain fail-closed.
+    DegradedRelative {
+        mark: Option<u64>,
+        cause: Option<DecodeError>,
+    },
     /// The medium could not be opened or holds no valid state. The latch stays.
     StillFailed(Cause),
 }
@@ -411,12 +437,23 @@ pub fn reopen_from_open<A: PeerAuthority, S: Storage>(
         }
         Ok((journal, _)) => journal,
     };
+    let profile = channel.seq_floors().profile();
+    if !crate::channel::custody::profile_matches(journal, profile) {
+        channel.latch_durability("profile_mismatch");
+        return Reopened::StillFailed(Cause::ProfileMismatch);
+    }
     let mark = journal.state().marks.get(HIGH_WATER_KEY).copied();
-    let table = match journal.state().records.get(SEQ_FLOORS_KEY) {
-        None => SeqFloors::new(),
-        Some(bytes) => SeqFloors::decode(bytes).unwrap_or_else(|_| SeqFloors::refusing()),
+    let (table, cause) = match journal.state().records.get(SEQ_FLOORS_KEY) {
+        None => (SeqFloors::with_profile(profile), None),
+        Some(bytes) => match SeqFloors::decode_with_profile(bytes, profile) {
+            Ok(table) => (table, None),
+            Err(error) => (SeqFloors::refusing_with_profile(profile), Some(error)),
+        },
     };
     channel.reopen_durable(mark, &table);
+    if channel.seq_floors().is_refusing() {
+        return Reopened::DegradedRelative { mark, cause };
+    }
     Reopened::Healthy {
         mark,
         identities: table.len(),
@@ -2748,6 +2785,66 @@ mod tests {
             .filter(|l| l.contains("n02.step.committed") && l.contains("#2"))
             .count();
         assert_eq!(committed_lines, 1);
+    }
+
+    #[test]
+    fn reopen_reports_malformed_floors_as_relative_degradation_and_keeps_local_control() {
+        let mut live_medium = blank_medium();
+        let mut one = Incarnation::boot(&mut live_medium, Owner::Faithful);
+        let mut malformed_medium = blank_medium();
+        {
+            let (mut journal, _) = Journal::open(&mut malformed_medium, limits()).unwrap();
+            journal
+                .put(Namespace::Records, SEQ_FLOORS_KEY, &[2, 0])
+                .unwrap();
+        }
+        let mut image = MemStorage::from_image(limits().segment_bytes, malformed_medium.durable());
+        let opened = Journal::open(&mut image, limits());
+        one.channel.latch_durability("test");
+        assert_eq!(
+            reopen_from_open(&mut one.channel, &opened),
+            Reopened::DegradedRelative {
+                mark: None,
+                cause: Some(DecodeError::Format(2))
+            }
+        );
+        assert_eq!(one.channel.durability(), Durability::Healthy);
+        let relative = one.relative("panel", 1, 1);
+        assert_eq!(
+            one.channel.submit(0, relative),
+            SubmitResult::OutOfWindow { floor: u64::MAX }
+        );
+        assert!(committed(&one.run("panel", 2, set_group(60)).unwrap()));
+        assert!(committed(&one.run("panel", 3, stop()).unwrap()));
+    }
+
+    #[test]
+    fn reopen_reports_wrong_profile_as_fatal_even_when_no_floor_exists() {
+        let mut live_medium = blank_medium();
+        let mut one = Incarnation::boot(&mut live_medium, Owner::Faithful);
+        let fleet_limits = Limits::fleet_control_development();
+        let mut fleet_medium = MemStorage::new(fleet_limits.segment_bytes);
+        {
+            let (mut journal, recovery) =
+                Journal::open(&mut fleet_medium, fleet_limits.clone()).unwrap();
+            crate::channel::custody::claim_fleet_profile(&mut journal, &recovery).unwrap();
+            assert!(!journal.state().records.contains_key(SEQ_FLOORS_KEY));
+        }
+        let mut copy = MemStorage::from_image(fleet_limits.segment_bytes, fleet_medium.durable());
+        let opened = Journal::open(&mut copy, fleet_limits);
+        assert_eq!(
+            reopen_from_open(&mut one.channel, &opened),
+            Reopened::StillFailed(Cause::ProfileMismatch)
+        );
+        assert!(matches!(
+            one.channel.durability(),
+            Durability::Failed { .. }
+        ));
+        assert_eq!(
+            one.run("panel", 1, set_group(60)).unwrap(),
+            Outcome::Refused(Refusal::InternalFault)
+        );
+        assert!(committed(&one.run("panel", 2, stop()).unwrap()));
     }
 
     #[test]

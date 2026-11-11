@@ -73,7 +73,11 @@ impl<A: PeerAuthority> ControlChannel<A> {
         if self.revision_floor.is_some() {
             return Err(HighWaterError::AlreadyRunning);
         }
-        self.seq_floors = floors;
+        self.seq_floors = if floors.profile() == self.seq_floors.profile() {
+            floors
+        } else {
+            SeqFloors::refusing_with_profile(self.seq_floors.profile())
+        };
         Ok(())
     }
 

@@ -48,6 +48,23 @@ pub const PROOF_LEN: usize = 32;
 pub const MIN_KEY_LEN: usize = 16;
 /// Most distinct identities an authority may ever admit, revoked ones included.
 pub const MAX_PEERS: usize = 16;
+/// Explicit control-plane identity budget. The fleet profile is for host development only.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ControlProfile {
+    #[default]
+    Legacy,
+    FleetDevelopment,
+}
+
+impl ControlProfile {
+    #[must_use]
+    pub const fn max_identities(self) -> usize {
+        match self {
+            Self::Legacy => MAX_PEERS,
+            Self::FleetDevelopment => 33,
+        }
+    }
+}
 /// Domain-separation label hashed before every request. It ties a proof to this protocol and
 /// version, so a tag computed for another purpose under the same key is not a valid request proof.
 pub const AUTH_CONTEXT: &[u8] = b"FFCP-v1-auth";
@@ -169,6 +186,10 @@ pub struct Authenticated {
 /// The authority the control channel asks about every request. See the module documentation for the
 /// contract an implementation must keep.
 pub trait PeerAuthority {
+    /// Identity budget of this authority. Existing implementations retain the legacy profile.
+    fn control_profile(&self) -> ControlProfile {
+        ControlProfile::Legacy
+    }
     /// Verify `proof` over `message` for `peer`. Changes no state, on success or failure.
     fn authenticate(
         &self,
@@ -238,6 +259,8 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdmitError {
     AlreadyAdmitted,
+    /// A failed restore requires a fresh directory; no partial authority may be used.
+    RestoreFailed,
     /// The directory already knows `MAX_PEERS` distinct identities.
     Full,
     /// `offered` is not above the tombstone left by an earlier revocation.
@@ -296,6 +319,8 @@ struct PeerRecord {
 /// (held in a [`SecretStore`], never in this struct).
 pub struct PeerDirectory<S: SecretStore> {
     keys: S,
+    profile: ControlProfile,
+    restore_failed: bool,
     peers: BTreeMap<PeerId, PeerRecord>,
     tombstones: BTreeMap<PeerId, u64>,
     tombstone_generation: u64,
@@ -309,12 +334,41 @@ impl<S: SecretStore> PeerDirectory<S> {
     /// A directory with no peers, keeping its keys in `keys`. The store must have room for
     /// [`MAX_PEERS`] keys.
     pub fn with_store(keys: S) -> Self {
+        Self::with_profile(keys, ControlProfile::Legacy)
+    }
+
+    /// Select the identity budget explicitly; the supplied store must support it.
+    pub fn with_profile(keys: S, profile: ControlProfile) -> Self {
         Self {
             keys,
+            profile,
+            restore_failed: false,
             peers: BTreeMap::new(),
             tombstones: BTreeMap::new(),
             tombstone_generation: 0,
         }
+    }
+
+    #[must_use]
+    pub const fn profile(&self) -> ControlProfile {
+        self.profile
+    }
+
+    pub(super) fn is_fresh_for_restore(&self) -> bool {
+        !self.restore_failed && self.peers.is_empty() && self.tombstones.is_empty()
+    }
+
+    /// A failed journal restore must not leave a partially authenticated directory.
+    pub(super) fn discard_failed_restore(&mut self) {
+        for peer in self.peers.keys() {
+            if let Ok(handle) = key_handle(peer) {
+                let _ = self.keys.remove(&handle);
+            }
+        }
+        self.peers.clear();
+        self.tombstones.clear();
+        self.tombstone_generation = 0;
+        self.restore_failed = true;
     }
 
     fn known_identities(&self) -> usize {
@@ -342,6 +396,9 @@ impl<S: SecretStore> PeerDirectory<S> {
         key_len: usize,
         version: u64,
     ) -> Result<(), AdmitError> {
+        if self.restore_failed {
+            return Err(AdmitError::RestoreFailed);
+        }
         if self.peers.contains_key(peer) {
             return Err(AdmitError::AlreadyAdmitted);
         }
@@ -352,7 +409,7 @@ impl<S: SecretStore> PeerDirectory<S> {
                     offered: version,
                 });
             }
-        } else if self.known_identities() >= MAX_PEERS {
+        } else if self.known_identities() >= self.profile.max_identities() {
             return Err(AdmitError::Full);
         }
         if key_len < MIN_KEY_LEN {
@@ -430,11 +487,13 @@ impl<S: SecretStore> PeerDirectory<S> {
     /// admission, so the stale admission of a revoked identity that U01 may still hold is refused as the
     /// resurrection it is. A snapshot that is too big or names an identity twice is refused whole.
     pub fn restore_tombstones(&mut self, snapshot: &Tombstones) -> Result<(), RestoreError> {
-        if !self.peers.is_empty() || !self.tombstones.is_empty() {
+        if self.restore_failed || !self.peers.is_empty() || !self.tombstones.is_empty() {
             return Err(RestoreError::NotFresh);
         }
-        if snapshot.entries.len() > MAX_PEERS {
-            return Err(RestoreError::TooMany { max: MAX_PEERS });
+        if snapshot.entries.len() > self.profile.max_identities() {
+            return Err(RestoreError::TooMany {
+                max: self.profile.max_identities(),
+            });
         }
         let mut restored = BTreeMap::new();
         for (peer, version) in &snapshot.entries {
@@ -478,6 +537,9 @@ impl<S: SecretStore> ReplySigner for PeerDirectory<S> {
 }
 
 impl<S: SecretStore> PeerAuthority for PeerDirectory<S> {
+    fn control_profile(&self) -> ControlProfile {
+        self.profile
+    }
     fn authenticate(
         &self,
         peer: &PeerId,

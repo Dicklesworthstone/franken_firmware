@@ -89,6 +89,20 @@ CASES["N06-CONSUMER"].extend(("franken_speaker", SPEAKER_CARRIER + "selection::"
     "n06_sender_selection_consumes_encoded_all_member_agreement_and_preserves_n01_on_refusal",
     "n06_sender_selection_revalidates_revocation_and_stream_binding_before_mutation",
 ))
+OWNER_TESTS = (
+    "fleet_owner_restores_33_credentials_and_requires_21_real_signed_member_acks",
+    "fleet_owner_revoke_and_rebind_survive_boot_without_resurrection",
+    "fleet_owner_new_round_cannot_refill_endpoint_fec_work_budget",
+    "fleet_owner_reserves_marks_before_unrelated_capacity_is_consumed",
+    "fleet_owner_rejects_corrupt_peer_state_and_exhausted_proposal_ids",
+    "fleet_owner_refuses_existing_counterless_media_instead_of_reusing_round_ids",
+    "fleet_owner_g03_commit_retry_and_restart_use_the_same_durable_authority",
+    "fleet_owner_legacy_identity_cannot_bypass_durable_control_through_raw_wire",
+    "fleet_owner_failed_proposal_persistence_preserves_local_silence",
+)
+CASES["N06-CONSUMER"].extend(
+    ("franken_control", "channel::owner::tests::" + name) for name in OWNER_TESTS
+)
 # Concrete integration gaps named by root: these remain full acceptance blockers.
 # No invented Rust test, disabled requirement, or refusal-only qualification.
 PENDING = {
@@ -101,6 +115,10 @@ def source_registry():
     actual = set()
     for relative in ("crates/franken-stream/src/fec/tests.rs", "crates/franken-speaker/src/media_playout.rs", "toolchain/n06-fec-profile/src/lib.rs", "crates/franken-stream/src/carrier/fec_tests.rs", "crates/franken-speaker/src/net_carrier/fec_tests.rs", "crates/franken-speaker/src/net_carrier/fec_tests/feedback.rs", "crates/franken-speaker/src/net_carrier/fec_tests/selection.rs"):
         actual.update(re.findall(r"fn\s+(n06_[A-Za-z0-9_]+)\s*\(", (ROOT / relative).read_text()))
+    actual.update(re.findall(
+        r"fn\s+(fleet_owner_[A-Za-z0-9_]+)\s*\(",
+        (ROOT / "crates/franken-control/src/channel/owner.rs").read_text(),
+    ))
     mapped = {name.rsplit("::", 1)[-1] for tests in CASES.values() for _, name in tests}
     assert actual == mapped, "missing/stale N06 native test consumer"
 

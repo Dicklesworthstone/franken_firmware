@@ -1,0 +1,100 @@
+{
+  "schema": "ffw.native-evidence.v1",
+  "base_revision": "1bda10f46d3f89ed45beb1e5d670cbb50691817e",
+  "source_state": "dirty input content recorded before the commits publishing these exact bytes",
+  "source_sha256": {
+    "Cargo.lock": "39e70649d690a342c74157bada974cfabaf76bfbbcb4dc05a33fa0af6181c58c",
+    "Cargo.toml": "6aaae8aac3d87262cd7057749b84bb4df921dcee810dd5d03cfdddc1c4ebe107",
+    "crates/franken-control/Cargo.toml": "f9ea7e674bb57efd5c54a8adb618f18b3acbf1d2786e5950cc7e0fa601eeb892",
+    "crates/franken-control/src/channel/custody.rs": "cdeb7d1b0a4ec417e6ff421ee582429f496002ab5c04b5abb5127cd371f5c424",
+    "crates/franken-control/src/channel/fec_negotiation.rs": "435ae22d1daa97f6ffdc4956aff456e48319a0c2230ec8b3e14b0e829959950b",
+    "crates/franken-control/src/channel/mod.rs": "d79752f72bd4b4acc6077c65e0227e175073f92b99d07828a9e84a6669d1f8ef",
+    "crates/franken-control/src/channel/owner.rs": "be619fe539667ce6096cd72a67594496558bcb80ab8ed4d58fe60165931e734a",
+    "crates/franken-control/src/channel/peer.rs": "476469e1d41ef99ed6378b69c8a64ffeab2eab02090f91d3278648d247831be3",
+    "crates/franken-control/src/channel/pipeline.rs": "09496a494a55311959306d026972afd28e2f40eac4729e32b92b37d2393ac3f1",
+    "crates/franken-control/src/channel/pipeline/boot.rs": "7b7cc78dbbb3c5fca1d5b313ea69f7ee0d0d60dc11043671f33629860379b7a9",
+    "crates/franken-control/src/channel/pipeline/persist.rs": "817b4f35f4764d24fde73f990315e8fb97b2e8c4f1714410d3c4371b830963ae",
+    "crates/franken-control/src/channel/pipeline/restart.rs": "09b441dfb3b1602dad0f1690a0e806416bc7681712cb7a10fd6d77fc28ca94a7",
+    "crates/franken-control/src/channel/seqfloor.rs": "4d097b7dff5025e81cb7a07e4a0c8cbada17c2269c6b50adca87c58adadad813",
+    "crates/franken-control/src/contracts/secret_store.rs": "0a07e769e910c32261573e6f1f33976f865206fd7dae21d394bcb6d66c7cb2a7",
+    "crates/franken-control/src/fsonos/server.rs": "988eecb7ce48df162639002a70adc30831782747e99b2dc9401f90838c52f52a",
+    "crates/franken-journal/Cargo.toml": "e4cdada28d6c103e11b2acc2f2d3f04b7149149a901279e5aa2d1a6ed7189e32",
+    "crates/franken-journal/src/lib.rs": "d75882229e8d4c065d993e0fef40c808effeb36d6bece929836cc70ac0e0676e",
+    "crates/franken-session/Cargo.toml": "3b00cecf3075c93fc1c5eac2ce0ff041fc63083902bb217a504c462e0191768b",
+    "crates/franken-speaker/Cargo.toml": "78fabf9a7059ac7e9d8990077f77b05df9cca845025f26d1fd943e09139188bc",
+    "crates/franken-speaker/src/fsonos_loopback.rs": "754ac7d6fd5167d8ab2b487a5d32ac7bea5217acfac6341d67d7aa2a453dd843",
+    "crates/franken-speaker/src/fsonos_loopback/fleet_tests.rs": "8b75df7d376077c67601b368ea3247db3b0a4f7af784bbd3dcee6b8455761d09",
+    "crates/franken-stream/Cargo.toml": "c0059611538c78e101c437ff4852ac228dc45456f5c2622d41c14940fbe73089",
+    "crates/franken-stream/tests/n07_carrier.rs": "85313ff746544783039f026e2f626da94fd4e35219e46cf0969ea54f4e7b059c",
+    "tests/n06/run_cases.py": "80b64ba76841b0920f1f0777eb7b8e0de974e59fcbe22fad74f4cfc735575dac",
+    "tests/n06/test_judge.py": "d7a48b458e81fdded60828b76ebf3fa677168c9f41eacb71d41ca1b5df52c45f",
+    "tests/n07/model.py": "87913f05d592b1e9b63a0e8c3a45828222415599997a08c0544e4b156b6965af",
+    "tests/n07/run_cases.py": "d828bf36b87f09bcce8d7a6596530ddd303772cd3b4ac90d3d95b9c7574a6bbe",
+    "tests/n07/test_judge.py": "6b1a97ca425f317df1fcb6996f1254e43152c2b1ded632d65b6618797b2c076a"
+  },
+  "gates": [
+    {
+      "gate": "control",
+      "native_build_id": "30103800983323291",
+      "command_exit_code": 0,
+      "receipt_root": "fae518a20fea5be3ed95bdf5606e42fd681768112d2309b1b4b66a9021c0bdcd",
+      "original_capture_sha256": "2a318fef93bdcbcbb6ec5890968451417428c5dc3e10287f746185a24b890070",
+      "captured_files": 1560,
+      "selected_source_inputs_matched": 28,
+      "libtest_summaries": 1,
+      "passed_failed_ignored_measured_filtered": [
+        633,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "gate": "workspace",
+      "native_build_id": "30103800983323292",
+      "command_exit_code": 0,
+      "receipt_root": "a5de5e478c410ec8ed75a4b83532cf9d5ce6e215432e0cd7144748cf0513d5af",
+      "original_capture_sha256": "69bec14b4fb18d4ce6a97858aae9aae5ea3bdf987a29653a701e4c0f73a1bb8f",
+      "captured_files": 1560,
+      "selected_source_inputs_matched": 28,
+      "libtest_summaries": 59,
+      "passed_failed_ignored_measured_filtered": [
+        2633,
+        0,
+        2,
+        0,
+        0
+      ]
+    },
+    {
+      "gate": "journal",
+      "native_build_id": "30103800983323300",
+      "command_exit_code": 0,
+      "receipt_root": "b30c2a4cab3d31eb5b945bfe8c221e7f00e4528876036562314597010d86cbd5",
+      "original_capture_sha256": "42690a4a6184942916e6c5cdcced325ad305b61e53f7cf561ff748822cfd9c4b",
+      "captured_files": 1560,
+      "selected_source_inputs_matched": 28,
+      "libtest_summaries": 5,
+      "passed_failed_ignored_measured_filtered": [
+        38,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "gate": "clippy",
+      "native_build_id": "30103800983323303",
+      "command_exit_code": 0,
+      "receipt_root": "c1b0fb8181a8380badca11feb8bd5229e75892266dedbef6828a721076f98563",
+      "original_capture_sha256": "150e71bc26c0fe95f86270685310c1a76276ad52bf408bafc27429dcf4825198",
+      "captured_files": 1560,
+      "selected_source_inputs_matched": 28,
+      "libtest_summaries": 0,
+      "passed_failed_ignored_measured_filtered": null
+    }
+  ],
+  "scope": "native Linux host only; all1560 captured source files matched local files before evidence creation; no Sonos board, guest, provider, 32MiB-fit or full N02/N06 qualification"
+}
