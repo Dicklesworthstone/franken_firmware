@@ -1,0 +1,57 @@
+SELECTED ACTUAL OUTPUT EXCERPTS; full raw captures remain private.
+Native Linux hosts, scripted clocks/keys/ledgers; no device, guest or distributed-activation qualification.
+Worker paths and infrastructure addresses are omitted.
+
+=== libraries; native build 30103800983323521 ===
+test channel::fec_negotiation::tests::n06_verified_proposal_rejects_stale_session_round_profile_and_peer ... ok
+test channel::fec_negotiation::tests::n06_verified_proposal_requires_authenticated_ingress_but_not_member_acks ... ok
+    Finished `test` profile [unoptimized] target(s) in 12.74s
+test channel::owner::tests::fleet_owner_verified_proposal_context_requires_real_ingress_and_current_round ... ok
+test result: ok. 636 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.16s
+test media_playout::tests::n06_future_candidate_epoch_and_generation_exhaustion_fail_closed ... ok
+test media_playout::tests::n06_future_candidate_prefetches_real_pcm_while_old_n01_drains ... ok
+test media_playout::tests::n06_future_candidate_rejects_stale_binding_budget_and_unauthorized_proposal ... ok
+test media_playout::tests::n06_future_endpoint_prefetch_keeps_old_credit_and_rejects_restart ... ok
+N06-FUTURE {"active_fec_selected":false,"after_drop_bytes":101040,"anchor_frame":0,"before_bytes":101040,"current_epoch":1,"future_epoch":2,"future_pcm_probe_sha256":"89afaf9e06ce789a9b720ffe20702d4f548123567378b58ce0b1434d39e3e268","future_real":true,"old_pcm_probe_sha256":"58d62a82aaa1e9df0a4b17180359568655fccc58d74529c11ab3f0a03c62f88e","old_real":true,"pending_bytes":276925,"profile":"n06.host-hybrid.k4-r4.v1","recovered":2,"schema":"n06.future-resource.v1"}
+test result: ok. 464 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.47s
+test result: ok. 206 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s
+
+=== clippy; native build 30103800983323524 ===
+    Finished `dev` profile [unoptimized] target(s) in 7.51s
+
+=== reference; native build 30103800983323529 ===
+    Finished `test` profile [optimized] target(s) in 16m 11s
+N06-ALLOCATION {"fixed_receiver_bytes":75328,"packet_allocation_calls":0,"packet_requested_bytes":0,"profile":"n06.host-hybrid.k4-r4.v1","recovered":2,"schema":"n06.allocation.v1","sensor_bytes":1024,"sensor_calls":1}
+N06-GENERATOR {"asup":"14032b8f2c832ee7ef1946404f5efb18162af045","basis_encodes":4,"generator":[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[1,231,134,93],[205,116,135,33],[170,185,126,59],[59,211,122,228]],"gf_products":65536,"profile":"n06.host-hybrid.k4-r4.v1","schema":"n06.generator.v1"}
+N06-SUBSETS {"asup":"14032b8f2c832ee7ef1946404f5efb18162af045","expected":163,"includes_publication_reserve":8192,"limit_work":120000,"maximum_work":103420,"observed":163,"profile":"n06.host-hybrid.k4-r4.v1","recovered":163,"schema":"n06.subsets.v1"}
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== original full N06 evidence pipeline; observed exit 3 ===
+N06-AUTH: passed
+N06-CORRUPTION: passed
+N06-OVERLOAD: passed
+N06-STORM: passed
+N06-CANCEL: passed
+N06-DEADLINE: passed
+N06-RESTART: passed
+N06-TAIL: passed
+N06-REFERENCE: passed
+N06-CONSUMER: passed
+N06-REPLAY: passed
+N06-CARRIER: blocked (typed ingress exists; authenticated peer selection and end-to-end carrier qualification remain pending)
+N06-PACED-SENDER: blocked (paced FEC sender candidate exists; combined native and original acceptance qualification remain pending)
+{"blocked": 2, "diagnostics_dropped": 0, "evidence_class": "offline-host-synthetic", "expected": 13, "failed": 0, "log_sha256": "f4becb4661bef65a4807403d2bd0fa7cca94d00db1cd1f66a904baa9aa532590", "not_run": 0, "passed": 11, "production_fec_profile_admitted": false, "profile": "n06.host-hybrid.k4-r4.v1", "qualified": false, "schema": "n06.receipt.v1", "tier": "full"}
+
+=== earlier actual strict-Clippy failure; native build 30103800983323502 ===
+error: this operation has no effect
+    --> crates/franken-speaker/src/media_playout.rs:3061:30
+     |
+3061 |         wrong.anchor_frame = u64::MAX & !1023;
+     |                              ^^^^^^^^^^^^^^^^ help: consider reducing it to: `!1023`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#identity_op
+     = note: `-D clippy::identity-op` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::identity_op)]`
+
+error: could not compile `franken-speaker` (lib test) due to 1 previous error

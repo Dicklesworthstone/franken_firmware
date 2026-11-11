@@ -1,0 +1,13 @@
+[libraries]
+test result: ok. 645 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.97s
+N06-FUTURE {"active_fec_selected":false,"after_drop_bytes":101232,"anchor_frame":0,"before_bytes":101232,"current_epoch":1,"future_epoch":2,"future_pcm_probe_sha256":"89afaf9e06ce789a9b720ffe20702d4f548123567378b58ce0b1434d39e3e268","future_real":true,"old_pcm_probe_sha256":"58d62a82aaa1e9df0a4b17180359568655fccc58d74529c11ab3f0a03c62f88e","old_real":true,"pending_bytes":277117,"profile":"n06.host-hybrid.k4-r4.v1","recovered":2,"schema":"n06.future-resource.v1"}
+N06-READY {"active_fec_selected":[false,false],"after_drop_bytes":[101232,101232],"before_bytes":[101232,101232],"current_epoch":1,"future_epoch":2,"old_pcm_probe_sha256":["02295ff7f092558b92f166acca64a4d201abfab6bbf64ea5a708f03f0042cb9a","4ee6141a6af0f9f19910a78d60a0f62dbc829c572529c13b294f792a24820230"],"pending_bytes":[278701,278685],"profile":"n06.host-hybrid.k4-r4.v1","ready_assertions":2,"ready_lengths":[324,308],"schema":"n06.ready-resource.v1","target_streams":[6840227781045911553,6840227781045911554]}
+test result: ok. 468 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 37.69s
+test result: ok. 207 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.17s
+
+[allocator]
+N06-READY-PROOF-SENSOR {"schema":"n06.ready-proof-sensor.v1","allocations":2,"bytes_requested":20}
+N06-READY-PROOF-HEAP {"schema":"n06.ready-proof-heap.v1","iterations":512,"verified":512,"allocations":0,"reallocations":0,"deallocations":0,"bytes_requested":0}
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[clippy]

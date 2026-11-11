@@ -1,0 +1,97 @@
+{
+  "schema": "ffw.focused-source-inputs.v1",
+  "scope": "13 changed runtime/test files; complete selected 1535-file manifests are bound by the three receipt roots.",
+  "base_commit": "664402621ffbdb0ec54132d0f3bf665a8a138eb3",
+  "git_build_source": "unknown",
+  "focused_inputs_delivered_commit": "6c066b73db374adade9443eb79d3c4e8578b924f",
+  "inputs": [
+    {
+      "path": "crates/franken-control/src/channel/fec_negotiation.rs",
+      "base_sha256": "bbf2a5debd5eea11b27446f9a63ce119493ab5c0cd11176fb11b25e75796c856",
+      "sha256": "1cd9313fc2f2c97913ac15abde3011ba42ccd9f8e043b1af4ac9cd8e7c8dc47b"
+    },
+    {
+      "path": "crates/franken-control/src/channel/endpoint.rs",
+      "base_sha256": "85376c17d19579326293aa4311b849e880ca4f9531e1cfef37ac630c039abcfd",
+      "sha256": "63eda17ec0cc60bef29eeb3944c326b007d157db2fa6fd447efb86812d01a867"
+    },
+    {
+      "path": "crates/franken-control/src/channel/owner.rs",
+      "base_sha256": "918089ace5698c486fa5edcf0e5b61df84989a0e9ba3051fc8bc0d188bba19c0",
+      "sha256": "4c4af81c31f1e14541f3bae1f1ffb5c3762769941619d46fed2cd1bd95863f60"
+    },
+    {
+      "path": "crates/franken-control/src/channel/peer.rs",
+      "base_sha256": "476469e1d41ef99ed6378b69c8a64ffeab2eab02090f91d3278648d247831be3",
+      "sha256": "4565af6227873ed4784ebc513599257a2a11aa4d560a3b9767f09a14803d1ffd"
+    },
+    {
+      "path": "crates/franken-control/src/contracts/secret_store.rs",
+      "base_sha256": "0a07e769e910c32261573e6f1f33976f865206fd7dae21d394bcb6d66c7cb2a7",
+      "sha256": "d7eb8a3bbce460c5444505113f33b12f96112e7be21be81cc44ec3f86bc9447c"
+    },
+    {
+      "path": "crates/franken-speaker/src/media_playout.rs",
+      "base_sha256": "10588cde0f2a19bd79799210cff79fcefa26e8291af284d87746e60198aff091",
+      "sha256": "fbc31b4218030b6feca2a604d9b3f0aba5cf367fdb493b0d77cc3ce53b6a5239"
+    },
+    {
+      "path": "crates/franken-speaker/src/net_carrier.rs",
+      "base_sha256": "2ffb8c7761faa144199824eaef78db71b92618b15c2e87ae9fca035d621e8bd7",
+      "sha256": "cb58670ca976da523d8d84758b20b4f8d8b13c09fbdff5fd8b01a5923686dc4c"
+    },
+    {
+      "path": "crates/franken-stream/src/lib.rs",
+      "base_sha256": "876ef93aef1b47451151dd5abbc2c618abddc09edac47bcc60dafbeb5e6dde9d",
+      "sha256": "3017a16aabc601509f6f5b2667f6d5306a01350328918374a1ca9a41aae1e26f"
+    },
+    {
+      "path": "crates/franken-alloc-probe/tests/n06_control_proof_heap.rs",
+      "base_sha256": null,
+      "sha256": "8abf74d5b238fb3ac17376ad5880f79474f69db4e5a3b989c94e1b09843b6383"
+    },
+    {
+      "path": "tests/n06/reference.py",
+      "base_sha256": "4dc72dbb4699abc5ceeee7d91995cfa121f65b0bd1086f7fb4225ff5b0c8b91b",
+      "sha256": "c9f74b73695303b1a71d8479624e141e4b45d758be1a8aea6b66fc8cc79fde6a"
+    },
+    {
+      "path": "tests/n06/test_ready_observation.py",
+      "base_sha256": null,
+      "sha256": "444e9fc47676c1ea29d281a1c23f28a1ea61c730613167c8f0710b5dfd332dce"
+    },
+    {
+      "path": "tests/n06/run_cases.py",
+      "base_sha256": "07514f7a768899859be94c3ac6cdea049eea47f3b3a5d84edd263c58ef225236",
+      "sha256": "c760922adb4da0e3f843d77e2c25e4161f1c44b90ac05178ad3bb1edf696c8c6"
+    },
+    {
+      "path": "tests/n06/test_judge.py",
+      "base_sha256": "db5a3aba8e3df9ddf829725a983a00774447bba8387940f8822b7627426dbc9b",
+      "sha256": "a58a261bc59c17f41a3dc31cb9b4e8c6f8e4dbc6553887b78ff4f9b0fa5ab113"
+    }
+  ],
+  "gates": {
+    "libraries": {
+      "build_id": "30104858719682862",
+      "receipt_root": "d2754cc20dd44adfc58e97aa0d2efd46ea7dfe5cf420f72d57c07c8ecb12888d",
+      "command_sha256": "fb0a0ace63582cd22f7a92363205956728dbba3a4f3e59a64b2cdb6d9a895bbe",
+      "command_exit_code": 0,
+      "selected_file_count": 1535
+    },
+    "allocator": {
+      "build_id": "30104858719682863",
+      "receipt_root": "e3f73339e4bc847957ec0c4783e61c415f9e41446b46d3231e8f3a613c147387",
+      "command_sha256": "1b64c81760b51064741a1cd11b4db9a0802c542dcb8f41ae2ac0bab72c1fffc5",
+      "command_exit_code": 0,
+      "selected_file_count": 1535
+    },
+    "clippy": {
+      "build_id": "30104858719682866",
+      "receipt_root": "ed122c83e216011c307b18e4fbd2786e3f0b97c65c7533945ba8a384d75c5d41",
+      "command_sha256": "01c4b2642fa4678fb53e37f387207922d9453a7bc5efe4e696ea7e2274158197",
+      "command_exit_code": 0,
+      "selected_file_count": 1535
+    }
+  }
+}

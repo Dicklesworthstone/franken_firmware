@@ -1,0 +1,128 @@
+{
+  "base_revision": "664402621ffbdb0ec54132d0f3bf665a8a138eb3",
+  "source_sha256": {
+    "crates/franken-control/src/channel/fec_negotiation.rs": "bbf2a5debd5eea11b27446f9a63ce119493ab5c0cd11176fb11b25e75796c856",
+    "crates/franken-control/src/channel/owner.rs": "918089ace5698c486fa5edcf0e5b61df84989a0e9ba3051fc8bc0d188bba19c0",
+    "crates/franken-speaker/src/media_playout.rs": "10588cde0f2a19bd79799210cff79fcefa26e8291af284d87746e60198aff091",
+    "crates/franken-speaker/src/net_carrier.rs": "2ffb8c7761faa144199824eaef78db71b92618b15c2e87ae9fca035d621e8bd7",
+    "tests/n06/reference.py": "4dc72dbb4699abc5ceeee7d91995cfa121f65b0bd1086f7fb4225ff5b0c8b91b",
+    "tests/n06/test_future_observation.py": "05d7611a0ba3982c5f6ba59ed832a884fdc4a293ff23cc39cd837825597eea69",
+    "tests/n06/run_cases.py": "07514f7a768899859be94c3ac6cdea049eea47f3b3a5d84edd263c58ef225236",
+    "tests/n06/test_judge.py": "db5a3aba8e3df9ddf829725a983a00774447bba8387940f8822b7627426dbc9b",
+    "Cargo.toml": "6aaae8aac3d87262cd7057749b84bb4df921dcee810dd5d03cfdddc1c4ebe107",
+    "Cargo.lock": "39e70649d690a342c74157bada974cfabaf76bfbbcb4dc05a33fa0af6181c58c",
+    "crates/franken-control/Cargo.toml": "f9ea7e674bb57efd5c54a8adb618f18b3acbf1d2786e5950cc7e0fa601eeb892",
+    "crates/franken-stream/Cargo.toml": "c0059611538c78e101c437ff4852ac228dc45456f5c2622d41c14940fbe73089",
+    "crates/franken-speaker/Cargo.toml": "78fabf9a7059ac7e9d8990077f77b05df9cca845025f26d1fd943e09139188bc",
+    "toolchain/n06-fec-profile/Cargo.toml": "d79b4cc6e68261a2c159e814fa101f7e8b74ef125ed682790921e48ced49791e",
+    "toolchain/n06-fec-profile/Cargo.lock": "600bef19e3f4bc5eb3b53b297fd57f4b60df46c7f21af16bc610574fd61f5c2a"
+  },
+  "scope": "native Linux host future-resource staging; no authenticated remote readiness or activation",
+  "gates": [
+    {
+      "kind": "libraries",
+      "build_id": "30103800983323521",
+      "receipt_root": "1ff4cede48d06d369ae8224b9c3d7409629ce61f9d4b09a59080ecd3eadca269",
+      "capture_sha256": "d20af315d44f9d4f4b0c0ceff47cd578545dd892a83b339c4cb712bac90ccad9",
+      "command_exit": 0,
+      "captured_files_compared": 1567,
+      "mismatches": [],
+      "actual_result_footers": [
+        "test result: ok. 636 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.16s",
+        "test result: ok. 464 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.47s",
+        "test result: ok. 206 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s"
+      ],
+      "new_test_names": [
+        "n06_verified_proposal_requires_authenticated_ingress_but_not_member_acks",
+        "n06_verified_proposal_rejects_stale_session_round_profile_and_peer",
+        "fleet_owner_verified_proposal_context_requires_real_ingress_and_current_round",
+        "n06_future_candidate_prefetches_real_pcm_while_old_n01_drains",
+        "n06_future_candidate_rejects_stale_binding_budget_and_unauthorized_proposal",
+        "n06_future_candidate_epoch_and_generation_exhaustion_fail_closed",
+        "n06_future_endpoint_prefetch_keeps_old_credit_and_rejects_restart"
+      ],
+      "passed_failed_ignored_measured_filtered": [
+        1306,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "kind": "clippy",
+      "build_id": "30103800983323524",
+      "receipt_root": "5bdd8609c1d10dce834fe297fce41bee8ad84a761dfc0be83109f562df2061c1",
+      "capture_sha256": "24c5a743a085017a88d5b5741f620fe31ab3f4f708c695fb9cf77183db3c5b9c",
+      "command_exit": 0,
+      "captured_files_compared": 1567,
+      "mismatches": [],
+      "actual_result_footers": []
+    },
+    {
+      "kind": "reference",
+      "build_id": "30103800983323529",
+      "receipt_root": "642f1c476bb32dde06450b4414d1da265c69866fe6df7cd02f2b033fc4d70811",
+      "capture_sha256": "2f000697bef75ab2fe1315c3113421682fa6b0bd4ff13f859dfd9e976607189f",
+      "command_exit": 0,
+      "captured_files_compared": 1567,
+      "mismatches": [],
+      "actual_result_footers": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    }
+  ],
+  "earlier_attempts": [
+    {
+      "build_id": "30103800983323484",
+      "status": "not-run: namespace comparison refusal before Cargo",
+      "capture_sha256": "082d581bb9120a24b797b4cbe7b4c3f6eb4b3c904e86c74e0fe3ff1b2a7e0e91"
+    },
+    {
+      "build_id": "30103800983323494",
+      "status": "passed 1306 tests before equivalent test-only lint repair",
+      "capture_sha256": "cac8f878f208a558e4e1a012b80b30468e42fcb971375a9369f3a2cdfe9a4027"
+    },
+    {
+      "build_id": "30103800983323502",
+      "status": "failed: clippy identity_op in overflow-boundary test",
+      "capture_sha256": "cd3d468b4b18a4e1f6a609986ad6f21a9520407eb3d87d11e879c4961dd64917"
+    }
+  ],
+  "rejected_reference_reuse": {
+    "build_id": "30103800983323096",
+    "checked_inputs": 80,
+    "mismatched_paths": [
+      "crates/franken-stream/src/lib.rs",
+      "crates/franken-stream/tests/n07_carrier.rs"
+    ],
+    "accepted_as_current_proof": false
+  },
+  "python_controls": {
+    "adapter_passed": 12,
+    "future_oracle_passed": 4,
+    "failed": 0,
+    "native_names": 89,
+    "original_mappings_retained": 82,
+    "new_native_names": 7,
+    "original_mapping_sha256": "83199f12253a471e90d7b847038fc3374d4c50d882952b2e31f6cea97b3eb23f"
+  },
+  "full_evidence_pipeline": {
+    "blocked": 2,
+    "diagnostics_dropped": 0,
+    "evidence_class": "offline-host-synthetic",
+    "expected": 13,
+    "failed": 0,
+    "log_sha256": "f4becb4661bef65a4807403d2bd0fa7cca94d00db1cd1f66a904baa9aa532590",
+    "not_run": 0,
+    "passed": 11,
+    "production_fec_profile_admitted": false,
+    "profile": "n06.host-hybrid.k4-r4.v1",
+    "qualified": false,
+    "schema": "n06.receipt.v1",
+    "tier": "full"
+  },
+  "qualification": false,
+  "peer_source_assets": "Ordinary receipt mode includes two unchanged concurrent T01 staged assets. No clean-overlay exclusion is asserted."
+}
