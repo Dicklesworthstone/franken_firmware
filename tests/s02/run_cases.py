@@ -80,12 +80,14 @@ JUDGED_ARTIFACTS = (
     "crates/franken-codec/Cargo.toml", "crates/franken-codec/src/lib.rs", "crates/franken-codec/src/decode.rs",
     "crates/franken-codec/src/rate_bridge.rs", "crates/franken-codec/src/rate_table.rs",
     "crates/franken-codec/tests/s02_decode.rs", "crates/franken-codec/tests/s02_bridge.rs", "crates/franken-codec/tests/s02_admission.rs",
+    "crates/franken-codec/tests/s02_reader.rs",
     "crates/franken-alloc-probe/Cargo.toml", "crates/franken-alloc-probe/src/lib.rs", "crates/franken-alloc-probe/tests/s02_codec_heap.rs",
     "crates/franken-codec/src/admission.rs", "tests/s02/admission.json", "tests/s02/test_admission.py",
     "crates/franken-codec/tests/vectors/s02_vectors.json", "crates/franken-codec/tests/vectors/s02_bridge_vectors.json",
 )
 RUST_TEST_FILES = (("crates/franken-codec/tests/s02_decode.rs", "s02_decode"), ("crates/franken-codec/tests/s02_bridge.rs", "s02_bridge"),
                    ("crates/franken-codec/tests/s02_admission.rs", "s02_admission"),
+                   ("crates/franken-codec/tests/s02_reader.rs", "s02_reader"),
                    ("crates/franken-alloc-probe/tests/s02_codec_heap.rs", "s02_codec_heap"))
 TEST_FN = re.compile(r"#\[test\]\s*((?:#\[[^\]]*\]\s*)*)fn\s+([A-Za-z0-9_]+)")
 MACRO_ENTRY = re.compile(r"^\s+(s02_[A-Za-z0-9_]+)\s*=>\s*\"[^\"]+\"\s*,?\s*$", re.M)
@@ -146,6 +148,28 @@ class Logs(d01.Logs):
         self.private_snapshot_directories: List[str] = []
         self.judged_attempts: List[dict] = []
         self._snapshot_by_digest: Dict[str, str] = {}
+        cases, _ = load_cases()
+        self._reader_names = {name for case in cases if case["stem"] == "s02_reader" for name in case["tests"]}
+        self._reader_seen: set = set()
+        self._reader_duplicates: set = set()
+        self._reader_by_digest: Dict[str, set] = {}
+
+    def _record_test(self, stem: Optional[str], name: str, status: str) -> None:
+        if stem in (None, "s02_reader") and name in self._reader_names:
+            if name in self._reader_seen:
+                self._reader_duplicates.add(name)
+            self._reader_seen.add(name)
+        super()._record_test(stem, name, status)
+
+    def test_status(self, stem: str, name: str) -> Optional[str]:
+        if stem == "s02_reader":
+            if name in self._reader_duplicates:
+                return "AMBIGUOUS"
+            key = (stem, name)
+            if key in self.conflicting_tests:
+                return "CONFLICT"
+            return self.tests.get(key)
+        return super().test_status(stem, name)
 
     def add(self, path: str) -> None:
         if self.judged_inputs >= MAX_JUDGED_INPUTS:
@@ -156,6 +180,7 @@ class Logs(d01.Logs):
         self.judged_bytes += len(data)  # Duplicates consume intake budget too.
         digest = hashlib.sha256(data).hexdigest()
         if digest in self._digests:
+            self._reader_duplicates.update(self._reader_by_digest.get(digest, set()))
             self.repeated_inputs.append(os.path.basename(path))
             self.judged_attempts.append({"original_path": os.path.abspath(path), "sha256": digest,
                                          "snapshot_path": self._snapshot_by_digest[digest], "duplicate": True})
@@ -170,6 +195,8 @@ class Logs(d01.Logs):
             target.write(data)
         per_file = d01.Logs()
         per_file.add(snapshot)
+        self._reader_by_digest[digest] = {name for stem, name in per_file.tests
+                                          if stem in (None, "s02_reader") and name in self._reader_names}
         super().add(snapshot)
         if not self.files or self.files[-1][1] != digest or per_file.files[-1][1] != digest:
             raise ValueError("private snapshot digest mismatch")

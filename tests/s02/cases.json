@@ -671,6 +671,23 @@
    ],
    "rows": [],
    "description": "Calling-thread requested-byte observations for the nine existing stereo fixtures, first-use and warm; not RSS or board admission."
+  },
+  {
+   "id": "S02-READER",
+   "group": "reader",
+   "stem": "s02_reader",
+   "tests": [
+    "s02_reader_matches_manifest_frames_and_independent_pcm_reference",
+    "s02_reference_oracle_rejects_retained_bad_vorbis_reference",
+    "s02_file_reader_matches_vec_and_seek_with_bounded_reads",
+    "s02_reader_rejects_size_and_work_limits_before_reading",
+    "s02_reader_operation_counter_accepts_upper_bound_and_rejects_overflow",
+    "s02_reader_actual_truncated_bytes_match_existing_vec_contract",
+    "s02_reader_shortage_and_premature_eof_poison_parser_and_clear_output",
+    "s02_reader_refuses_nonseekable_and_classifies_faults_during_probe"
+   ],
+   "rows": ["spotify.ogg_vorbis", "spotify.mp3"],
+   "description": "Bounded seekable-reader decoding, independent PCM comparisons and fault/limit handling on host fixtures; no provider or board qualification."
   }
  ]
 }

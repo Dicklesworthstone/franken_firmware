@@ -18,8 +18,8 @@ mod rate_table;
 
 pub use decode::{
     AacConfig, AlacConfig, BlockInfo, Caps, CodecError, ContainerDecoder, DecodeStats,
-    PacketDecoder, PcmFormat, SeekInfo, SourceCodec, Step, decode_pcm_s16be, f32_to_s16,
-    parse_aac_asc, parse_alac_cookie,
+    PacketDecoder, PcmFormat, SeekInfo, SourceCodec, SourceReaderLimits, Step, decode_pcm_s16be,
+    f32_to_s16, parse_aac_asc, parse_alac_cookie,
 };
 pub use rate_bridge::{
     BRIDGE_DELAY_IN_FRAMES, BRIDGE_DOWN, BRIDGE_IN_RATE_HZ, BRIDGE_OUT_RATE_HZ, BRIDGE_TAPS,

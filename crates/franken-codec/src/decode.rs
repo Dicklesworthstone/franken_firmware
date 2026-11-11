@@ -17,7 +17,11 @@
 //! Everything is bounded by [`Caps`]. Unsupported material is refused with a named [`CodecError`] before decoding starts: multichannel AAC
 //! (a BLOCKED requirement, not a deletion), HE-AAC, AAC-ELD, AAC-LD, 960-sample frames and every ALAC depth other than 16 and 24.
 
-use std::io::Cursor;
+use std::io::{self, Cursor, Read, Seek, SeekFrom};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, AtomicU32, Ordering},
+};
 
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::codecs::audio::well_known::{
@@ -30,7 +34,7 @@ use symphonia::core::common::Limit;
 use symphonia::core::errors::{Error as SymError, SeekErrorKind};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
-use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
+use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::packet::Packet;
 use symphonia::core::units::{Duration, Timestamp};
@@ -368,6 +372,154 @@ fn mp3_header_format(data: &[u8]) -> Option<(u32, u8)> {
     Some((rates[rate_index], channels))
 }
 
+/// Lifetime work limits for a synchronous finite container reader.
+///
+/// These include probing, decoding and seeking. They do not impose a timeout
+/// on an underlying blocking operation; the caller must schedule it externally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceReaderLimits {
+    /// Maximum underlying reads during the lifetime of the decoder.
+    pub max_read_calls: u64,
+    /// Maximum reads in one probe, decode pull or seek.
+    pub max_reads_per_operation: u64,
+    /// Maximum underlying seeks, including two for initial length validation.
+    pub max_seek_calls: u64,
+    /// Maximum requested bytes per underlying read (at most 32 KiB).
+    pub max_read_chunk_bytes: usize,
+}
+
+const READER_WOULD_BLOCK: u8 = 1;
+const READER_PREMATURE_EOF: u8 = 2;
+const READER_IO: u8 = 3;
+const READER_LIMIT: u8 = 4;
+const READER_DECODER_FAILED: u8 = 5;
+
+fn reader_error(fault: &Option<Arc<AtomicU8>>) -> Result<(), CodecError> {
+    match fault
+        .as_ref()
+        .map(|f| f.load(Ordering::Relaxed))
+        .unwrap_or(0)
+    {
+        0 => Ok(()),
+        READER_WOULD_BLOCK => Err(CodecError::Io(
+            "source temporarily unavailable; discard decoder".into(),
+        )),
+        READER_PREMATURE_EOF => Err(CodecError::Io(
+            "source ended before declared length; discard decoder".into(),
+        )),
+        READER_LIMIT => Err(CodecError::Limit("source reader work budget exhausted")),
+        READER_DECODER_FAILED => Err(CodecError::Io("decoder failed; discard decoder".into())),
+        _ => Err(CodecError::Io(
+            "source read or seek failed; discard decoder".into(),
+        )),
+    }
+}
+
+struct BoundedSource<R> {
+    inner: R,
+    len: u64,
+    position: u64,
+    reads: u64,
+    operation_reads: Arc<AtomicU32>,
+    seeks: u64,
+    chunk: usize,
+    fault: Arc<AtomicU8>,
+}
+
+impl<R> BoundedSource<R> {
+    fn fail(&self, code: u8, kind: io::ErrorKind) -> io::Error {
+        let _ = self
+            .fault
+            .compare_exchange(0, code, Ordering::Relaxed, Ordering::Relaxed);
+        io::Error::new(kind, "bounded source failed; discard decoder")
+    }
+}
+
+impl<R: Read> Read for BoundedSource<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.fault.load(Ordering::Relaxed) != 0 {
+            return Err(io::Error::other("bounded source already failed"));
+        }
+        if buf.is_empty() || self.position == self.len {
+            return Ok(0);
+        }
+        if self.reads == 0 {
+            return Err(self.fail(READER_LIMIT, io::ErrorKind::Other));
+        }
+        let remaining = self.operation_reads.load(Ordering::Relaxed);
+        if remaining == 0 {
+            return Err(self.fail(READER_LIMIT, io::ErrorKind::Other));
+        }
+        self.operation_reads.store(remaining - 1, Ordering::Relaxed);
+        self.reads -= 1;
+        let available = usize::try_from(self.len - self.position).unwrap_or(usize::MAX);
+        let count = buf.len().min(self.chunk).min(available);
+        match self.inner.read(&mut buf[..count]) {
+            Ok(0) => Err(self.fail(READER_PREMATURE_EOF, io::ErrorKind::UnexpectedEof)),
+            Ok(n) if n <= count => {
+                self.position += n as u64;
+                Ok(n)
+            }
+            Ok(_) => Err(self.fail(READER_IO, io::ErrorKind::InvalidData)),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                Err(self.fail(READER_WOULD_BLOCK, e.kind()))
+            }
+            Err(e) => Err(self.fail(READER_IO, e.kind())),
+        }
+    }
+}
+
+impl<R: Seek> Seek for BoundedSource<R> {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        if self.fault.load(Ordering::Relaxed) != 0 {
+            return Err(io::Error::other("bounded source already failed"));
+        }
+        let target = match from {
+            SeekFrom::Start(n) => i128::from(n),
+            SeekFrom::End(n) => i128::from(self.len) + i128::from(n),
+            SeekFrom::Current(n) => i128::from(self.position) + i128::from(n),
+        };
+        if target < 0 || target > i128::from(self.len) {
+            return Err(self.fail(READER_IO, io::ErrorKind::InvalidInput));
+        }
+        if self.seeks == 0 {
+            return Err(self.fail(READER_LIMIT, io::ErrorKind::Other));
+        }
+        self.seeks -= 1;
+        let target = target as u64;
+        match self.inner.seek(SeekFrom::Start(target)) {
+            Ok(actual) if actual == target => {
+                self.position = actual;
+                Ok(actual)
+            }
+            Ok(_) => Err(self.fail(READER_IO, io::ErrorKind::InvalidData)),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                Err(self.fail(READER_WOULD_BLOCK, e.kind()))
+            }
+            Err(e) => Err(self.fail(READER_IO, e.kind())),
+        }
+    }
+}
+
+impl<R: Read + Seek + Send + Sync> MediaSource for BoundedSource<R> {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.len)
+    }
+}
+
+fn expected_container_codec(codec: SourceCodec) -> Result<AudioCodecId, CodecError> {
+    match codec {
+        SourceCodec::OggVorbis => Ok(CODEC_ID_VORBIS),
+        SourceCodec::Mp3 => Ok(CODEC_ID_MP3),
+        _ => Err(CodecError::Unsupported(
+            "this codec arrives as raw packets, not as a container",
+        )),
+    }
+}
+
 /// A decoder for a container: Ogg Vorbis or MP3.
 pub struct ContainerDecoder {
     codec: SourceCodec,
@@ -385,6 +537,8 @@ pub struct ContainerDecoder {
     truncated: bool,
     consecutive_errors: u32,
     stats: DecodeStats,
+    source_fault: Option<Arc<AtomicU8>>,
+    source_operation_reads: Option<(Arc<AtomicU32>, u32)>,
 }
 
 impl ContainerDecoder {
@@ -395,35 +549,128 @@ impl ContainerDecoder {
     /// [`CodecError::InputTooLarge`], [`CodecError::NoAudioTrack`], [`CodecError::WrongCodec`] (for example an AAC-in-ADTS stream offered as
     /// MP3), [`CodecError::TooManyChannels`], or whatever Symphonia reports for a stream it cannot parse.
     pub fn open(codec: SourceCodec, bytes: Vec<u8>, caps: Caps) -> Result<Self, CodecError> {
-        let expected = match codec {
-            SourceCodec::OggVorbis => CODEC_ID_VORBIS,
-            SourceCodec::Mp3 => CODEC_ID_MP3,
-            _ => {
-                return Err(CodecError::Unsupported(
-                    "this codec arrives as raw packets, not as a container",
-                ));
-            }
-        };
+        let expected = expected_container_codec(codec)?;
         if bytes.len() > caps.max_input_bytes {
             return Err(CodecError::InputTooLarge {
                 len: bytes.len(),
                 cap: caps.max_input_bytes,
             });
         }
+        Self::open_source(
+            codec,
+            caps,
+            expected,
+            Box::new(Cursor::new(bytes)),
+            None,
+            None,
+        )
+    }
+
+    /// Open a finite, stable, seekable source without copying it into a Vec.
+    ///
+    /// This synchronous API is not a nonblocking or resumable streaming API.
+    /// The caller must keep the bytes stable and arrange any timeouts and
+    /// scheduling externally. Length is verified by seeking and capped by
+    /// `caps.max_input_bytes`. Symphonia initially allocates a 64 KiB ring;
+    /// Ogg grows it to 128 KiB, temporarily retaining both rings (192 KiB),
+    /// plus its page buffer, metadata, decoder and caller-owned source. These
+    /// figures are not a total allocation or RSS bound.
+    /// Any decode or seek error poisons the reader-backed decoder; discard it.
+    /// Failed decode pulls clear the output. A blocking call has no time bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns a named limit, input size, seek, I/O, or codec error.
+    pub fn open_reader<R: Read + Seek + Send + Sync + 'static>(
+        codec: SourceCodec,
+        mut input: R,
+        declared_len: u64,
+        caps: Caps,
+        limits: SourceReaderLimits,
+    ) -> Result<Self, CodecError> {
+        let expected = expected_container_codec(codec)?;
+        let len = usize::try_from(declared_len).map_err(|_| CodecError::InputTooLarge {
+            len: usize::MAX,
+            cap: caps.max_input_bytes,
+        })?;
+        if len > caps.max_input_bytes {
+            return Err(CodecError::InputTooLarge {
+                len,
+                cap: caps.max_input_bytes,
+            });
+        }
+        if limits.max_read_calls == 0
+            || limits.max_read_calls > 1_000_000
+            || limits.max_reads_per_operation == 0
+            || limits.max_reads_per_operation > limits.max_read_calls
+            || limits.max_seek_calls < 2
+            || limits.max_seek_calls > 100_000
+            || limits.max_read_chunk_bytes == 0
+            || limits.max_read_chunk_bytes > 32 * 1024
+        {
+            return Err(CodecError::Limit("invalid source reader limits"));
+        }
+        let operation_limit = u32::try_from(limits.max_reads_per_operation)
+            .map_err(|_| CodecError::Limit("invalid source reader limits"))?;
+        let actual_len = input
+            .seek(SeekFrom::End(0))
+            .map_err(|_| CodecError::Seek("source is not seekable"))?;
+        if actual_len != declared_len {
+            return Err(CodecError::Seek("declared source length does not match"));
+        }
+        if input
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| CodecError::Seek("source cannot rewind"))?
+            != 0
+        {
+            return Err(CodecError::Seek("source cannot rewind"));
+        }
+        let fault = Arc::new(AtomicU8::new(0));
+        let operation_reads = Arc::new(AtomicU32::new(operation_limit));
+        let bounded = BoundedSource {
+            inner: input,
+            len: declared_len,
+            position: 0,
+            reads: limits.max_read_calls,
+            operation_reads: Arc::clone(&operation_reads),
+            seeks: limits.max_seek_calls - 2,
+            chunk: limits.max_read_chunk_bytes,
+            fault: Arc::clone(&fault),
+        };
+        Self::open_source(
+            codec,
+            caps,
+            expected,
+            Box::new(bounded),
+            Some(fault),
+            Some((operation_reads, operation_limit)),
+        )
+    }
+
+    fn open_source(
+        codec: SourceCodec,
+        caps: Caps,
+        expected: AudioCodecId,
+        input: Box<dyn MediaSource>,
+        source_fault: Option<Arc<AtomicU8>>,
+        source_operation_reads: Option<(Arc<AtomicU32>, u32)>,
+    ) -> Result<Self, CodecError> {
         let mut hint = Hint::new();
         if let Some(extension) = codec.hint_extension() {
             hint.with_extension(extension);
         }
-        let source = MediaSourceStream::new(
-            Box::new(Cursor::new(bytes)),
-            MediaSourceStreamOptions::default(),
-        );
+        let source = MediaSourceStream::new(input, MediaSourceStreamOptions::default());
         let meta_opts = MetadataOptions::default()
             .limit_tag_bytes(Limit::Maximum(16 * 1024))
             .limit_visual_bytes(Limit::Maximum(0));
-        let reader = symphonia::default::get_probe()
-            .probe(&hint, source, FormatOptions::default(), meta_opts)
-            .map_err(map_err)?;
+        let probed = symphonia::default::get_probe().probe(
+            &hint,
+            source,
+            FormatOptions::default(),
+            meta_opts,
+        );
+        reader_error(&source_fault)?;
+        let reader = probed.map_err(map_err)?;
         let (track_id, params, num_frames) = first_audio_track(&*reader)?;
         if params.codec != expected {
             return Err(CodecError::WrongCodec {
@@ -457,6 +704,8 @@ impl ContainerDecoder {
             truncated: false,
             consecutive_errors: 0,
             stats: DecodeStats::default(),
+            source_fault,
+            source_operation_reads,
         })
     }
 
@@ -506,25 +755,60 @@ impl ContainerDecoder {
         Ok(())
     }
 
+    fn begin_reader_operation(&self) {
+        if let Some((remaining, limit)) = &self.source_operation_reads {
+            remaining.store(*limit, Ordering::Relaxed);
+        }
+    }
+
+    fn poison_reader(&self) {
+        if let Some(fault) = &self.source_fault {
+            let _ = fault.compare_exchange(
+                0,
+                READER_DECODER_FAILED,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
+        }
+    }
+
     /// Decode the next block into `out` (replaced). Packets that decode to nothing are consumed silently.
     ///
     /// # Errors
     ///
-    /// Any [`CodecError`]; after an error the decoder may be asked for the next block, but a caller should treat the stream as damaged.
+    /// Any [`CodecError`]. A reader-backed decoder is poisoned on error and
+    /// clears `out`; discard it. For the legacy Vec-backed decoder the caller
+    /// may ask for another block, but should treat the stream as damaged.
     pub fn next_block(&mut self, out: &mut Vec<f32>) -> Result<Step, CodecError> {
+        self.begin_reader_operation();
+        let result = self.next_block_inner(out);
+        if result.is_err() && self.source_fault.is_some() {
+            out.clear();
+            self.poison_reader();
+        }
+        result
+    }
+
+    fn next_block_inner(&mut self, out: &mut Vec<f32>) -> Result<Step, CodecError> {
         out.clear();
-        let mut idle: u32 = 0;
+        reader_error(&self.source_fault)?;
+        let mut idle: u64 = 0;
         loop {
-            if idle > self.caps.max_packets_without_output {
+            if idle > u64::from(self.caps.max_packets_without_output) {
                 return Err(CodecError::Malformed(
                     "too many packets in a row produced no audio",
                 ));
             }
-            let mut packet = match self.reader.next_packet() {
+            let packet_result = self.reader.next_packet();
+            reader_error(&self.source_fault)?;
+            let mut packet = match packet_result {
                 Ok(Some(packet)) => packet,
                 Ok(None) => return Ok(Step::End),
                 Err(SymError::ResetRequired) => {
                     self.rebuild_after_reset()?;
+                    if self.source_fault.is_some() {
+                        idle += 1;
+                    }
                     continue;
                 }
                 Err(SymError::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -534,6 +818,9 @@ impl ContainerDecoder {
                 Err(other) => return Err(map_err(other)),
             };
             if packet.track_id != self.track_id {
+                if self.source_fault.is_some() {
+                    idle += 1;
+                }
                 continue;
             }
             self.stats.packets += 1;
@@ -626,22 +913,31 @@ impl ContainerDecoder {
     ///
     /// [`CodecError::Seek`] when the demuxer refuses.
     pub fn seek(&mut self, target_frame: u64) -> Result<SeekInfo, CodecError> {
+        self.begin_reader_operation();
+        let result = self.seek_inner(target_frame);
+        if result.is_err() {
+            self.poison_reader();
+        }
+        result
+    }
+
+    fn seek_inner(&mut self, target_frame: u64) -> Result<SeekInfo, CodecError> {
+        reader_error(&self.source_fault)?;
         let (target, saturated) = match self.num_frames {
             Some(total) if target_frame > total => (total, true),
             _ => (target_frame, false),
         };
         let want = target.saturating_sub(self.codec.seek_preroll_frames());
         let want_ts = i64::try_from(want).map_err(|_| CodecError::Seek("the target is too far"))?;
-        let landed = self
-            .reader
-            .seek(
-                SeekMode::Accurate,
-                SeekTo::Timestamp {
-                    ts: Timestamp::new(want_ts),
-                    track_id: self.track_id,
-                },
-            )
-            .map_err(map_err)?;
+        let seek_result = self.reader.seek(
+            SeekMode::Accurate,
+            SeekTo::Timestamp {
+                ts: Timestamp::new(want_ts),
+                track_id: self.track_id,
+            },
+        );
+        reader_error(&self.source_fault)?;
+        let landed = seek_result.map_err(map_err)?;
         self.decoder.reset();
         self.skip_until = Some(target);
         self.consecutive_errors = 0;
@@ -651,6 +947,72 @@ impl ContainerDecoder {
             saturated,
             landed: landed.actual_ts.get(),
         })
+    }
+}
+
+#[cfg(test)]
+mod reader_boundary_tests {
+    use super::*;
+
+    fn reader() -> ContainerDecoder {
+        let bytes = include_bytes!("../tests/vectors/mp3_44100.mp3").as_slice();
+        ContainerDecoder::open_reader(
+            SourceCodec::Mp3,
+            Cursor::new(bytes),
+            bytes.len() as u64,
+            Caps::default(),
+            SourceReaderLimits {
+                max_read_calls: 100_000,
+                max_reads_per_operation: 100_000,
+                max_seek_calls: 1_000,
+                max_read_chunk_bytes: 17,
+            },
+        )
+        .expect("real MP3 reader")
+    }
+
+    #[test]
+    fn s02_reader_decoded_seek_error_clears_output_and_poisons() {
+        let mut decoder = reader();
+        let mut out = Vec::new();
+        assert!(matches!(decoder.next_block(&mut out), Ok(Step::Block(_))));
+        assert!(!out.is_empty());
+        // Force the seek semantic failure against the next real decoded packet;
+        // this exercises the private boundary, not a claim that public seek landed here.
+        decoder.skip_until = Some(0);
+        assert!(matches!(
+            decoder.next_block(&mut out),
+            Err(CodecError::Seek(_))
+        ));
+        assert!(out.is_empty());
+        out.push(1.0);
+        assert!(
+            matches!(decoder.next_block(&mut out), Err(CodecError::Io(s)) if s.contains("decoder failed"))
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn s02_reader_per_pull_read_limit_fails_closed_after_valid_block() {
+        let mut decoder = reader();
+        let mut out = Vec::new();
+        assert!(matches!(decoder.next_block(&mut out), Ok(Step::Block(_))));
+        assert!(!out.is_empty());
+        decoder
+            .source_operation_reads
+            .as_mut()
+            .expect("reader budget")
+            .1 = 1;
+        assert!(matches!(
+            decoder.next_block(&mut out),
+            Err(CodecError::Limit(_))
+        ));
+        assert!(out.is_empty());
+        assert!(matches!(
+            decoder.next_block(&mut out),
+            Err(CodecError::Limit(_))
+        ));
+        assert!(out.is_empty());
     }
 }
 

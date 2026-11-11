@@ -32,7 +32,7 @@ try:
 except Exception:  # noqa: BLE001
     HAVE_NUMPY = False
 
-STEMS = {"s02_decode", "s02_bridge", "s02_admission"}
+STEMS = {"s02_decode", "s02_bridge", "s02_admission", "s02_reader"}
 
 
 def load(path):
@@ -133,8 +133,9 @@ class CaseRegistryTests(unittest.TestCase):
         import hashlib
         cases, problem = rc.load_cases()
         self.assertEqual(problem, "")
-        self.assertEqual(len(cases), 61)
-        original = [(c["id"], c["stem"], c["tests"], c["rows"]) for c in cases if c["id"] != "S02-HEAP-PROBE"]
+        self.assertEqual(len(cases), 62)
+        original = [(c["id"], c["stem"], c["tests"], c["rows"]) for c in cases
+                    if c["id"] not in ("S02-HEAP-PROBE", "S02-READER")]
         self.assertEqual(len(original), 60)
         digest = hashlib.sha256(json.dumps(original, separators=(",", ":")).encode()).hexdigest()
         self.assertEqual(digest, "fc2b88c928d431fc24e62ad7daf807cfdec803b78d333ab224f65aa21b28b743")
@@ -258,6 +259,112 @@ class JudgeTests(unittest.TestCase):
         self.assertEqual(counts["errors"]["vorbis_44100"]["max_abs_lsb"], 2)
         self.assertEqual(counts["worst"]["max_block_frames"]["track"], "vorbis_44100")
 
+
+
+class ReaderEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        cases, problem = rc.load_cases()
+        self.assertEqual(problem, "")
+        self.case = next(case for case in cases if case["id"] == "S02-READER")
+        self.names = self.case["tests"]
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_exact_reader_source_is_registered_and_attributed(self):
+        derived = [name for stem, name in rc.derive_rust_tests() if stem == "s02_reader"]
+        self.assertEqual(len(derived), 8)
+        self.assertEqual(derived, self.names)
+        path = "crates/franken-codec/tests/s02_reader.rs"
+        self.assertIn(path, rc.JUDGED_ARTIFACTS)
+        self.assertEqual(rc.artifact_digests()[path], rc.sha256_file(os.path.join(rc.REPO, path)))
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, path)
+            os.makedirs(os.path.dirname(target))
+            shutil.copyfile(os.path.join(rc.REPO, path), target)
+            with mock.patch.object(rc, "REPO", tmp):
+                before = rc.artifact_digests()[path]
+                with open(target, "a", encoding="utf-8") as output:
+                    output.write("\n// changed source control\n")
+                self.assertNotEqual(rc.artifact_digests()[path], before)
+
+    def test_each_reader_verdict_requires_one_attributed_ok(self):
+        for name in self.names:
+            for variation in ("ok", "missing", "ignored", "FAILED", "duplicate ok", "ok then failed", "failed then ok", "repeated input"):
+                with self.subTest(name=name, variation=variation):
+                    statuses = {("s02_reader", item): "ok" for item in self.names}
+                    if variation == "missing":
+                        del statuses[("s02_reader", name)]
+                    elif variation in ("ignored", "FAILED"):
+                        statuses[("s02_reader", name)] = variation
+                    elif variation == "failed then ok":
+                        statuses[("s02_reader", name)] = "FAILED"
+                    path = fabricate_log(self.tmp.name, "%s-%s.log" % (name, variation.replace(" ", "-")),
+                                         statuses, stems={"s02_reader"})
+                    if variation in ("duplicate ok", "ok then failed", "failed then ok"):
+                        verdict = "FAILED" if variation == "ok then failed" else "ok"
+                        with open(path, "a", encoding="utf-8") as output:
+                            output.write("     Running tests/s02_reader.rs (target/debug/deps/s02_reader-0123456789abcdef)\n"
+                                         "running 1 test\ntest %s ... %s\ntest result: ok.\n" % (name, verdict))
+                    logs = rc.Logs()
+                    logs.add(path)
+                    if variation == "repeated input":
+                        logs.add(path)
+                    result = rc.judge_rust_case(self.case, logs)
+                    if variation == "ok":
+                        self.assertEqual(result.status, "passed", result.detail)
+                    elif variation == "FAILED":
+                        self.assertEqual(result.status, "failed", result.detail)
+                    else:
+                        self.assertEqual(result.status, "blocked", result.detail)
+                    if variation in ("duplicate ok", "ok then failed", "failed then ok", "repeated input"):
+                        self.assertEqual(logs.test_status("s02_reader", name), "AMBIGUOUS")
+
+    def test_missing_reader_evidence_keeps_linked_rows_unproven(self):
+        cases, _ = rc.load_cases()
+        results = [rc.Result(case["id"], "passed") for case in cases]
+        next(result for result in results if result.case_id == "S02-READER").status = "blocked"
+        table = {row["row"]: row["state"] for row in rc.ledger_table(cases, results)}
+        self.assertEqual(self.case["rows"], ["spotify.ogg_vorbis", "spotify.mp3"])
+        for row in self.case["rows"]:
+            self.assertEqual(table[row], "unproven", row)
+        for row in ("airplay.alac_44100_s16", "airplay.alac_48000_s24", "airplay.aac_lc_stereo", "airplay.pcm_s16be"):
+            self.assertEqual(table[row], "host_decode_verified", row)
+            dependency = next(case["id"] for case in cases if row in case["rows"])
+            own_result = next(result for result in results if result.case_id == dependency)
+            own_result.status = "failed"
+            affected = {entry["row"]: entry["state"] for entry in rc.ledger_table(cases, results)}
+            self.assertEqual(affected[row], "unproven", row)
+            own_result.status = "passed"
+        self.assertEqual(table["airplay.aac_lc_multichannel"], "blocked")
+        self.assertEqual(table["spotify.aac"], "not_requested_by_pin")
+
+    def test_reader_name_in_another_binary_does_not_count(self):
+        statuses = {("s02_decode", name): "ok" for name in self.names}
+        path = fabricate_log(self.tmp.name, "wrong-binary.log", statuses, stems={"s02_decode"})
+        logs = rc.Logs()
+        logs.add(path)
+        self.assertEqual(rc.judge_rust_case(self.case, logs).status, "blocked")
+
+    def test_unattributed_reader_names_never_prove_which_binary_ran(self):
+        lines = "".join("test %s ... ok\n" % name for name in self.names)
+        headers = {
+            "wrong binary malformed count": "     Running tests/s02_decode.rs (target/debug/deps/s02_decode-0123456789abcdef)\nrunning 9 tests\n",
+            "reader binary malformed count": "     Running tests/s02_reader.rs (target/debug/deps/s02_reader-0123456789abcdef)\nrunning 9 tests\n",
+            "headerless section": "running 8 tests\n",
+            "orphan lines": "",
+        }
+        for label, header in headers.items():
+            with self.subTest(label=label):
+                path = os.path.join(self.tmp.name, label.replace(" ", "-") + ".log")
+                with open(path, "x", encoding="utf-8") as output:
+                    output.write(header + lines + "test result: ok.\n")
+                logs = rc.Logs()
+                logs.add(path)
+                self.assertTrue(logs.unattributed_logs)
+                self.assertEqual(rc.judge_rust_case(self.case, logs).status, "blocked")
+                for name in self.names:
+                    self.assertIn((None, name), logs.tests)
+                    self.assertIsNone(logs.test_status("s02_reader", name))
 
 
 class BoundedLogTests(unittest.TestCase):
