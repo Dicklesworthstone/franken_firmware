@@ -50,10 +50,15 @@ use franken_clock::group::{
     GroupClock, GroupClockError, MuteReason, Output, StartPlan, StartReject as ClockStartReject,
     StartSchedule,
 };
+use franken_control::channel::fec_negotiation::{FecCoordinator, FecError, VerifiedFecProposal};
+use franken_control::channel::owner::{AgreementError, FleetControlOwner};
+use franken_control::channel::peer::{PeerAuthority, PeerDirectory};
+use franken_control::contracts::secret_store::SecretStore;
 use franken_platform::clock::ClockError;
 use franken_platform::layer::PlatformLayer;
 use franken_platform::ops::KernelOps;
 use franken_platform::{MemoryBudgetLedger, PlatformAdmissionError};
+use franken_session::UnifiedGroupSession;
 use franken_stream::playout::{
     Admission, AdmitError, BLOCK_PAYLOAD_BYTES, Decision, EngineSnapshot, LogConfig, MediaPacket,
     Outcome, PlayoutConfig, PlayoutEngine, PlayoutProfile, PlayoutStats, Poll,
@@ -142,6 +147,228 @@ pub enum HostFecAdmitError {
     Allocation {
         requested: usize,
     },
+}
+
+/// Live control inputs used to revalidate the authenticated proposal on every operation.
+pub struct FutureFecAuthority<'a, A: PeerAuthority> {
+    coordinator: &'a FecCoordinator,
+    authority: &'a A,
+    session: &'a UnifiedGroupSession,
+}
+
+impl<A: PeerAuthority> FutureFecAuthority<'_, A> {
+    pub(crate) fn revalidate(&self, proposal: &VerifiedFecProposal) -> Result<(), FecError> {
+        proposal.revalidate(self.coordinator, self.authority, self.session)
+    }
+}
+
+impl<'a, K: SecretStore> FutureFecAuthority<'a, PeerDirectory<K>> {
+    /// Borrow the currently installed, authenticated proposal round from its real owner.
+    pub fn from_owner<S: franken_control::channel::pipeline::Storage>(
+        owner: &'a FleetControlOwner<K, S>,
+        session: &'a UnifiedGroupSession,
+    ) -> Result<Self, AgreementError> {
+        let (coordinator, authority) = owner.proposal_context(session)?;
+        Ok(Self {
+            coordinator,
+            authority,
+            session,
+        })
+    }
+}
+
+/// A local future start relation, supplied separately from the FFCN v1 proposal.
+pub struct FutureFecSpec {
+    /// FFCN v1 does not authenticate this key; the caller supplies it from its trusted keying path.
+    pub config: franken_stream::fec::SessionConfig,
+    pub schedule: StartSchedule,
+    pub anchor_frame: u64,
+}
+
+#[derive(Debug)]
+pub enum FutureFecError {
+    Proposal(FecError),
+    Binding,
+    Stale,
+    Resources(HostFecAdmitError),
+    Engine(MediaAdmitError),
+    Profile(franken_stream::fec::Refusal),
+    Clock(ClockError),
+    ClockNotAdmitted,
+    Resolution(ResolutionMismatch),
+}
+
+struct FutureReservation(Arc<AtomicUsize>);
+
+impl Drop for FutureReservation {
+    fn drop(&mut self) {
+        self.0.store(0, Ordering::Release);
+    }
+}
+
+/// Separately owned future-epoch resources. It neither replaces the current media path nor
+/// provides a readiness acknowledgement or an activation operation.
+pub struct PreparedFutureFec {
+    proposal: VerifiedFecProposal,
+    engine: Option<PlayoutEngine>,
+    fec: Vec<franken_stream::fec::Receiver>,
+    ingress: Option<StreamReceiver>,
+    bridge: ClockViewBridge,
+    schedule: StartSchedule,
+    anchor_frame: u64,
+    binding_generation: u64,
+    // Kept last so proposal, engine, receiver and their owned allocations drop before uncharging.
+    reservation: FutureReservation,
+}
+
+impl PreparedFutureFec {
+    pub(crate) fn cancel_pending(&mut self) {
+        if let Some(fec) = self.fec.first_mut() {
+            fec.cancel();
+        }
+    }
+
+    pub(crate) fn charge_inline(&mut self, bytes: usize) -> Result<(), FutureFecError> {
+        let current = self.reservation.0.load(Ordering::Acquire);
+        let total = current.checked_add(bytes).ok_or(FutureFecError::Resources(
+            HostFecAdmitError::AccountingOverflow,
+        ))?;
+        self.reservation.0.store(total, Ordering::Release);
+        Ok(())
+    }
+
+    /// Locally supplied start and anchor; FFCN v1 does not authenticate this pair.
+    #[must_use]
+    pub const fn local_start(&self) -> (StartSchedule, u64) {
+        (self.schedule, self.anchor_frame)
+    }
+
+    fn check<A: PeerAuthority>(
+        &self,
+        owner: &MediaPlayout,
+        context: &FutureFecAuthority<'_, A>,
+    ) -> Result<(), FutureFecError> {
+        context
+            .revalidate(&self.proposal)
+            .map_err(FutureFecError::Proposal)?;
+        if !Arc::ptr_eq(&self.reservation.0, &owner.fec_reservation)
+            || owner.future_binding_generation == u64::MAX
+            || owner.future_binding_generation != self.binding_generation
+            || owner.receiver.stream_id().get() != self.proposal.proposal().stream()
+            || owner.receiver.active_epoch() != self.proposal.proposal().current_epoch()
+        {
+            return Err(FutureFecError::Stale);
+        }
+        Ok(())
+    }
+
+    fn future_view<O: KernelOps>(
+        &mut self,
+        clock: &GroupClock,
+        platform: &mut PlatformLayer<O>,
+    ) -> Result<franken_stream::playout::ClockView, FutureFecError> {
+        if clock.epoch() != self.schedule.epoch {
+            return Err(FutureFecError::ClockNotAdmitted);
+        }
+        let mismatch = ResolutionMismatch {
+            reported_ns: platform.clock_resolution_ns(),
+            configured_ns: clock.config().timer_resolution_ns,
+        };
+        if mismatch.reported_ns > mismatch.configured_ns {
+            return Err(FutureFecError::Resolution(mismatch));
+        }
+        let local = platform.now_ns().map_err(FutureFecError::Clock)?;
+        let group = clock
+            .group_ns(local)
+            .ok_or(FutureFecError::ClockNotAdmitted)?;
+        let target = self
+            .schedule
+            .start_group_ns
+            .checked_sub(clock.config().output_delay_ns)
+            .ok_or(FutureFecError::ClockNotAdmitted)?;
+        // An independently admitted future clock must still be armed for this exact local
+        // start. Audible or another admitted start is not a prefetch authorization.
+        match clock.output(local) {
+            Output::Armed { starts_in_ns } if group.checked_add(starts_in_ns) == Some(target) => {}
+            _ => return Err(FutureFecError::ClockNotAdmitted),
+        }
+        let view = self.bridge.at_local(clock, local);
+        if !view.usable {
+            return Err(FutureFecError::ClockNotAdmitted);
+        }
+        Ok(view)
+    }
+
+    fn checked_future_view<A: PeerAuthority, O: KernelOps>(
+        &mut self,
+        owner: &MediaPlayout,
+        context: &FutureFecAuthority<'_, A>,
+        clock: &GroupClock,
+        platform: &mut PlatformLayer<O>,
+    ) -> Result<franken_stream::playout::ClockView, FutureFecError> {
+        let result = self
+            .check(owner, context)
+            .and_then(|()| self.future_view(clock, platform));
+        if result.is_err() {
+            // Abandon any reserved decode work when its authority or admitted clock fails.
+            self.cancel_pending();
+        }
+        result
+    }
+
+    /// Authenticate a future symbol into the candidate only. No active output or credit changes.
+    pub fn prefetch_datagram<A: PeerAuthority, O: KernelOps>(
+        &mut self,
+        owner: &MediaPlayout,
+        context: &FutureFecAuthority<'_, A>,
+        clock: &GroupClock,
+        platform: &mut PlatformLayer<O>,
+        wire: &[u8],
+    ) -> Result<franken_stream::fec::AuthenticatedIngress, FutureFecError> {
+        let view = self.checked_future_view(owner, context, clock, platform)?;
+        self.fec[0]
+            .ingest(self.engine.as_mut().expect("prepared engine"), view, wire)
+            .map_err(FutureFecError::Profile)
+    }
+
+    /// Advance bounded future recovery and, when ready, publish only into the candidate engine.
+    pub fn poll_prefetch<A: PeerAuthority, O: KernelOps>(
+        &mut self,
+        owner: &MediaPlayout,
+        context: &FutureFecAuthority<'_, A>,
+        clock: &GroupClock,
+        platform: &mut PlatformLayer<O>,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<franken_stream::fec::DecodeState, FutureFecError> {
+        let view = self.checked_future_view(owner, context, clock, platform)?;
+        let state = self.fec[0]
+            .poll(
+                self.engine.as_mut().expect("prepared engine"),
+                view,
+                cancelled,
+            )
+            .map_err(FutureFecError::Profile)?;
+        if state != franken_stream::fec::DecodeState::Ready {
+            return Ok(state);
+        }
+        // Decode can consume time; revalidate the current round before publishing even
+        // into the isolated candidate engine.
+        let finish = self.checked_future_view(owner, context, clock, platform)?;
+        self.fec[0]
+            .publish(
+                self.engine.as_mut().expect("prepared engine"),
+                finish,
+                cancelled,
+            )
+            .map_err(FutureFecError::Profile)
+    }
+
+    /// The independently staged ingress binding, without exposing its key.
+    #[must_use]
+    pub fn ingress_identity(&self) -> (StreamId, u64) {
+        let ingress = self.ingress.as_ref().expect("prepared ingress");
+        (ingress.stream_id(), ingress.active_epoch())
+    }
 }
 
 /// Owns a fallibly allocated receiver and the single outstanding reservation.
@@ -381,6 +608,8 @@ pub struct MediaPlayout {
     /// Charges the one externally held preparation, including while N01 continues.
     fec_reservation: Arc<AtomicUsize>,
     context_generation: u64,
+    /// Invalidated by rebinding/replacement, not by ordinary old-stream playback.
+    future_binding_generation: u64,
     receiver: StreamReceiver,
     engine: PlayoutEngine,
     bridge: ClockViewBridge,
@@ -418,6 +647,7 @@ impl MediaPlayout {
             fec: Vec::new(),
             fec_reservation: Arc::new(AtomicUsize::new(0)),
             context_generation: 0,
+            future_binding_generation: 0,
             receiver,
             engine,
             bridge: ClockViewBridge::default(),
@@ -461,6 +691,171 @@ impl MediaPlayout {
     ) -> Result<(), HostFecAdmitError> {
         let prepared = self.prepare_host_fec(config, ledger, resident_elsewhere_bytes)?;
         self.commit_host_fec(prepared, ledger, resident_elsewhere_bytes)
+    }
+
+    /// Stage a separate future-epoch receiver and playout engine beside the still-live stream.
+    /// The authenticated v1 proposal binds no start readiness; `spec.schedule` and anchor are
+    /// local inputs and cannot authorize activation. The caller owns the one candidate until drop.
+    pub fn prepare_future_host_fec<A: PeerAuthority>(
+        &mut self,
+        proposal: VerifiedFecProposal,
+        context: &FutureFecAuthority<'_, A>,
+        spec: FutureFecSpec,
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<PreparedFutureFec, FutureFecError> {
+        // Token validation precedes all allocations performed by this method.
+        context
+            .revalidate(&proposal)
+            .map_err(FutureFecError::Proposal)?;
+        let expected = proposal.proposal();
+        let proposal_origin = expected.origin_ns();
+        let offset = u64::try_from(u128::from(spec.anchor_frame) * 62_500 / 3)
+            .map_err(|_| FutureFecError::Binding)?;
+        if self.future_binding_generation == u64::MAX
+            || !spec.anchor_frame.is_multiple_of(1024)
+            || spec.config.stream != self.receiver.stream_id()
+            || spec.config.stream.get() != expected.stream()
+            || self.receiver.active_epoch() != expected.current_epoch()
+            || self.engine.snapshot().epoch != Some(expected.current_epoch())
+            || spec.config.epoch != expected.next_epoch()
+            || spec.schedule.epoch != expected.next_epoch()
+            || spec.config.presentation_origin_ns != expected.origin_ns()
+            || spec.schedule.start_group_ns.checked_sub(offset) != Some(expected.origin_ns())
+        {
+            return Err(FutureFecError::Binding);
+        }
+        spec.config
+            .metadata(spec.anchor_frame / 1024)
+            .map_err(FutureFecError::Profile)?;
+        if self.fec_reservation.load(Ordering::Acquire) != 0 {
+            return Err(FutureFecError::Resources(
+                HostFecAdmitError::PreparationOutstanding,
+            ));
+        }
+        let available = stream_room(ledger, resident_elsewhere_bytes)
+            .map_err(|e| FutureFecError::Resources(HostFecAdmitError::Memory(e)))?;
+        let held = usize::try_from(self.resident_bytes()).unwrap_or(usize::MAX);
+        let inline = core::mem::size_of::<PreparedFutureFec>()
+            .saturating_sub(core::mem::size_of::<PreparedHostFec>());
+        let fixed = inline
+            .checked_add(proposal.owned_heap_bytes())
+            .and_then(|v| v.checked_add(core::mem::size_of::<FutureFecSpec>()))
+            .and_then(|v| v.checked_add(core::mem::size_of::<FutureFecAuthority<'_, A>>()))
+            .ok_or(FutureFecError::Resources(
+                HostFecAdmitError::AccountingOverflow,
+            ))?;
+        let fec_min = franken_stream::fec::Receiver::resident_bytes();
+        let engine_total = PlayoutEngine::resident_bytes(&PlayoutProfile::MUSIC);
+        let engine_heap = engine_total.saturating_sub(core::mem::size_of::<PlayoutEngine>());
+        let needed = held
+            .checked_add(fixed)
+            .and_then(|v| v.checked_add(fec_min))
+            .and_then(|v| v.checked_add(engine_heap))
+            .ok_or(FutureFecError::Resources(
+                HostFecAdmitError::AccountingOverflow,
+            ))?;
+        if needed > available {
+            return Err(FutureFecError::Resources(HostFecAdmitError::Capacity {
+                required: needed,
+                available,
+            }));
+        }
+        self.fec_reservation
+            .compare_exchange(0, fixed.max(1), Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| FutureFecError::Resources(HostFecAdmitError::PreparationOutstanding))?;
+        let mut candidate = PreparedFutureFec {
+            proposal,
+            engine: None,
+            fec: Vec::new(),
+            ingress: None,
+            bridge: ClockViewBridge::default(),
+            schedule: spec.schedule,
+            anchor_frame: spec.anchor_frame,
+            binding_generation: self.future_binding_generation,
+            reservation: FutureReservation(Arc::clone(&self.fec_reservation)),
+        };
+        // The candidate inline allocation already includes the engine struct; `admit_engine`
+        // expects to charge it itself, so exclude that single inline copy from elsewhere.
+        let beside = held
+            .checked_add(fixed)
+            .and_then(|v| v.checked_add(fec_min))
+            .ok_or(FutureFecError::Resources(
+                HostFecAdmitError::AccountingOverflow,
+            ))?
+            .saturating_sub(core::mem::size_of::<PlayoutEngine>());
+        let beside = resident_elsewhere_bytes
+            .checked_add(u64::try_from(beside).unwrap_or(u64::MAX))
+            .ok_or(FutureFecError::Resources(
+                HostFecAdmitError::AccountingOverflow,
+            ))?;
+        let mut engine = admit_engine(
+            PlayoutProfile::MUSIC,
+            PlayoutConfig {
+                work_ns: 1_000_000,
+                lead_ns: 1_000_000,
+                tolerance_ns: 0,
+            },
+            ledger,
+            beside,
+        )
+        .map_err(FutureFecError::Engine)?;
+        engine
+            .begin_stream(
+                spec.config.epoch,
+                spec.anchor_frame,
+                spec.schedule.start_group_ns,
+            )
+            .map_err(|_| FutureFecError::Binding)?;
+        let engine_heap = engine.owned_heap_bytes();
+        let charge = fixed
+            .checked_add(engine_heap)
+            .ok_or(FutureFecError::Resources(
+                HostFecAdmitError::AccountingOverflow,
+            ))?;
+        self.fec_reservation.store(charge.max(1), Ordering::Release);
+        candidate.engine = Some(engine);
+        candidate.fec.try_reserve_exact(1).map_err(|_| {
+            FutureFecError::Resources(HostFecAdmitError::Allocation { requested: fec_min })
+        })?;
+        let fec_actual =
+            candidate
+                .fec
+                .capacity()
+                .checked_mul(fec_min)
+                .ok_or(FutureFecError::Resources(
+                    HostFecAdmitError::AccountingOverflow,
+                ))?;
+        let charge = charge
+            .checked_add(fec_actual)
+            .ok_or(FutureFecError::Resources(
+                HostFecAdmitError::AccountingOverflow,
+            ))?;
+        let total = held.checked_add(charge).ok_or(FutureFecError::Resources(
+            HostFecAdmitError::AccountingOverflow,
+        ))?;
+        if total > available {
+            return Err(FutureFecError::Resources(HostFecAdmitError::Capacity {
+                required: total,
+                available,
+            }));
+        }
+        self.fec_reservation.store(charge.max(1), Ordering::Release);
+        let ingress = StreamReceiver::new(
+            spec.config.key.clone(),
+            spec.config.stream,
+            spec.config.epoch,
+        );
+        let mut fec =
+            franken_stream::fec::Receiver::new(spec.config).map_err(FutureFecError::Profile)?;
+        fec.rebind(
+            candidate.engine.as_ref().expect("prepared engine"),
+            proposal_origin,
+        )
+        .map_err(FutureFecError::Profile)?;
+        candidate.fec.push(fec);
+        candidate.ingress = Some(ingress);
+        Ok(candidate)
     }
 
     /// Reserve real FEC state without selecting it or changing the active stream. One preparation
@@ -583,6 +978,10 @@ impl MediaPlayout {
 
     fn invalidate_preparations(&mut self) {
         self.context_generation = self.context_generation.saturating_add(1);
+    }
+
+    fn invalidate_future_bindings(&mut self) {
+        self.future_binding_generation = self.future_binding_generation.saturating_add(1);
     }
     pub fn host_fec_status(&self) -> Option<franken_stream::fec::Status> {
         self.fec.first().map(|fec| fec.status())
@@ -936,6 +1335,7 @@ impl MediaPlayout {
         anchor_frame: u64,
     ) -> Result<StartPlan, StartRefusal> {
         self.invalidate_preparations();
+        self.invalidate_future_bindings();
         let local_ns = self
             .local_ns(platform, clock)
             .map_err(LocalTimeRefusal::for_start)?;
@@ -988,6 +1388,7 @@ impl MediaPlayout {
     ) -> Result<(), GroupClockError> {
         clock.begin_epoch(epoch, leader)?;
         self.invalidate_preparations();
+        self.invalidate_future_bindings();
         for fec in &mut self.fec {
             fec.stop();
         }
@@ -1005,6 +1406,7 @@ impl MediaPlayout {
     /// [`Self::begin_epoch`] and [`Self::admit_start`] stay the control path's calls for those.
     pub fn bind_stream(&mut self, stream_id: StreamId, epoch: u64) {
         self.invalidate_preparations();
+        self.invalidate_future_bindings();
         for fec in &mut self.fec {
             fec.stop();
         }
@@ -1048,11 +1450,21 @@ mod tests {
     use super::*;
     use crate::guest_evidence;
     use franken_clock::group::{ClockStatus, GroupClockConfig, ProbeResponse};
+    use franken_control::channel::{
+        endpoint::FecHandled,
+        fec_negotiation::{Ingress, MemberBinding, MessageKind, encode, signing_bytes},
+        peer::{PeerDirectory, PeerId, PeerRole, compute_proof},
+        pipeline::{ChannelConfig, Limits, RamMedium},
+    };
+    use franken_control::contracts::secret_store::{
+        Generation, SecretError, SecretHandle, SecretMeta, SecretStore, SecretValue,
+    };
     use franken_platform::abi::Abi;
     use franken_platform::ops::{Provenance, Timespec};
     use franken_stream::playout::{BLOCK_FRAMES, CapacityError, ConfigError, frames_to_ns};
     use franken_stream::{OutboundFrame, StreamId, StreamKey, StreamSender};
     use std::cell::Cell;
+    use std::collections::BTreeMap;
     use std::rc::Rc;
 
     const OLD_TIMELINE_NS: u64 = 100_000_000_000;
@@ -2214,6 +2626,77 @@ mod tests {
         (outcome, out)
     }
 
+    #[derive(Default)]
+    struct FutureFixtureKeys(BTreeMap<SecretHandle, (Generation, SecretValue)>);
+
+    impl SecretStore for FutureFixtureKeys {
+        fn insert(&mut self, h: &SecretHandle, v: SecretValue) -> Result<Generation, SecretError> {
+            if self.0.contains_key(h) {
+                return Err(SecretError::AlreadyExists { handle: h.clone() });
+            }
+            if self.0.len() >= 16 {
+                return Err(SecretError::StoreFull { max: 16 });
+            }
+            self.0.insert(h.clone(), (Generation::FIRST, v));
+            Ok(Generation::FIRST)
+        }
+        fn replace(
+            &mut self,
+            h: &SecretHandle,
+            v: SecretValue,
+            expected: Generation,
+        ) -> Result<Generation, SecretError> {
+            let (generation, value) = self
+                .0
+                .get_mut(h)
+                .ok_or_else(|| SecretError::NotFound { handle: h.clone() })?;
+            if *generation != expected {
+                return Err(SecretError::StaleGeneration {
+                    handle: h.clone(),
+                    expected: expected.get(),
+                    actual: generation.get(),
+                });
+            }
+            *generation = generation
+                .successor()
+                .ok_or_else(|| SecretError::GenerationExhausted { handle: h.clone() })?;
+            *value = v;
+            Ok(*generation)
+        }
+        fn remove(&mut self, h: &SecretHandle) -> Result<(), SecretError> {
+            self.0
+                .remove(h)
+                .map(|_| ())
+                .ok_or_else(|| SecretError::NotFound { handle: h.clone() })
+        }
+        fn generation(&self, h: &SecretHandle) -> Result<Generation, SecretError> {
+            self.0
+                .get(h)
+                .map(|(g, _)| *g)
+                .ok_or_else(|| SecretError::NotFound { handle: h.clone() })
+        }
+        fn with_secret<R>(
+            &self,
+            h: &SecretHandle,
+            f: impl FnOnce(Generation, &[u8]) -> R,
+        ) -> Result<R, SecretError> {
+            self.0
+                .get(h)
+                .map(|(g, v)| f(*g, v.expose()))
+                .ok_or_else(|| SecretError::NotFound { handle: h.clone() })
+        }
+        fn list(&self) -> Vec<SecretMeta> {
+            self.0
+                .iter()
+                .map(|(h, (g, v))| SecretMeta {
+                    handle: h.clone(),
+                    generation: *g,
+                    byte_len: v.byte_len(),
+                })
+                .collect()
+        }
+    }
+
     fn unselected_fec_rig() -> (Rig, franken_stream::fec::SessionConfig) {
         let mut rig = Rig::new();
         rig.media = MediaPlayout::new(
@@ -2239,6 +2722,659 @@ mod tests {
             key: key(),
         };
         (rig, config)
+    }
+
+    struct FutureControl {
+        session: UnifiedGroupSession,
+        owner: FleetControlOwner<FutureFixtureKeys, RamMedium>,
+    }
+
+    impl FutureControl {
+        fn new(origin: u64) -> Self {
+            let session = crate::fsonos_loopback::fixture_session().unwrap();
+            let (mut owner, _) = FleetControlOwner::boot(
+                FutureFixtureKeys::default(),
+                RamMedium::new(Limits::fleet_control_development().segment_bytes),
+                ChannelConfig::provisional(),
+            )
+            .unwrap();
+            for name in ["proposer", "member-kitchen", "member-den"] {
+                let id = PeerId::parse(name).unwrap();
+                owner
+                    .admit(&id, PeerRole::Controller, &[0x51; 32], Some(1), 1)
+                    .unwrap();
+            }
+            let mut control = Self { session, owner };
+            control.start_round(origin);
+            control
+        }
+
+        fn start_round(&mut self, origin: u64) {
+            let proposer = PeerId::parse("proposer").unwrap();
+            let proposal = self
+                .owner
+                .begin_agreement(
+                    &self.session,
+                    proposer.clone(),
+                    PeerRole::Controller,
+                    vec![
+                        MemberBinding {
+                            member: "kitchen".into(),
+                            peer: PeerId::parse("member-kitchen").unwrap(),
+                            role: PeerRole::Controller,
+                        },
+                        MemberBinding {
+                            member: "den".into(),
+                            peer: PeerId::parse("member-den").unwrap(),
+                            role: PeerRole::Controller,
+                        },
+                    ],
+                    (stream_id().get(), origin),
+                )
+                .unwrap()
+                .clone();
+            let message = signing_bytes(MessageKind::Proposal, &proposer, 1, &proposal);
+            let wire = encode(
+                MessageKind::Proposal,
+                &proposer,
+                1,
+                &proposal,
+                &compute_proof(&[0x51; 32], &message),
+            )
+            .unwrap();
+            assert_eq!(
+                self.owner.receive(0, &self.session, &wire).unwrap(),
+                FecHandled::Fec(Ok(Ingress::Proposed))
+            );
+        }
+
+        fn verified(&self) -> VerifiedFecProposal {
+            let (coordinator, authority) = self.owner.proposal_context(&self.session).unwrap();
+            coordinator
+                .validated_proposal(authority, &self.session)
+                .unwrap()
+        }
+
+        fn context(&self) -> FutureFecAuthority<'_, PeerDirectory<FutureFixtureKeys>> {
+            FutureFecAuthority::from_owner(&self.owner, &self.session).unwrap()
+        }
+    }
+
+    fn future_spec(current: &franken_stream::fec::SessionConfig) -> FutureFecSpec {
+        let mut config = current.clone();
+        config.epoch += 1;
+        FutureFecSpec {
+            schedule: StartSchedule {
+                epoch: config.epoch,
+                start_group_ns: config.presentation_origin_ns,
+            },
+            config,
+            anchor_frame: 0,
+        }
+    }
+
+    fn admitted_future_clock(start: u64) -> GroupClock {
+        let mut clock = GroupClock::new(GroupClockConfig::standard().unwrap(), 2, 7, 100).unwrap();
+        for k in 1..=4_u64 {
+            let t1 = k * 10_000_000;
+            let request = clock.next_probe(t1);
+            clock
+                .on_response(
+                    ProbeResponse {
+                        epoch: 2,
+                        leader: 7,
+                        seq: request.seq,
+                        t1_echo_ns: request.t1_local_ns,
+                        t2_group_ns: OLD_TIMELINE_NS + t1 + 400_000,
+                        t3_group_ns: OLD_TIMELINE_NS + t1 + 450_000,
+                    },
+                    t1 + 850_000,
+                )
+                .unwrap();
+        }
+        clock
+            .admit(
+                StartSchedule {
+                    epoch: 2,
+                    start_group_ns: start,
+                },
+                50_000_000,
+            )
+            .unwrap();
+        clock
+    }
+
+    #[test]
+    fn n06_future_candidate_prefetches_real_pcm_while_old_n01_drains() {
+        use franken_stream::fec::{self, BYTES, K, N};
+        use std::sync::atomic::AtomicBool;
+        let (mut rig, current) = unselected_fec_rig();
+        let control = FutureControl::new(current.presentation_origin_ns);
+        let context = control.context();
+        let ledger = synthetic_ledger(2 * 1024 * 1024);
+        let held = rig.media.resident_bytes();
+        let mut candidate = rig
+            .media
+            .prepare_future_host_fec(
+                control.verified(),
+                &context,
+                future_spec(&current),
+                &ledger,
+                0,
+            )
+            .unwrap();
+        assert_eq!(candidate.ingress_identity(), (stream_id(), 2));
+        assert_eq!(candidate.local_start().1, 0);
+        assert!(rig.media.resident_bytes() > held);
+        assert!(!rig.media.host_fec_selected());
+        let future_clock = admitted_future_clock(current.presentation_origin_ns);
+        rig.at(70_000_000);
+        let old = rig.packet(0, 0, current.presentation_origin_ns, 19);
+        assert_eq!(rig.ingest(&old), Ok(Admission::Admitted));
+        assert!(matches!(
+            rig.ingest(&old),
+            Err(MediaRefusal::Stream(
+                StreamError::ReplayOrDuplicatePacket { .. }
+            ))
+        ));
+        let mut config = current.clone();
+        config.epoch = 2;
+        let source: [[u8; BYTES]; K] = std::array::from_fn(|i| [i as u8 + 9; BYTES]);
+        let digest = fec::content_digest(&config.metadata(0).unwrap(), &source);
+        for esi in 2..N {
+            let wire = fec::sign_symbol(
+                &config,
+                0,
+                esi,
+                if esi < K { 0 } else { 2 },
+                digest,
+                &fec::encode_symbol(&source, esi).unwrap(),
+            )
+            .unwrap();
+            candidate
+                .prefetch_datagram(
+                    &rig.media,
+                    &context,
+                    &future_clock,
+                    &mut rig.platform,
+                    &wire,
+                )
+                .unwrap();
+        }
+        let mut ready = false;
+        for step in 0..1000 {
+            rig.at(130_000_000 + step * 30_000);
+            if candidate
+                .poll_prefetch(
+                    &rig.media,
+                    &context,
+                    &future_clock,
+                    &mut rig.platform,
+                    &AtomicBool::new(false),
+                )
+                .unwrap()
+                == fec::DecodeState::Ready
+            {
+                ready = true;
+                break;
+            }
+        }
+        assert!(ready);
+        assert_eq!(candidate.fec[0].status().counters.recovered, 2);
+        let mut local = future_clock
+            .local_for_group(current.presentation_origin_ns - 2_500_000, 160_000_000)
+            .unwrap();
+        for _ in 0..8 {
+            let uncertainty = future_clock
+                .report(local)
+                .uncertainty_ns
+                .unwrap()
+                .max(500_000);
+            let cutoff = franken_stream::playout::consume_by(
+                current.presentation_origin_ns,
+                1_000_000,
+                1_000_000,
+                uncertainty,
+            );
+            let group = future_clock.group_ns(local).unwrap();
+            if group >= cutoff {
+                break;
+            }
+            local += cutoff - group;
+        }
+        rig.at(local);
+        candidate.check(&rig.media, &context).unwrap();
+        let view = candidate
+            .future_view(&future_clock, &mut rig.platform)
+            .unwrap();
+        let mut future_pcm = [0; BYTES];
+        let Poll::Decision(decision) = candidate
+            .engine
+            .as_mut()
+            .unwrap()
+            .decide(fec::profile_view(view), &mut future_pcm)
+        else {
+            panic!("future candidate did not decide recovered PCM")
+        };
+        assert_eq!(decision.outcome, Outcome::Real);
+        assert_eq!(future_pcm, source[0]);
+        let (outcome, old_pcm) = fec_prepare_block(&mut rig, &current, 0);
+        assert_eq!(outcome, Outcome::Real);
+        assert_eq!(old_pcm.as_slice(), pcm(0, 19).as_slice());
+        candidate.check(&rig.media, &context).unwrap();
+        assert!(!rig.media.host_fec_selected());
+        let current_epoch = rig.media.receiver.active_epoch();
+        let future_epoch = candidate.ingress_identity().1;
+        let anchor_frame = candidate.local_start().1;
+        let pending_bytes = rig.media.resident_bytes();
+        let recovered = candidate.fec[0].status().counters.recovered;
+        let active_fec_selected = rig.media.host_fec_selected();
+        let probe = |bytes: &[u8; BYTES]| -> String {
+            fec::content_digest(&[0; 64], &[*bytes; K])
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        };
+        let old_pcm_probe_sha256 = probe(&old_pcm);
+        let future_pcm_probe_sha256 = probe(&future_pcm);
+        drop(candidate);
+        let after_drop_bytes = rig.media.resident_bytes();
+        assert_eq!(after_drop_bytes, held);
+        println!(
+            "N06-FUTURE {}",
+            serde_json::json!({
+                "schema": "n06.future-resource.v1",
+                "profile": fec::PROFILE,
+                "current_epoch": current_epoch,
+                "future_epoch": future_epoch,
+                "anchor_frame": anchor_frame,
+                "before_bytes": held,
+                "pending_bytes": pending_bytes,
+                "after_drop_bytes": after_drop_bytes,
+                "recovered": recovered,
+                "old_real": outcome == Outcome::Real,
+                "future_real": decision.outcome == Outcome::Real,
+                "old_pcm_probe_sha256": old_pcm_probe_sha256,
+                "future_pcm_probe_sha256": future_pcm_probe_sha256,
+                "active_fec_selected": active_fec_selected,
+            })
+        );
+    }
+
+    #[test]
+    fn n06_future_candidate_rejects_stale_binding_budget_and_unauthorized_proposal() {
+        let (mut rig, current) = unselected_fec_rig();
+        let mut control = FutureControl::new(current.presentation_origin_ns);
+        let ledger = synthetic_ledger(2 * 1024 * 1024);
+        let held = rig.media.resident_bytes();
+        let before = rig.media.engine.snapshot();
+        let counters = rig.media.receiver_counters().clone();
+        let mut wrong = future_spec(&current);
+        wrong.config.stream = StreamId::new(stream_id().get() + 1).unwrap();
+        assert!(matches!(
+            rig.media.prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                wrong,
+                &ledger,
+                0
+            ),
+            Err(FutureFecError::Binding)
+        ));
+        let mut wrong = future_spec(&current);
+        wrong.config.epoch += 1;
+        assert!(matches!(
+            rig.media.prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                wrong,
+                &ledger,
+                0
+            ),
+            Err(FutureFecError::Binding)
+        ));
+        let mut wrong = future_spec(&current);
+        wrong.config.presentation_origin_ns += 1;
+        assert!(matches!(
+            rig.media.prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                wrong,
+                &ledger,
+                0
+            ),
+            Err(FutureFecError::Binding)
+        ));
+        let mut wrong = future_spec(&current);
+        wrong.anchor_frame = 1;
+        assert!(matches!(
+            rig.media.prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                wrong,
+                &ledger,
+                0
+            ),
+            Err(FutureFecError::Binding)
+        ));
+        let mut wrong = future_spec(&current);
+        wrong.anchor_frame = u64::MAX & !1023;
+        assert!(matches!(
+            rig.media.prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                wrong,
+                &ledger,
+                0
+            ),
+            Err(FutureFecError::Binding)
+        ));
+        let mut wrong = future_spec(&current);
+        wrong.schedule.start_group_ns += 1;
+        assert!(matches!(
+            rig.media.prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                wrong,
+                &ledger,
+                0
+            ),
+            Err(FutureFecError::Binding)
+        ));
+        assert!(matches!(
+            rig.media.prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                future_spec(&current),
+                &synthetic_ledger(held),
+                0
+            ),
+            Err(FutureFecError::Resources(
+                HostFecAdmitError::Capacity { .. }
+            ))
+        ));
+        assert_eq!(rig.media.engine.snapshot(), before);
+        assert_eq!(rig.media.receiver_counters(), &counters);
+        assert_eq!(rig.media.resident_bytes(), held);
+        let mut aligned = future_spec(&current);
+        aligned.anchor_frame = 1024;
+        aligned.schedule.start_group_ns = current.presentation_origin_ns + frames_to_ns(1024);
+        let aligned = rig
+            .media
+            .prepare_future_host_fec(control.verified(), &control.context(), aligned, &ledger, 0)
+            .unwrap();
+        assert_eq!(aligned.local_start().1, 1024);
+        drop(aligned);
+        assert_eq!(rig.media.resident_bytes(), held);
+        let old_preparation = rig
+            .media
+            .prepare_host_fec(current.clone(), &ledger, 0)
+            .unwrap();
+        assert!(matches!(
+            rig.media.prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                future_spec(&current),
+                &ledger,
+                0
+            ),
+            Err(FutureFecError::Resources(
+                HostFecAdmitError::PreparationOutstanding
+            ))
+        ));
+        drop(old_preparation);
+        let candidate = rig
+            .media
+            .prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                future_spec(&current),
+                &ledger,
+                0,
+            )
+            .unwrap();
+        assert!(matches!(
+            rig.media.prepare_host_fec(current.clone(), &ledger, 0),
+            Err(HostFecAdmitError::PreparationOutstanding)
+        ));
+        assert!(matches!(
+            rig.media.prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                future_spec(&current),
+                &ledger,
+                0
+            ),
+            Err(FutureFecError::Resources(
+                HostFecAdmitError::PreparationOutstanding
+            ))
+        ));
+        drop(candidate);
+        assert_eq!(rig.media.resident_bytes(), held);
+        let candidate = rig
+            .media
+            .prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                future_spec(&current),
+                &ledger,
+                0,
+            )
+            .unwrap();
+        rig.media.bind_stream(stream_id(), 1);
+        assert!(matches!(
+            candidate.check(&rig.media, &control.context()),
+            Err(FutureFecError::Stale)
+        ));
+        drop(candidate);
+        let mut candidate = rig
+            .media
+            .prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                future_spec(&current),
+                &ledger,
+                0,
+            )
+            .unwrap();
+        let (other, _) = unselected_fec_rig();
+        assert!(matches!(
+            candidate.check(&other.media, &control.context()),
+            Err(FutureFecError::Stale)
+        ));
+        let unadmitted = GroupClock::new(GroupClockConfig::standard().unwrap(), 2, 7, 100).unwrap();
+        rig.at(70_000_000);
+        assert!(matches!(
+            candidate.prefetch_datagram(
+                &rig.media,
+                &control.context(),
+                &unadmitted,
+                &mut rig.platform,
+                &[0]
+            ),
+            Err(FutureFecError::ClockNotAdmitted)
+        ));
+        control.start_round(current.presentation_origin_ns);
+        assert!(matches!(
+            candidate.check(&rig.media, &control.context()),
+            Err(FutureFecError::Proposal(_))
+        ));
+        let clock = admitted_future_clock(current.presentation_origin_ns);
+        assert!(matches!(
+            candidate.prefetch_datagram(
+                &rig.media,
+                &control.context(),
+                &clock,
+                &mut rig.platform,
+                &[0]
+            ),
+            Err(FutureFecError::Proposal(_))
+        ));
+        drop(candidate);
+        // Revoke the current proposer: the real owner no longer supplies a context.
+        let token = control.verified();
+        control
+            .owner
+            .revoke(&PeerId::parse("proposer").unwrap())
+            .unwrap();
+        assert!(FutureFecAuthority::from_owner(&control.owner, &control.session).is_err());
+        let other_round = FutureControl::new(current.presentation_origin_ns);
+        assert!(matches!(
+            rig.media.prepare_future_host_fec(
+                token,
+                &other_round.context(),
+                future_spec(&current),
+                &ledger,
+                0
+            ),
+            Err(FutureFecError::Proposal(_))
+        ));
+        assert_eq!(rig.media.resident_bytes(), held);
+        assert!(!rig.media.host_fec_selected());
+        rig.at(70_000_000);
+        let old = rig.packet(0, 0, current.presentation_origin_ns, 33);
+        assert_eq!(rig.ingest(&old), Ok(Admission::Admitted));
+        assert!(matches!(
+            rig.ingest(&old),
+            Err(MediaRefusal::Stream(
+                StreamError::ReplayOrDuplicatePacket { .. }
+            ))
+        ));
+        let (outcome, audio) = fec_prepare_block(&mut rig, &current, 0);
+        assert_eq!(outcome, Outcome::Real);
+        assert_eq!(audio.as_slice(), pcm(0, 33).as_slice());
+    }
+
+    #[test]
+    fn n06_future_candidate_epoch_and_generation_exhaustion_fail_closed() {
+        let (mut rig, current) = unselected_fec_rig();
+        let control = FutureControl::new(current.presentation_origin_ns);
+        let ledger = synthetic_ledger(2 * 1024 * 1024);
+        let held = rig.media.resident_bytes();
+        let candidate = rig
+            .media
+            .prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                future_spec(&current),
+                &ledger,
+                0,
+            )
+            .unwrap();
+        rig.media.begin_epoch(&mut rig.clock, 2, 7).unwrap();
+        assert!(matches!(
+            candidate.check(&rig.media, &control.context()),
+            Err(FutureFecError::Stale)
+        ));
+        drop(candidate);
+        assert_eq!(rig.media.resident_bytes(), held);
+        let (mut rig, current) = unselected_fec_rig();
+        let control = FutureControl::new(current.presentation_origin_ns);
+        let held = rig.media.resident_bytes();
+        rig.media.future_binding_generation = u64::MAX - 1;
+        let candidate = rig
+            .media
+            .prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                future_spec(&current),
+                &ledger,
+                0,
+            )
+            .unwrap();
+        rig.media.bind_stream(stream_id(), 1);
+        assert!(matches!(
+            candidate.check(&rig.media, &control.context()),
+            Err(FutureFecError::Stale)
+        ));
+        drop(candidate);
+        assert!(matches!(
+            rig.media.prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                future_spec(&current),
+                &ledger,
+                0,
+            ),
+            Err(FutureFecError::Binding)
+        ));
+        assert_eq!(rig.media.resident_bytes(), held);
+        assert!(!rig.media.host_fec_selected());
+    }
+
+    #[test]
+    fn n06_future_endpoint_prefetch_keeps_old_credit_and_rejects_restart() {
+        use crate::net_carrier::MediaEndpoint;
+        use franken_stream::carrier::{CarrierReceiver, ReceiverLimits};
+        use franken_stream::fec::{self, BYTES, K};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+        let (mut rig, current) = unselected_fec_rig();
+        let packet = rig.packet(0, 0, current.presentation_origin_ns, 43);
+        let control = FutureControl::new(current.presentation_origin_ns);
+        let context = control.context();
+        let clock = admitted_future_clock(current.presentation_origin_ns);
+        rig.at(70_000_000);
+        let carrier = CarrierReceiver::bind(
+            key(),
+            stream_id(),
+            1,
+            ReceiverLimits::baseline(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 9)),
+        )
+        .unwrap();
+        let mut endpoint = MediaEndpoint::new(carrier, rig.media);
+        let held = endpoint.media().resident_bytes();
+        let ledger = synthetic_ledger(2 * 1024 * 1024);
+        let mut candidate = endpoint
+            .prepare_future_host_fec(
+                control.verified(),
+                &context,
+                future_spec(&current),
+                &ledger,
+                0,
+            )
+            .unwrap();
+        assert!(endpoint.media().resident_bytes() > held);
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        socket
+            .send_to(&packet, endpoint.carrier().media_addr().unwrap())
+            .unwrap();
+        assert_eq!(
+            endpoint
+                .poll(&mut rig.platform, &mut rig.clock)
+                .media_accepted,
+            1
+        );
+        assert_eq!(endpoint.carrier().consumed_next(), 1);
+        socket
+            .send_to(&packet, endpoint.carrier().media_addr().unwrap())
+            .unwrap();
+        assert_eq!(
+            endpoint
+                .poll(&mut rig.platform, &mut rig.clock)
+                .media_accepted,
+            0
+        );
+        assert_eq!(endpoint.carrier().consumed_next(), 1);
+        let mut future = current.clone();
+        future.epoch = 2;
+        let source = [[7_u8; BYTES]; K];
+        let digest = fec::content_digest(&future.metadata(0).unwrap(), &source);
+        let wire = fec::sign_symbol(&future, 0, 0, 0, digest, &source[0]).unwrap();
+        let event = candidate
+            .prefetch_datagram(&endpoint, &context, &clock, &mut rig.platform, &wire)
+            .unwrap();
+        assert_eq!((event.stream, event.epoch), (stream_id().get(), 2));
+        assert_eq!(endpoint.carrier().consumed_next(), 1);
+        assert!(!endpoint.media().host_fec_selected());
+        endpoint.restart_stream(stream_id(), 1);
+        assert!(matches!(
+            candidate.prefetch_datagram(&endpoint, &context, &clock, &mut rig.platform, &wire),
+            Err(FutureFecError::Stale)
+        ));
+        drop(candidate);
+        assert_eq!(endpoint.media().resident_bytes(), held);
     }
 
     #[test]

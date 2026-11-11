@@ -368,6 +368,22 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
         Ok((coordinator, self.authority()))
     }
 
+    /// The current authenticated proposal and authority, before member acknowledgments.
+    /// This context is not receiver resource or clock readiness.
+    pub fn proposal_context(
+        &self,
+        session: &UnifiedGroupSession,
+    ) -> Result<(&FecCoordinator, &PeerDirectory<K>), AgreementError> {
+        if !self.healthy() {
+            return Err(AgreementError::Unavailable);
+        }
+        let coordinator = self.coordinator.as_ref().ok_or(AgreementError::NoAttempt)?;
+        coordinator
+            .current_proposal_authority(self.authority(), session)
+            .map_err(AgreementError::Protocol)?;
+        Ok((coordinator, self.authority()))
+    }
+
     pub const fn ingress_stats(&self) -> FecIngressStats {
         self.endpoint.fec_ingress_stats()
     }
@@ -499,6 +515,65 @@ mod tests {
             )
             .unwrap()
             .clone()
+    }
+
+    #[test]
+    fn fleet_owner_verified_proposal_context_requires_real_ingress_and_current_round() {
+        let session = session();
+        let mut owner = blank();
+        let bindings = enroll(&mut owner, &session);
+        assert!(matches!(
+            owner.proposal_context(&session),
+            Err(AgreementError::NoAttempt)
+        ));
+        let proposal = begin(&mut owner, &session, bindings.clone());
+        assert!(matches!(
+            owner.proposal_context(&session),
+            Err(AgreementError::Protocol(FecError::MissingAcknowledgments))
+        ));
+        let message = wire(&owner, MessageKind::Proposal, &id("proposer"), &proposal);
+        let mut forged = message.clone();
+        *forged.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            owner.receive(0, &session, &forged).unwrap(),
+            FecHandled::Fec(Err(FecError::Authentication))
+        );
+        assert!(matches!(
+            owner.proposal_context(&session),
+            Err(AgreementError::Protocol(FecError::MissingAcknowledgments))
+        ));
+        assert_eq!(
+            owner.receive(10_000_000, &session, &message).unwrap(),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        let token = {
+            let (coordinator, authority) = owner.proposal_context(&session).unwrap();
+            coordinator.validated_proposal(authority, &session).unwrap()
+        };
+        assert_eq!(token.proposal().proposal_id(), proposal.proposal_id());
+        assert!(matches!(
+            owner.agreement_context(&session),
+            Err(AgreementError::Protocol(FecError::MissingAcknowledgments))
+        ));
+        let later = begin(&mut owner, &session, bindings);
+        let next = wire(&owner, MessageKind::Proposal, &id("proposer"), &later);
+        assert_eq!(
+            owner.receive(20_000_000, &session, &next).unwrap(),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        let (coordinator, authority) = owner.proposal_context(&session).unwrap();
+        assert_eq!(
+            token.revalidate(coordinator, authority, &session),
+            Err(FecError::Stale)
+        );
+        assert_eq!(
+            coordinator
+                .validated_proposal(authority, &session)
+                .unwrap()
+                .proposal()
+                .proposal_id(),
+            later.proposal_id()
+        );
     }
 
     #[test]

@@ -167,6 +167,103 @@ pub enum Ingress {
     Duplicate,
 }
 
+/// An immutable member binding in an authenticated proposal.
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedFecMember {
+    member: Box<str>,
+    peer: Box<str>,
+    role: PeerRole,
+}
+
+impl VerifiedFecMember {
+    #[must_use]
+    pub fn member(&self) -> &str {
+        &self.member
+    }
+
+    #[must_use]
+    pub fn peer(&self) -> &str {
+        &self.peer
+    }
+
+    #[must_use]
+    pub const fn role(&self) -> PeerRole {
+        self.role
+    }
+}
+
+/// A proposal authenticated through the existing ingress. This does not certify
+/// acknowledgments, resources, clock/start readiness or distributed activation.
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedFecProposal {
+    proposal: FecProposal,
+    members: Box<[VerifiedFecMember]>,
+    proposer: Box<str>,
+    proposer_role: PeerRole,
+    proposer_version: u64,
+    profile: ControlProfile,
+}
+
+impl VerifiedFecProposal {
+    #[must_use]
+    pub const fn proposal(&self) -> &FecProposal {
+        &self.proposal
+    }
+
+    #[must_use]
+    pub fn members(&self) -> &[VerifiedFecMember] {
+        &self.members
+    }
+
+    /// Owned allocation bytes, separate from the inline token, for overlap accounting.
+    #[must_use]
+    pub fn owned_heap_bytes(&self) -> usize {
+        self.proposal
+            .group
+            .capacity()
+            .saturating_add(self.proposer.len())
+            .saturating_add(std::mem::size_of_val(&*self.members))
+            .saturating_add(self.members.iter().fold(0usize, |sum, member| {
+                sum.saturating_add(member.member.len())
+                    .saturating_add(member.peer.len())
+            }))
+    }
+
+    #[must_use]
+    pub fn resident_bytes(&self) -> usize {
+        std::mem::size_of::<Self>().saturating_add(self.owned_heap_bytes())
+    }
+
+    /// Revalidate against the currently installed attempt and current authority.
+    pub fn revalidate<A: PeerAuthority>(
+        &self,
+        coordinator: &FecCoordinator,
+        authority: &A,
+        session: &UnifiedGroupSession,
+    ) -> Result<(), FecError> {
+        let auth = coordinator.current_proposal_authority(authority, session)?;
+        if self.profile != coordinator.profile
+            || self.proposal != coordinator.expected
+            || self.proposer.as_ref() != auth.peer.as_str()
+            || self.proposer_role != auth.role
+            || self.proposer_version != auth.version
+            || self.members.len() != coordinator.members.len()
+            || self
+                .members
+                .iter()
+                .zip(coordinator.members.values())
+                .any(|(saved, current)| {
+                    saved.member.as_ref() != current.member.as_str()
+                        || saved.peer.as_ref() != current.peer.as_str()
+                        || saved.role != current.role
+                })
+        {
+            return Err(FecError::Stale);
+        }
+        Ok(())
+    }
+}
+
 /// A selected profile backed by a verified proposal and every required peer ack.
 /// Its fields cannot be fabricated by a control-path caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,6 +421,56 @@ impl FecCoordinator {
             && session.state_revision == self.expected.membership_revision
             && session.members.len() == self.members.len()
             && session.members.keys().eq(self.members.keys())
+    }
+
+    pub(super) fn current_proposal_authority<A: PeerAuthority>(
+        &self,
+        authority: &A,
+        session: &UnifiedGroupSession,
+    ) -> Result<&Authenticated, FecError> {
+        if authority.control_profile() != self.profile {
+            return Err(FecError::Unauthorized);
+        }
+        if !self.snapshot_matches(session) {
+            return Err(FecError::Stale);
+        }
+        let auth = self
+            .proposal_auth
+            .as_ref()
+            .ok_or(FecError::MissingAcknowledgments)?;
+        if auth.peer != self.proposer
+            || auth.role != self.proposer_role
+            || auth.bound_epoch != Some(self.expected.current_epoch)
+            || !authority.is_current(auth)
+        {
+            return Err(FecError::Authentication);
+        }
+        Ok(auth)
+    }
+
+    /// Handoff of an actually authenticated proposal, before member acknowledgments.
+    pub fn validated_proposal<A: PeerAuthority>(
+        &self,
+        authority: &A,
+        session: &UnifiedGroupSession,
+    ) -> Result<VerifiedFecProposal, FecError> {
+        let auth = self.current_proposal_authority(authority, session)?;
+        Ok(VerifiedFecProposal {
+            proposal: self.expected.clone(),
+            members: self
+                .members
+                .values()
+                .map(|binding| VerifiedFecMember {
+                    member: binding.member.as_str().into(),
+                    peer: binding.peer.as_str().into(),
+                    role: binding.role,
+                })
+                .collect(),
+            proposer: auth.peer.as_str().into(),
+            proposer_role: auth.role,
+            proposer_version: auth.version,
+            profile: self.profile,
+        })
     }
 
     /// Decode and authenticate after the endpoint has charged its fixed ingress allowance.
@@ -650,6 +797,164 @@ mod tests {
             self.fec
                 .validated_selection(self.channel.authority(), &self.session)
         }
+    }
+
+    #[test]
+    fn n06_verified_proposal_requires_authenticated_ingress_but_not_member_acks() {
+        let mut rig = Rig::new();
+        rig.endpoint = Endpoint::with_fec_rate_limit(
+            crate::channel::limiter::RateLimit::new(1, 1_000_000_000).unwrap(),
+            0,
+        );
+        assert_eq!(
+            rig.fec
+                .validated_proposal(rig.channel.authority(), &rig.session),
+            Err(FecError::MissingAcknowledgments)
+        );
+        let mut forged = rig.wire(MessageKind::Proposal, "leader", rig.fec.proposal());
+        *forged.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            rig.send(&forged),
+            FecHandled::Fec(Err(FecError::Authentication))
+        );
+        assert_eq!(
+            rig.fec
+                .validated_proposal(rig.channel.authority(), &rig.session),
+            Err(FecError::MissingAcknowledgments)
+        );
+        assert!(matches!(
+            rig.signed(MessageKind::Proposal, "leader"),
+            FecHandled::RateLimited { .. }
+        ));
+        assert_eq!(
+            rig.fec
+                .validated_proposal(rig.channel.authority(), &rig.session),
+            Err(FecError::MissingAcknowledgments)
+        );
+        rig.now_ns = 1_000_000_000;
+        let before = rig.session.clone();
+        assert_eq!(
+            rig.signed(MessageKind::Proposal, "leader"),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        let verified = rig
+            .fec
+            .validated_proposal(rig.channel.authority(), &rig.session)
+            .unwrap();
+        assert_eq!(verified.proposal(), rig.fec.proposal());
+        assert_eq!(verified.members().len(), 2);
+        assert_eq!(verified.members()[0].member(), "den");
+        assert_eq!(verified.members()[0].peer(), "member-s2");
+        assert_eq!(verified.members()[0].role(), PeerRole::Controller);
+        assert_eq!(
+            verified.resident_bytes(),
+            std::mem::size_of::<VerifiedFecProposal>() + verified.owned_heap_bytes()
+        );
+        assert!(verified.owned_heap_bytes() > 0);
+        assert_eq!(
+            verified.revalidate(&rig.fec, rig.channel.authority(), &rig.session),
+            Ok(())
+        );
+        assert_eq!(rig.select(), Err(FecError::MissingAcknowledgments));
+        assert_eq!(rig.session.group_id, before.group_id);
+        assert_eq!(rig.session.current_epoch, before.current_epoch);
+        assert_eq!(rig.session.state_revision, before.state_revision);
+        assert_eq!(rig.session.members, before.members);
+    }
+
+    #[test]
+    fn n06_verified_proposal_rejects_stale_session_round_profile_and_peer() {
+        use crate::channel::peer::PeerDirectory;
+        use crate::contracts::secret_store::EphemeralSecretStore;
+        let mut rig = Rig::new();
+        assert_eq!(
+            rig.signed(MessageKind::Proposal, "stranger"),
+            FecHandled::Fec(Err(FecError::Unauthorized))
+        );
+        assert_eq!(
+            rig.fec
+                .validated_proposal(rig.channel.authority(), &rig.session),
+            Err(FecError::MissingAcknowledgments)
+        );
+        assert_eq!(
+            rig.signed(MessageKind::Proposal, "leader"),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        let verified = rig
+            .fec
+            .validated_proposal(rig.channel.authority(), &rig.session)
+            .unwrap();
+        let mut stale = rig.session.clone();
+        stale.state_revision += 1;
+        assert_eq!(
+            verified.revalidate(&rig.fec, rig.channel.authority(), &stale),
+            Err(FecError::Stale)
+        );
+        let wrong_profile = PeerDirectory::with_profile(
+            EphemeralSecretStore::fleet_control_development(),
+            ControlProfile::FleetDevelopment,
+        );
+        assert_eq!(
+            verified.revalidate(&rig.fec, &wrong_profile, &rig.session),
+            Err(FecError::Unauthorized)
+        );
+        assert_eq!(
+            rig.fec.validated_proposal(&wrong_profile, &rig.session),
+            Err(FecError::Unauthorized)
+        );
+        let bindings = rig.fec.members.values().cloned().collect();
+        rig.fec = FecCoordinator::new(
+            &rig.session,
+            id("leader"),
+            PeerRole::Controller,
+            bindings,
+            42,
+            900_000_000,
+            722,
+        )
+        .unwrap();
+        assert_eq!(
+            rig.signed(MessageKind::Proposal, "leader"),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        assert_eq!(
+            verified.revalidate(&rig.fec, rig.channel.authority(), &rig.session),
+            Err(FecError::Stale)
+        );
+        let current = rig
+            .fec
+            .validated_proposal(rig.channel.authority(), &rig.session)
+            .unwrap();
+        assert!(
+            rig.channel
+                .authority_mut()
+                .rebind(&id("leader"), Some(EPOCH))
+                .is_some()
+        );
+        assert_eq!(
+            current.revalidate(&rig.fec, rig.channel.authority(), &rig.session),
+            Err(FecError::Authentication)
+        );
+        assert_eq!(
+            rig.fec
+                .validated_proposal(rig.channel.authority(), &rig.session),
+            Err(FecError::Authentication)
+        );
+
+        let mut revoked = Rig::new();
+        assert_eq!(
+            revoked.signed(MessageKind::Proposal, "leader"),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        let token = revoked
+            .fec
+            .validated_proposal(revoked.channel.authority(), &revoked.session)
+            .unwrap();
+        assert!(revoked.channel.authority_mut().revoke(&id("leader")));
+        assert_eq!(
+            token.revalidate(&revoked.fec, revoked.channel.authority(), &revoked.session),
+            Err(FecError::Authentication)
+        );
     }
 
     #[test]

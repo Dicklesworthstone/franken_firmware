@@ -91,3 +91,31 @@ def check_replays(records):
             assert status["counters"]["recovered"] == 4
         else:
             assert status["counters"]["decode_attempts"] == status["counters"]["decode_work"] == 0
+
+
+def check_future(row):
+    """Check the actual staged-resource fixture; this is not a device admission policy."""
+    fields = {
+        "schema", "profile", "current_epoch", "future_epoch", "anchor_frame",
+        "before_bytes", "pending_bytes", "after_drop_bytes", "recovered",
+        "old_real", "future_real", "old_pcm_probe_sha256", "future_pcm_probe_sha256",
+        "active_fec_selected",
+    }
+    assert type(row) is dict and set(row) == fields, "future observation schema fields differ"
+    assert row["schema"] == "n06.future-resource.v1" and row["profile"] == PROFILE
+    for name in ("current_epoch", "future_epoch", "anchor_frame", "before_bytes",
+                 "pending_bytes", "after_drop_bytes", "recovered"):
+        assert type(row[name]) is int and 0 <= row[name] < 2**64, f"invalid future integer: {name}"
+    assert (row["current_epoch"], row["future_epoch"], row["anchor_frame"]) == (1, 2, 0)
+    assert row["before_bytes"] > 0
+    # The profile's fixed receiver alone exceeds 64 KiB, before the future engine and token.
+    assert row["pending_bytes"] - row["before_bytes"] > 65536, "future resources were not charged"
+    assert row["after_drop_bytes"] == row["before_bytes"], "future charge survived candidate drop"
+    assert row["recovered"] == 2
+    assert row["old_real"] is True and row["future_real"] is True
+    assert row["active_fec_selected"] is False, "candidate became active media"
+    old_pcm = bytes(17 + ((byte % 251 + 19) % 200) for byte in range(1024))
+    prefix = b"FFWR-N06-v1-source" + bytes(64)
+    for name, data in (("old_pcm_probe_sha256", old_pcm),
+                       ("future_pcm_probe_sha256", bytes([9]) * 1024)):
+        assert row[name] == hashlib.sha256(prefix + data * 4).hexdigest(), f"future PCM divergence: {name}"

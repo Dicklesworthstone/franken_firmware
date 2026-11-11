@@ -38,6 +38,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use franken_clock::group::GroupClock;
+use franken_control::channel::fec_negotiation::VerifiedFecProposal;
+use franken_control::channel::peer::PeerAuthority;
 use franken_platform::MemoryBudgetLedger;
 use franken_platform::abi::{Abi, SysError};
 use franken_platform::clock::ClockError;
@@ -68,8 +70,9 @@ use std::sync::atomic::AtomicBool;
 use crate::SpeakerReadinessState;
 use crate::clock_view::ClockViewBridge;
 use crate::media_playout::{
-    AuthenticatedFormat, AuthenticatedIngress, HostFecAdmitError, MediaPlayout, MediaRefusal,
-    Preparation, PreparedHostFec, StartRefusal,
+    AuthenticatedFormat, AuthenticatedIngress, FutureFecAuthority, FutureFecError, FutureFecSpec,
+    HostFecAdmitError, MediaPlayout, MediaRefusal, Preparation, PreparedFutureFec, PreparedHostFec,
+    StartRefusal,
 };
 
 // ----------------------------------------------------------------------------------------------------- fault classification
@@ -521,6 +524,61 @@ pub struct PreparedEndpointFec {
     consumed_next: u64,
 }
 
+/// A future resource candidate associated with this receiver endpoint, not an activation token.
+pub struct PreparedFutureEndpointFec {
+    media: PreparedFutureFec,
+    carrier_generation: u64,
+    stream: StreamId,
+    current_epoch: u64,
+}
+
+impl PreparedFutureEndpointFec {
+    fn check<P: DatagramPort>(&self, endpoint: &MediaEndpoint<P>) -> Result<(), FutureFecError> {
+        if endpoint.carrier_generation == u64::MAX
+            || endpoint.carrier_generation != self.carrier_generation
+            || endpoint.carrier.stream_id() != self.stream
+            || endpoint.carrier.epoch() != self.current_epoch
+        {
+            return Err(FutureFecError::Stale);
+        }
+        Ok(())
+    }
+
+    /// Authenticate one future symbol without consuming active carrier credit.
+    pub fn prefetch_datagram<P: DatagramPort, A: PeerAuthority, O: KernelOps>(
+        &mut self,
+        endpoint: &MediaEndpoint<P>,
+        context: &FutureFecAuthority<'_, A>,
+        clock: &GroupClock,
+        platform: &mut PlatformLayer<O>,
+        wire: &[u8],
+    ) -> Result<fec::AuthenticatedIngress, FutureFecError> {
+        if let Err(error) = self.check(endpoint) {
+            self.media.cancel_pending();
+            return Err(error);
+        }
+        self.media
+            .prefetch_datagram(&endpoint.media, context, clock, platform, wire)
+    }
+
+    /// Advance future recovery into the candidate, never into active playout.
+    pub fn poll_prefetch<P: DatagramPort, A: PeerAuthority, O: KernelOps>(
+        &mut self,
+        endpoint: &MediaEndpoint<P>,
+        context: &FutureFecAuthority<'_, A>,
+        clock: &GroupClock,
+        platform: &mut PlatformLayer<O>,
+        cancelled: &AtomicBool,
+    ) -> Result<DecodeState, FutureFecError> {
+        if let Err(error) = self.check(endpoint) {
+            self.media.cancel_pending();
+            return Err(error);
+        }
+        self.media
+            .poll_prefetch(&endpoint.media, context, clock, platform, cancelled)
+    }
+}
+
 impl PreparedEndpointFec {
     /// Extra inline state carried by the endpoint wrapper, beyond the media preparation.
     #[must_use]
@@ -622,6 +680,46 @@ impl<P: DatagramPort> MediaEndpoint<P> {
             feedback_counters: FeedbackCounters::default(),
             carrier_generation: 0,
         }
+    }
+
+    /// Reserve a future proposal's resources without changing the active carrier or its credit.
+    pub fn prepare_future_host_fec<A: PeerAuthority>(
+        &mut self,
+        proposal: VerifiedFecProposal,
+        context: &FutureFecAuthority<'_, A>,
+        spec: FutureFecSpec,
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<PreparedFutureEndpointFec, FutureFecError> {
+        // Verify current-round authority before any candidate allocation, including at this seam.
+        context
+            .revalidate(&proposal)
+            .map_err(FutureFecError::Proposal)?;
+        let stream = spec.config.stream;
+        let epoch = proposal.proposal().current_epoch();
+        if self.carrier_generation == u64::MAX
+            || self.carrier.stream_id() != stream
+            || self.carrier.epoch() != epoch
+        {
+            return Err(FutureFecError::Binding);
+        }
+        let overhead = core::mem::size_of::<PreparedFutureEndpointFec>()
+            .saturating_sub(core::mem::size_of::<PreparedFutureFec>());
+        let extra = resident_elsewhere_bytes
+            .checked_add(u64::try_from(overhead).unwrap_or(u64::MAX))
+            .ok_or(FutureFecError::Resources(
+                HostFecAdmitError::AccountingOverflow,
+            ))?;
+        let mut media = self
+            .media
+            .prepare_future_host_fec(proposal, context, spec, ledger, extra)?;
+        media.charge_inline(overhead)?;
+        Ok(PreparedFutureEndpointFec {
+            media,
+            carrier_generation: self.carrier_generation,
+            stream,
+            current_epoch: epoch,
+        })
     }
 
     /// Reserve against the current binding and empty in-memory carrier queue. The port may still
