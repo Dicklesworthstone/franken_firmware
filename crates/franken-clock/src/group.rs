@@ -232,7 +232,7 @@ impl ClockStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Output {
     Muted(MuteReason),
-    /// Admitted and catching up silently; sound begins in this many nanoseconds of local time.
+    /// Admitted and catching up silently; the audible target is this many group-clock nanoseconds ahead.
     Armed {
         starts_in_ns: u64,
     },

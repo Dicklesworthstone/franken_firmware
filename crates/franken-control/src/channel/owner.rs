@@ -275,13 +275,41 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
         session: &UnifiedGroupSession,
         datagram: &[u8],
     ) -> Result<FecHandled, AgreementError> {
-        self.receive_inner(now_ns, Some(group_now_ns), session, datagram)
+        self.receive_inner(
+            now_ns,
+            Some(super::fec_negotiation::FecIngressTime::raw(group_now_ns)),
+            session,
+            datagram,
+        )
+    }
+
+    /// Receive using an independently admitted future clock on the same local
+    /// monotonic timebase as the endpoint limiter. Unusable clocks invalidate
+    /// an installed future round without blocking ordinary N02/v1 control.
+    pub fn receive_with_future_clock(
+        &mut self,
+        now_ns: u64,
+        future_clock: &franken_clock::group::GroupClock,
+        session: &UnifiedGroupSession,
+        datagram: &[u8],
+    ) -> Result<FecHandled, AgreementError> {
+        let ingress_time = self
+            .coordinator
+            .as_ref()
+            .and_then(|coordinator| coordinator.trusted_future_time(future_clock, now_ns));
+        if ingress_time.is_none() {
+            if let Some(coordinator) = &self.coordinator {
+                coordinator.invalidate_existing_prepare_clock();
+            }
+            return self.receive_inner(now_ns, None, session, datagram);
+        }
+        self.receive_inner(now_ns, ingress_time, session, datagram)
     }
 
     fn receive_inner(
         &mut self,
         now_ns: u64,
-        group_now_ns: Option<u64>,
+        ingress_time: Option<super::fec_negotiation::FecIngressTime>,
         session: &UnifiedGroupSession,
         datagram: &[u8],
     ) -> Result<FecHandled, AgreementError> {
@@ -289,22 +317,22 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
         // FFCN is observed by the shared endpoint below. Ordinary control keeps
         // its existing result while independently fencing an installed round.
         if !datagram.starts_with(&super::fec_negotiation::MAGIC)
-            && let (Some(group_now_ns), Some(coordinator)) =
-                (group_now_ns, self.coordinator.as_ref())
+            && let (Some(ingress_time), Some(coordinator)) =
+                (ingress_time, self.coordinator.as_ref())
         {
-            coordinator.observe_existing_group_time(group_now_ns);
+            coordinator.observe_existing_group_time(ingress_time.group_now_ns);
         }
         if datagram.starts_with(&super::fec_negotiation::MAGIC) {
             if !self.healthy() {
                 return Err(AgreementError::Unavailable);
             }
             let coordinator = self.coordinator.as_mut().ok_or(AgreementError::NoAttempt)?;
-            Ok(match group_now_ns {
-                Some(group_now_ns) => self.endpoint.handle_with_fec_at_group(
+            Ok(match ingress_time {
+                Some(ingress_time) => self.endpoint.handle_with_fec_at_clock(
                     &mut self.channel,
                     coordinator,
                     now_ns,
-                    group_now_ns,
+                    ingress_time,
                     session,
                     datagram,
                 ),
@@ -556,6 +584,373 @@ mod tests {
             )
             .unwrap()
             .clone()
+    }
+
+    /// Real next-epoch clock locked by probe exchanges and admitted for `start`.
+    /// `local_base` permits a fresh clock on the same monotonic timeline later.
+    fn typed_test_clock(
+        epoch: u64,
+        start: u64,
+        local_base: u64,
+    ) -> franken_clock::group::GroupClock {
+        use franken_clock::group::{GroupClock, GroupClockConfig, ProbeResponse, StartSchedule};
+        let mut clock =
+            GroupClock::new(GroupClockConfig::standard().unwrap(), epoch, 7, 100).unwrap();
+        for k in 1..=4_u64 {
+            let t1 = local_base + k * 10_000_000;
+            let request = clock.next_probe(t1);
+            clock
+                .on_response(
+                    ProbeResponse {
+                        epoch,
+                        leader: 7,
+                        seq: request.seq,
+                        t1_echo_ns: request.t1_local_ns,
+                        t2_group_ns: k * 10_000_000 + 400_000,
+                        t3_group_ns: k * 10_000_000 + 450_000,
+                    },
+                    t1 + 850_000,
+                )
+                .unwrap();
+        }
+        clock
+            .admit(
+                StartSchedule {
+                    epoch,
+                    start_group_ns: start,
+                },
+                local_base + 50_000_000,
+            )
+            .unwrap();
+        clock
+    }
+
+    struct TypedClockRig {
+        owner: Owner,
+        session: UnifiedGroupSession,
+        prepare: Vec<u8>,
+        ready: Vec<u8>,
+        legacy_ack: Vec<u8>,
+        target_member: String,
+        clock: franken_clock::group::GroupClock,
+    }
+
+    fn typed_clock_rig() -> TypedClockRig {
+        use crate::channel::fec_negotiation::{
+            PrepareBinding, PrepareDescriptor, encode_prepare, encode_ready, prepare_signing_bytes,
+            ready_signing_bytes,
+        };
+        let session = session();
+        let mut owner = blank();
+        // A one-token test policy exposes both admission and refusal without
+        // changing the production endpoint's default burst or refill rules.
+        owner.endpoint = Endpoint::with_fec_rate_limit(
+            super::super::limiter::RateLimit::new(1, 10_000_000).unwrap(),
+            0,
+        );
+        let bindings = enroll(&mut owner, &session);
+        owner
+            .install_lease(&session, AuthorityToken::issue(&session, u64::MAX), 0)
+            .unwrap();
+        let proposal = begin(&mut owner, &session, bindings.clone());
+        let proposer = id("proposer");
+        let proposed = wire(&owner, MessageKind::Proposal, &proposer, &proposal);
+        assert_eq!(
+            owner.receive(0, &session, &proposed).unwrap(),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        let target = &bindings[0];
+        let ack = wire(&owner, MessageKind::Ack, &target.peer, &proposal);
+        assert_eq!(
+            owner.receive(10_000_000, &session, &ack).unwrap(),
+            FecHandled::Fec(Ok(Ingress::Acknowledged))
+        );
+        let descriptor = PrepareDescriptor::new(
+            proposal,
+            &target.member,
+            target.peer.clone(),
+            42,
+            0,
+            900_000_000,
+            800_000_000,
+            "media-key",
+            1,
+        )
+        .unwrap();
+        let binding = PrepareBinding::new(descriptor, [7; 32]);
+        let proposer_version = owner.authority().version_of(&proposer).unwrap();
+        let signed = prepare_signing_bytes(&binding, &proposer, proposer_version);
+        let prepare = encode_prepare(
+            &binding,
+            &proposer,
+            proposer_version,
+            &compute_proof(&key("proposer"), &signed),
+        )
+        .unwrap();
+        let peer_version = owner.authority().version_of(&target.peer).unwrap();
+        let signed = ready_signing_bytes(&binding, &target.peer, peer_version);
+        let ready = encode_ready(
+            &binding,
+            &target.peer,
+            peer_version,
+            &compute_proof(&key(target.peer.as_str()), &signed),
+        )
+        .unwrap();
+        TypedClockRig {
+            owner,
+            session,
+            prepare,
+            ready,
+            legacy_ack: ack,
+            target_member: target.member.clone(),
+            clock: typed_test_clock(EPOCH + 1, 900_000_000, 0),
+        }
+    }
+
+    #[test]
+    fn fleet_owner_typed_future_clock_accepts_real_admitted_prepare_and_ready() {
+        use franken_clock::group::{ClockStatus, Output};
+        let mut rig = typed_clock_rig();
+        assert_eq!(rig.clock.status(70_000_000), ClockStatus::Locked);
+        assert!(matches!(rig.clock.output(70_000_000), Output::Armed { .. }));
+        assert_eq!(
+            rig.owner
+                .receive_with_future_clock(70_000_000, &rig.clock, &rig.session, &rig.prepare)
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+        let group_now = rig.clock.group_ns(70_000_000).unwrap();
+        let token = {
+            let (coordinator, authority) = rig.owner.proposal_context(&rig.session).unwrap();
+            coordinator
+                .validated_prepare(authority, &rig.session, &rig.target_member, group_now)
+                .unwrap()
+        };
+        assert_eq!(
+            rig.owner
+                .receive_with_future_clock(80_000_000, &rig.clock, &rig.session, &rig.ready)
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Ready))
+        );
+        assert_eq!(
+            rig.owner
+                .receive_with_future_clock(90_000_000, &rig.clock, &rig.session, &rig.ready)
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Duplicate))
+        );
+        let (coordinator, authority) = rig.owner.proposal_context(&rig.session).unwrap();
+        let group_now = rig.clock.group_ns(90_000_000).unwrap();
+        assert_eq!(
+            token.revalidate(coordinator, authority, &rig.session, group_now),
+            Ok(())
+        );
+        assert_eq!(
+            coordinator
+                .ready_assertions(authority, &rig.session, group_now)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn fleet_owner_typed_clock_rejects_wrong_unlocked_expired_and_fences_round() {
+        use crate::channel::request::ControlCommand;
+        use franken_clock::group::{ClockStatus, GroupClock, GroupClockConfig};
+        for case in ["wrong-epoch", "unlocked", "expired", "wrong-start"] {
+            let mut rig = typed_clock_rig();
+            assert_eq!(
+                rig.owner
+                    .receive_with_future_clock(70_000_000, &rig.clock, &rig.session, &rig.prepare)
+                    .unwrap(),
+                FecHandled::Fec(Ok(Ingress::Prepared))
+            );
+            let token = {
+                let (coordinator, authority) = rig.owner.proposal_context(&rig.session).unwrap();
+                coordinator
+                    .validated_prepare(
+                        authority,
+                        &rig.session,
+                        &rig.target_member,
+                        rig.clock.group_ns(70_000_000).unwrap(),
+                    )
+                    .unwrap()
+            };
+            let mut bad = match case {
+                "wrong-epoch" => typed_test_clock(EPOCH, 900_000_000, 0),
+                "unlocked" => {
+                    GroupClock::new(GroupClockConfig::standard().unwrap(), EPOCH + 1, 7, 100)
+                        .unwrap()
+                }
+                "expired" => typed_test_clock(EPOCH + 1, 900_000_000, 0),
+                "wrong-start" => typed_test_clock(EPOCH + 1, 910_000_000, 0),
+                _ => unreachable!(),
+            };
+            let local_base = if case == "expired" { 4_000_000_000 } else { 0 };
+            if case == "expired" {
+                bad.set_buffer_until(Some(80_000_000));
+                assert_eq!(bad.status(local_base + 80_000_000), ClockStatus::Expired);
+            }
+            if case == "unlocked" {
+                assert_eq!(bad.status(80_000_000), ClockStatus::Unlocked);
+            }
+            let before = rig.owner.ingress_stats();
+            assert_eq!(
+                rig.owner
+                    .receive_with_future_clock(
+                        local_base + 80_000_000,
+                        &bad,
+                        &rig.session,
+                        &rig.ready
+                    )
+                    .unwrap(),
+                FecHandled::Fec(Err(FecError::Stale)),
+                "{case}"
+            );
+            assert!(
+                matches!(
+                    rig.owner
+                        .receive_with_future_clock(
+                            local_base + 80_000_000,
+                            &bad,
+                            &rig.session,
+                            &rig.ready
+                        )
+                        .unwrap(),
+                    FecHandled::RateLimited { .. }
+                ),
+                "{case}"
+            );
+            let later_good =
+                (local_base != 0).then(|| typed_test_clock(EPOCH + 1, 900_000_000, local_base));
+            let good = later_good.as_ref().unwrap_or(&rig.clock);
+            assert_eq!(
+                rig.owner
+                    .receive_with_future_clock(
+                        local_base + 90_000_000,
+                        good,
+                        &rig.session,
+                        &rig.ready
+                    )
+                    .unwrap(),
+                FecHandled::Fec(Err(FecError::Stale)),
+                "{case}"
+            );
+            let after = rig.owner.ingress_stats();
+            assert_eq!(after.received, before.received + 3);
+            assert_eq!(after.admitted, before.admitted + 2);
+            assert_eq!(after.rate_limited, before.rate_limited + 1);
+            let (coordinator, authority) = rig.owner.proposal_context(&rig.session).unwrap();
+            assert_eq!(
+                token.revalidate(
+                    coordinator,
+                    authority,
+                    &rig.session,
+                    good.group_ns(local_base + 90_000_000).unwrap()
+                ),
+                Err(FecError::Stale)
+            );
+            assert_eq!(
+                rig.owner
+                    .receive_with_future_clock(
+                        local_base + 100_000_000,
+                        &bad,
+                        &rig.session,
+                        &rig.legacy_ack
+                    )
+                    .unwrap(),
+                FecHandled::Fec(Ok(Ingress::Duplicate)),
+                "{case}"
+            );
+            // An invalid future clock must not disable an actual authenticated N02 command.
+            let command = control_wire(
+                "proposer",
+                1,
+                ControlCommand::SetMemberVolume {
+                    member_id: "kitchen".into(),
+                    volume: 60,
+                },
+                Some(rig.session.state_revision),
+            );
+            assert!(
+                matches!(
+                    rig.owner
+                        .receive_with_future_clock(
+                            local_base + 110_000_000,
+                            &bad,
+                            &rig.session,
+                            &command
+                        )
+                        .unwrap(),
+                    FecHandled::Control(super::super::endpoint::Handled::Request {
+                        result: super::super::pipeline::SubmitResult::Queued { .. },
+                        ..
+                    })
+                ),
+                "{case}"
+            );
+            assert_eq!(
+                rig.owner
+                    .step(local_base + 110_000_000, &mut rig.session)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert_eq!(rig.session.members["kitchen"].volume_0_to_100, 60);
+        }
+    }
+
+    #[test]
+    fn fleet_owner_typed_clock_first_prepare_checks_the_authenticated_start() {
+        use franken_clock::group::{GroupClock, GroupClockConfig};
+        let mut rig = typed_clock_rig();
+        let unlocked =
+            GroupClock::new(GroupClockConfig::standard().unwrap(), EPOCH + 1, 7, 100).unwrap();
+        assert_eq!(
+            rig.owner
+                .receive_with_future_clock(60_000_000, &unlocked, &rig.session, &rig.prepare)
+                .unwrap(),
+            FecHandled::Fec(Err(FecError::Stale))
+        );
+        assert_eq!(
+            rig.owner
+                .receive_with_future_clock(70_000_000, &rig.clock, &rig.session, &rig.prepare)
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+
+        let mut rig = typed_clock_rig();
+        let wrong_start = typed_test_clock(EPOCH + 1, 910_000_000, 0);
+        assert_eq!(
+            rig.owner
+                .receive_with_future_clock(70_000_000, &wrong_start, &rig.session, &rig.prepare)
+                .unwrap(),
+            FecHandled::Fec(Err(FecError::Stale))
+        );
+        {
+            let (coordinator, authority) = rig.owner.proposal_context(&rig.session).unwrap();
+            assert!(matches!(
+                coordinator.validated_prepare(
+                    authority,
+                    &rig.session,
+                    &rig.target_member,
+                    rig.clock.group_ns(70_000_000).unwrap()
+                ),
+                Err(FecError::MissingAcknowledgments)
+            ));
+        }
+        assert_eq!(
+            rig.owner
+                .receive_with_future_clock(80_000_000, &rig.clock, &rig.session, &rig.prepare)
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+        assert_eq!(
+            rig.owner
+                .receive_with_future_clock(90_000_000, &rig.clock, &rig.session, &rig.ready)
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Ready))
+        );
     }
 
     #[test]

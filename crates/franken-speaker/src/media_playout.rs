@@ -538,7 +538,7 @@ pub enum Release {
     /// An admitted start that has not been reached: the output is not audible yet and this is not sound. The sink holds
     /// the block for its `presentation_ns`, which by the engine's anchoring is at or after the start.
     Armed {
-        /// Local nanoseconds until the clock's own audible target, as `Output::Armed` reports it.
+        /// Group-clock nanoseconds until the clock's own audible target, as `Output::Armed` reports it.
         starts_in_ns: u64,
     },
     /// The output is audible now.
@@ -3233,8 +3233,13 @@ mod tests {
     #[test]
     fn n06_ready_two_authenticated_targets_keep_old_pcm_and_reject_cross_binding() {
         use crate::net_carrier::{FutureReadyInputs, MediaEndpoint};
+        use franken_control::channel::fec_negotiation::{
+            MAX_PREPARE_WIRE_BYTES, PrepareBinding, PrepareDescriptor, encode_prepare,
+            prepare_signing_bytes,
+        };
         use franken_stream::carrier::{CarrierReceiver, ReceiverLimits};
         use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+        use std::time::Duration;
         let a = stream_id();
         let b = StreamId::new(a.get() + 1).unwrap();
         let key_a = StreamKey::from_bytes([0x42; 32]);
@@ -3256,35 +3261,106 @@ mod tests {
         let mut control = FutureControl::new(start);
         submit_capability_ack(&mut control, "member-kitchen", 10_000_000);
         submit_capability_ack(&mut control, "member-den", 20_000_000);
-        submit_member_prepare(
-            &mut control,
-            ("kitchen", "member-kitchen"),
+        // Use real loopback UDP for each control frame; the bounded receive also detects
+        // truncation and verifies the datagram came from the intended test sender.
+        let control_receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        control_receiver
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let control_sender = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let receiver_addr = control_receiver.local_addr().unwrap();
+        let sender_addr = control_sender.local_addr().unwrap();
+        let transmit = |wire: &[u8]| -> Vec<u8> {
+            assert!(wire.len() <= MAX_PREPARE_WIRE_BYTES);
+            assert_eq!(
+                control_sender.send_to(wire, receiver_addr).unwrap(),
+                wire.len()
+            );
+            let mut buffer = [0_u8; MAX_PREPARE_WIRE_BYTES + 1];
+            let (len, source) = control_receiver.recv_from(&mut buffer).unwrap();
+            assert_eq!(source, sender_addr);
+            assert!(len <= MAX_PREPARE_WIRE_BYTES);
+            assert_eq!(&buffer[..len], wire);
+            buffer[..len].to_vec()
+        };
+        let make_prepare = |control: &FutureControl,
+                            member: &str,
+                            peer: &str,
+                            target: StreamId,
+                            key: &StreamKey,
+                            slot: &str| {
+            let descriptor = PrepareDescriptor::new(
+                control.verified().proposal().clone(),
+                member,
+                PeerId::parse(peer).unwrap(),
+                target.get(),
+                0,
+                start,
+                start - 1_000_000,
+                slot,
+                1,
+            )
+            .unwrap();
+            let binding = PrepareBinding::new(
+                descriptor.clone(),
+                key.prepare_commitment(&descriptor.commitment_context()),
+            );
+            let proposer = PeerId::parse("proposer").unwrap();
+            let signed = prepare_signing_bytes(&binding, &proposer, 1);
+            encode_prepare(&binding, &proposer, 1, &compute_proof(&[0x51; 32], &signed)).unwrap()
+        };
+        let prepare_a = transmit(&make_prepare(
+            &control,
+            "kitchen",
+            "member-kitchen",
             a,
             &key_a,
             "media-kitchen",
-            (70_000_000, future_a.group_ns(70_000_000).unwrap()),
-            start,
+        ));
+        assert_eq!(
+            control
+                .owner
+                .receive_with_future_clock(70_000_000, &future_a, &control.session, &prepare_a)
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Prepared))
         );
-        submit_member_prepare(
-            &mut control,
-            ("den", "member-den"),
+        let prepare_b = transmit(&make_prepare(
+            &control,
+            "den",
+            "member-den",
             b,
             &key_b,
             "media-den",
-            (80_000_000, future_b.group_ns(80_000_000).unwrap()),
-            start,
+        ));
+        assert_eq!(
+            control
+                .owner
+                .receive_with_future_clock(80_000_000, &future_b, &control.session, &prepare_b)
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Prepared))
         );
         let mut wrong_stream_round = FutureControl::new(start);
         submit_capability_ack(&mut wrong_stream_round, "member-kitchen", 10_000_000);
         submit_capability_ack(&mut wrong_stream_round, "member-den", 20_000_000);
-        submit_member_prepare(
-            &mut wrong_stream_round,
-            ("kitchen", "member-kitchen"),
+        let wrong_prepare = transmit(&make_prepare(
+            &wrong_stream_round,
+            "kitchen",
+            "member-kitchen",
             b,
             &key_a,
             "media-kitchen",
-            (70_000_000, future_a.group_ns(70_000_000).unwrap()),
-            start,
+        ));
+        assert_eq!(
+            wrong_stream_round
+                .owner
+                .receive_with_future_clock(
+                    70_000_000,
+                    &future_a,
+                    &wrong_stream_round.session,
+                    &wrong_prepare
+                )
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Prepared))
         );
         let mut keys = FutureFixtureKeys::default();
         let media_a = SecretHandle::new(SecretKind::StreamAuthKey, "media-kitchen").unwrap();
@@ -3671,11 +3747,11 @@ mod tests {
         assert_eq!(
             control
                 .owner
-                .receive_with_group_time(
+                .receive_with_future_clock(
                     100_000_000,
-                    future_a.group_ns(100_000_000).unwrap(),
+                    &future_a,
                     &control.session,
-                    &wire_a
+                    &transmit(&wire_a)
                 )
                 .unwrap(),
             FecHandled::Fec(Ok(Ingress::Ready))
@@ -3683,11 +3759,11 @@ mod tests {
         assert_eq!(
             control
                 .owner
-                .receive_with_group_time(
+                .receive_with_future_clock(
                     110_000_000,
-                    future_a.group_ns(110_000_000).unwrap(),
+                    &future_a,
                     &control.session,
-                    &wire_a
+                    &transmit(&wire_a)
                 )
                 .unwrap(),
             FecHandled::Fec(Ok(Ingress::Duplicate))
@@ -3695,11 +3771,11 @@ mod tests {
         assert_eq!(
             control
                 .owner
-                .receive_with_group_time(
+                .receive_with_future_clock(
                     120_000_000,
-                    future_b.group_ns(120_000_000).unwrap(),
+                    &future_b,
                     &control.session,
-                    &wire_b
+                    &transmit(&wire_b)
                 )
                 .unwrap(),
             FecHandled::Fec(Ok(Ingress::Ready))
@@ -3707,11 +3783,11 @@ mod tests {
         assert_eq!(
             control
                 .owner
-                .receive_with_group_time(
+                .receive_with_future_clock(
                     130_000_000,
-                    future_b.group_ns(130_000_000).unwrap(),
+                    &future_b,
                     &control.session,
-                    &wire_b
+                    &transmit(&wire_b)
                 )
                 .unwrap(),
             FecHandled::Fec(Ok(Ingress::Duplicate))

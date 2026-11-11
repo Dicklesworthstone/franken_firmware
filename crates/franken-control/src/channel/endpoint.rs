@@ -169,10 +169,30 @@ impl Endpoint {
         session: &UnifiedGroupSession,
         datagram: &[u8],
     ) -> FecHandled {
+        self.handle_with_fec_at_clock(
+            channel,
+            fec,
+            now_ns,
+            super::fec_negotiation::FecIngressTime::raw(group_now_ns),
+            session,
+            datagram,
+        )
+    }
+
+    /// Internal trusted context; all paths still use the same limiter.
+    pub(super) fn handle_with_fec_at_clock<A: PeerAuthority + ReplySigner>(
+        &mut self,
+        channel: &mut ControlChannel<A>,
+        fec: &mut super::fec_negotiation::FecCoordinator,
+        now_ns: u64,
+        ingress_time: super::fec_negotiation::FecIngressTime,
+        session: &UnifiedGroupSession,
+        datagram: &[u8],
+    ) -> FecHandled {
         // The group time is caller-trusted and independent of the bytes. Fence an
         // existing round even when the packet is malformed or rate limited.
-        fec.observe_existing_group_time(group_now_ns);
-        self.handle_fec_inner(channel, fec, now_ns, Some(group_now_ns), session, datagram)
+        fec.observe_existing_group_time(ingress_time.group_now_ns);
+        self.handle_fec_inner(channel, fec, now_ns, Some(ingress_time), session, datagram)
     }
 
     fn handle_fec_inner<A: PeerAuthority + ReplySigner>(
@@ -180,7 +200,7 @@ impl Endpoint {
         channel: &mut ControlChannel<A>,
         fec: &mut super::fec_negotiation::FecCoordinator,
         now_ns: u64,
-        group_now_ns: Option<u64>,
+        ingress_time: Option<super::fec_negotiation::FecIngressTime>,
         session: &UnifiedGroupSession,
         datagram: &[u8],
     ) -> FecHandled {
@@ -192,9 +212,9 @@ impl Endpoint {
             }
             bump(&mut self.fec_stats.admitted);
             if datagram.get(4) == Some(&super::fec_negotiation::PREPARE_VERSION) {
-                FecHandled::Fec(match group_now_ns {
-                    Some(group_now_ns) => {
-                        fec.ingest_prepare(datagram, channel.authority(), session, group_now_ns)
+                FecHandled::Fec(match ingress_time {
+                    Some(ingress_time) => {
+                        fec.ingest_prepare(datagram, channel.authority(), session, ingress_time)
                     }
                     None => Err(super::fec_negotiation::FecError::Stale),
                 })

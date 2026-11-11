@@ -643,6 +643,23 @@ struct PrepareClock {
     invalid: bool,
 }
 
+/// Trusted local ingress context. Only the typed clock path carries an
+/// independently admitted start; raw compatibility callers carry time alone.
+#[derive(Clone, Copy)]
+pub(super) struct FecIngressTime {
+    pub(super) group_now_ns: u64,
+    admitted_start_ns: Option<u64>,
+}
+
+impl FecIngressTime {
+    pub(super) const fn raw(group_now_ns: u64) -> Self {
+        Self {
+            group_now_ns,
+            admitted_start_ns: None,
+        }
+    }
+}
+
 /// Authenticated per-member PREPARE, not a resource or activation witness.
 #[derive(Debug, PartialEq, Eq)]
 pub struct VerifiedFecPrepare {
@@ -743,6 +760,44 @@ pub struct FecCoordinator {
 }
 
 impl FecCoordinator {
+    /// Derive time only from an admitted next-epoch clock, and, after the
+    /// first PREPARE, from the exact common start owned by this round.
+    pub(super) fn trusted_future_time(
+        &self,
+        clock: &franken_clock::group::GroupClock,
+        now_ns: u64,
+    ) -> Option<FecIngressTime> {
+        use franken_clock::group::Output;
+        if clock.epoch() != self.expected.next_epoch {
+            return None;
+        }
+        let Output::Armed { starts_in_ns } = clock.output(now_ns) else {
+            return None;
+        };
+        let group_now = clock.group_ns(now_ns)?;
+        let actual_target = group_now.checked_add(starts_in_ns)?;
+        let actual_start = actual_target.checked_add(clock.config().output_delay_ns)?;
+        if let Some((_, start, _)) = self.prepare_timing
+            && actual_start != start
+        {
+            return None;
+        }
+        Some(FecIngressTime {
+            group_now_ns: group_now,
+            admitted_start_ns: Some(actual_start),
+        })
+    }
+
+    /// A bad trusted clock permanently fences an already-installed future
+    /// round; it does not invent a round when no PREPARE has been accepted.
+    pub(super) fn invalidate_existing_prepare_clock(&self) {
+        if self.prepare_timing.is_some()
+            && let Ok(mut clock) = self.prepare_clock.lock()
+        {
+            clock.invalid = true;
+        }
+    }
+
     /// Independently supplied trusted time fences only an already-installed round.
     /// Packet contents cannot create a round or select this observation.
     pub(super) fn observe_existing_group_time(&self, now: u64) {
@@ -1080,7 +1135,7 @@ impl FecCoordinator {
         wire: &[u8],
         authority: &A,
         session: &UnifiedGroupSession,
-        group_now_ns: u64,
+        ingress_time: FecIngressTime,
     ) -> Result<Ingress, FecError> {
         let message = decode_v2(wire)?;
         let auth = authority
@@ -1098,6 +1153,7 @@ impl FecCoordinator {
         }
         let current = self.current_proposal_authority(authority, session)?;
         let binding = message.binding;
+        let group_now_ns = ingress_time.group_now_ns;
         if group_now_ns >= binding.expires_group_ns()
             || binding.expires_group_ns().saturating_sub(group_now_ns) > MAX_PREPARE_LEASE_NS
         {
@@ -1105,6 +1161,14 @@ impl FecCoordinator {
         }
         if binding.proposal() != &self.expected {
             return Err(FecError::Conflict);
+        }
+        // The clock's admitted start is trusted independently of wire bytes.
+        // Check the authenticated proposal before any round/time mutation.
+        if ingress_time
+            .admitted_start_ns
+            .is_some_and(|start| start != binding.start_group_ns())
+        {
+            return Err(FecError::Stale);
         }
         let timing = (
             binding.anchor_frame(),
@@ -2149,6 +2213,98 @@ mod tests {
             ),
             Err(FecError::Stale)
         ));
+    }
+
+    #[test]
+    fn n06_first_typed_prepare_mismatch_leaves_round_and_clock_unmodified() {
+        use franken_clock::group::{GroupClock, GroupClockConfig, ProbeResponse, StartSchedule};
+        fn admitted(start: u64) -> GroupClock {
+            let mut clock =
+                GroupClock::new(GroupClockConfig::standard().unwrap(), EPOCH + 1, 7, 100).unwrap();
+            for k in 1..=4_u64 {
+                let local = k * 10_000_000;
+                let request = clock.next_probe(local);
+                clock
+                    .on_response(
+                        ProbeResponse {
+                            epoch: EPOCH + 1,
+                            leader: 7,
+                            seq: request.seq,
+                            t1_echo_ns: request.t1_local_ns,
+                            t2_group_ns: local + 400_000,
+                            t3_group_ns: local + 450_000,
+                        },
+                        local + 850_000,
+                    )
+                    .unwrap();
+            }
+            clock
+                .admit(
+                    StartSchedule {
+                        epoch: EPOCH + 1,
+                        start_group_ns: start,
+                    },
+                    50_000_000,
+                )
+                .unwrap();
+            clock
+        }
+        let mut rig = Rig::new();
+        assert_eq!(
+            rig.signed(MessageKind::Proposal, "leader"),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        assert_eq!(
+            rig.signed(MessageKind::Ack, "member-s1"),
+            FecHandled::Fec(Ok(Ingress::Acknowledged))
+        );
+        let binding = targeted_binding(&rig);
+        let prepare = targeted_wire(&binding, "leader", false);
+        let ready = targeted_wire(&binding, "member-s1", true);
+        let wrong = admitted(910_000_000);
+        let wrong_time = rig.fec.trusted_future_time(&wrong, 70_000_000).unwrap();
+        assert_eq!(
+            rig.endpoint.handle_with_fec_at_clock(
+                &mut rig.channel,
+                &mut rig.fec,
+                70_000_000,
+                wrong_time,
+                &rig.session,
+                &prepare
+            ),
+            FecHandled::Fec(Err(FecError::Stale))
+        );
+        assert!(rig.fec.preparations.is_empty());
+        assert_eq!(rig.fec.prepare_timing, None);
+        assert_eq!(
+            *rig.fec.prepare_clock.lock().unwrap(),
+            PrepareClock::default()
+        );
+        let good = admitted(900_000_000);
+        let good_time = rig.fec.trusted_future_time(&good, 80_000_000).unwrap();
+        assert_eq!(
+            rig.endpoint.handle_with_fec_at_clock(
+                &mut rig.channel,
+                &mut rig.fec,
+                80_000_000,
+                good_time,
+                &rig.session,
+                &prepare
+            ),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+        let good_time = rig.fec.trusted_future_time(&good, 90_000_000).unwrap();
+        assert_eq!(
+            rig.endpoint.handle_with_fec_at_clock(
+                &mut rig.channel,
+                &mut rig.fec,
+                90_000_000,
+                good_time,
+                &rig.session,
+                &ready
+            ),
+            FecHandled::Fec(Ok(Ingress::Ready))
+        );
     }
 
     #[test]

@@ -174,6 +174,20 @@ CASES["N06-CONSUMER"].extend(
 CASES["N06-CONSUMER"].extend(("franken_stream", "tests::" + name) for name in READY_STREAM_TESTS)
 CASES["N06-CONSUMER"].extend(("franken_speaker", SPEAKER + name) for name in READY_SPEAKER_TESTS)
 CASES["N06-CONSUMER"].extend(("n06_control_proof_heap", name) for name in READY_HEAP_TESTS)
+TYPED_CLOCK_OWNER_TESTS = (
+    "fleet_owner_typed_future_clock_accepts_real_admitted_prepare_and_ready",
+    "fleet_owner_typed_clock_rejects_wrong_unlocked_expired_and_fences_round",
+    "fleet_owner_typed_clock_first_prepare_checks_the_authenticated_start",
+)
+TYPED_CLOCK_FEC_TESTS = (
+    "n06_first_typed_prepare_mismatch_leaves_round_and_clock_unmodified",
+)
+CASES["N06-CONSUMER"].extend(
+    ("franken_control", "channel::owner::tests::" + name) for name in TYPED_CLOCK_OWNER_TESTS
+)
+CASES["N06-CONSUMER"].extend(
+    ("franken_control", "channel::fec_negotiation::tests::" + name) for name in TYPED_CLOCK_FEC_TESTS
+)
 # Concrete integration gaps named by root: these remain full acceptance blockers.
 # No invented Rust test, disabled requirement, or refusal-only qualification.
 PENDING = {
