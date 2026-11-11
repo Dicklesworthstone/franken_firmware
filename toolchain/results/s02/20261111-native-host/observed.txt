@@ -1,0 +1,78 @@
+[actual native codec output]
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test s02_adapter_at_48k_is_the_f32_to_q23_conversion_and_nothing_else ... ok
+test s02_bridge_refuses_zero_and_too_many_channels ... ok
+test s02_bridge_rejects_ragged_input_and_a_small_output_without_consuming ... ok
+test s02_bridge_plan_admits_exactly_44100_and_48000 ... ok
+test s02_bridge_group_delay_is_32_input_frames ... ok
+test s02_bridge_reset_restores_a_fresh_start ... ok
+test s02_bridge_vector_dc ... ok
+test s02_bridge_vector_impulse ... ok
+test s02_bridge_clamps_and_counts_overshoot ... ok
+test s02_bridge_vector_dc_negative ... ok
+test s02_adapter_at_44k_is_exactly_the_integer_bridge ... ok
+test s02_bridge_vector_file_has_no_case_that_is_not_tested ... ok
+test s02_bridge_vector_mono_noise_tri ... ok
+test s02_bridge_vector_noise_tri_flushed ... ok
+test s02_bridge_vector_noise_tri ... ok
+test s02_bridge_dc_is_exact_once_the_history_is_full ... ok
+test s02_bridge_vector_one_frame ... ok
+test s02_bridge_vector_silence ... ok
+test s02_sample_conversions_are_exact_and_clamp ... ok
+test s02_bridge_vector_tone_10000 ... ok
+test s02_bridge_vector_tone_1000 ... ok
+test s02_bridge_vector_tone_18000 ... ok
+test s02_bridge_vector_square_full_scale ... ok
+test s02_bridge_vector_tone_15000 ... ok
+test s02_bridge_vector_tone_5000 ... ok
+test s02_bridge_output_is_independent_of_how_the_input_is_chunked ... ok
+test s02_bridge_output_count_is_ceil_160_over_147_for_every_length ... ok
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test s02_alac_cookie_is_validated_before_any_decoding ... ok
+test s02_aac_config_accepts_only_lc_and_refuses_the_rest_by_name ... ok
+test s02_a_container_of_another_codec_is_refused_by_name ... ok
+test s02_caps_stop_oversize_input_blocks_and_channels ... ok
+test s02_garbage_and_header_only_inputs_are_refused_or_end_without_panic ... ok
+test s02_alac_48000_24_is_bit_exact ... ok
+test s02_aac_lc_44100_decodes_within_tolerance ... ok
+test s02_aac_lc_48000_decodes_within_tolerance ... ok
+test s02_mp3_44100_decodes_within_tolerance_with_the_gapless_length ... ok
+test s02_alac_44100_16_is_bit_exact ... ok
+test s02_mp3_48000_decodes_within_tolerance_with_the_gapless_length ... ok
+test s02_pcm_s16be_44100_is_bit_exact ... ok
+test s02_chained_mp3_reports_the_rate_change_explicitly ... ok
+test s02_chained_vorbis_reports_the_rate_change_explicitly ... ok
+test s02_vorbis_44100_decodes_within_tolerance_with_the_gapless_length ... ok
+test s02_mp3_with_a_leading_id3v2_tag_decodes_identically ... ok
+test s02_seek_past_the_end_saturates_to_the_duration_and_yields_nothing ... ok
+test s02_vorbis_48000_decodes_within_tolerance_with_the_gapless_length ... ok
+test s02_mp3_seek_equals_continuous_decoding_from_every_target ... ok
+test s02_damaged_raw_packets_fail_or_decode_but_never_panic ... ok
+test s02_packet_decoders_restart_after_a_reset_with_the_documented_preroll ... ok
+test s02_vorbis_seek_equals_continuous_decoding_from_every_target ... ok
+test s02_truncated_containers_never_invent_audio ... ok
+test s02_native_rate_is_carried_from_every_decoder_to_the_rate_stage ... ok
+test s02_flipped_bits_never_panic_and_stay_inside_the_caps ... ok
+S02-STATS id=alac_48000_24 packets=6 blocks=6 frames=24000 bytes_in=112328 decode_errors=0 empty_packets=0 max_block_frames=4096 max_out_capacity_samples=8192
+S02-ERR id=aac_lc_44100 max_abs_lsb=1 rms_lsb=0.6747
+S02-STATS id=aac_lc_44100 packets=24 blocks=24 frames=24576 bytes_in=7315 decode_errors=0 empty_packets=0 max_block_frames=1024 max_out_capacity_samples=2048
+S02-ERR id=aac_lc_48000 max_abs_lsb=1 rms_lsb=0.6760
+S02-STATS id=aac_lc_48000 packets=26 blocks=26 frames=26624 bytes_in=7511 decode_errors=0 empty_packets=0 max_block_frames=1024 max_out_capacity_samples=2048
+S02-ERR id=mp3_44100 max_abs_lsb=1 rms_lsb=0.7057
+S02-STATS id=mp3_44100 packets=21 blocks=21 frames=22050 bytes_in=8777 decode_errors=0 empty_packets=0 max_block_frames=1152 max_out_capacity_samples=2304
+S02-STATS id=alac_44100_16 packets=6 blocks=6 frames=22050 bytes_in=58875 decode_errors=0 empty_packets=0 max_block_frames=4096 max_out_capacity_samples=8192
+S02-ERR id=mp3_48000 max_abs_lsb=1 rms_lsb=0.7086
+S02-STATS id=mp3_48000 packets=22 blocks=22 frames=24000 bytes_in=8448 decode_errors=0 empty_packets=0 max_block_frames=1152 max_out_capacity_samples=2304
+S02-STATS id=chain_mp3_44100_48000 packets=43 blocks=43 frames=47394 bytes_in=17225 decode_errors=0 empty_packets=0 max_block_frames=1152 max_out_capacity_samples=2304
+S02-STATS id=chain_vorbis_44100_48000 packets=48 blocks=46 frames=46080 bytes_in=37126 decode_errors=0 empty_packets=2 max_block_frames=1024 max_out_capacity_samples=2048
+S02-ERR id=vorbis_44100 max_abs_lsb=1 rms_lsb=0.0196
+S02-STATS id=vorbis_44100 packets=23 blocks=22 frames=22080 bytes_in=17775 decode_errors=0 empty_packets=1 max_block_frames=1024 max_out_capacity_samples=2048
+S02-ERR id=vorbis_48000 max_abs_lsb=1 rms_lsb=0.0204
+S02-STATS id=vorbis_48000 packets=25 blocks=24 frames=24000 bytes_in=19351 decode_errors=0 empty_packets=1 max_block_frames=1024 max_out_capacity_samples=2048
+S02-DAMAGE id=alac_44100_16 errors=13 attempts=18
+S02-DAMAGE id=aac_lc_44100 errors=59 attempts=72
+S02-FLIPS id=vorbis_44100 refused=22 failed=0 altered=74 unchanged=0
+S02-FLIPS id=mp3_44100 refused=0 failed=0 altered=85 unchanged=11
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.89s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
