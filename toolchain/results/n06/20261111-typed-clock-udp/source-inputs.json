@@ -1,0 +1,93 @@
+{
+  "schema": "ffw.focused-source-inputs.v1",
+  "scope": "Typed GroupClock ingress and actual localhost UDP READY fixture; no full-N06 or physical/provider qualification",
+  "git_build_source": "unknown",
+  "focused_inputs_delivered_commit": "b04038b4728e7bf072e2b0c07506b87122986cbe",
+  "parent_snapshot": "../20261111-ready-resources/source-inputs.json",
+  "inputs": [
+    {
+      "path": "crates/franken-control/src/channel/fec_negotiation.rs",
+      "base_sha256": "1cd9313fc2f2c97913ac15abde3011ba42ccd9f8e043b1af4ac9cd8e7c8dc47b",
+      "sha256": "681881392507fb4153c0e466b9d75791adf12670d2a5a324d23271f7eae36f91"
+    },
+    {
+      "path": "crates/franken-control/src/channel/endpoint.rs",
+      "base_sha256": "63eda17ec0cc60bef29eeb3944c326b007d157db2fa6fd447efb86812d01a867",
+      "sha256": "fe0c41ee93b837697e6d8f5ee2123dd6cb6d77b0e22754e990714bf5f18a613d"
+    },
+    {
+      "path": "crates/franken-control/src/channel/owner.rs",
+      "base_sha256": "4c4af81c31f1e14541f3bae1f1ffb5c3762769941619d46fed2cd1bd95863f60",
+      "sha256": "36470a9b04245a3a8d9dbfc792d66c85012644aee9b24fdb6e3a9d810c9aed90"
+    },
+    {
+      "path": "crates/franken-speaker/src/media_playout.rs",
+      "base_sha256": "fbc31b4218030b6feca2a604d9b3f0aba5cf367fdb493b0d77cc3ce53b6a5239",
+      "sha256": "4f6871bd347819d4b47aa3d6fd3f68854ecbf75eb529fc2f296349c8bcfd32cd"
+    },
+    {
+      "path": "crates/franken-clock/src/group.rs",
+      "base_sha256": "c43b5430246d52cef97e4e09788fa5654f8916d44ebb6019aa47be0ddae33a66",
+      "sha256": "2581d0a9372e37ea833fad5cae28d5c6a2c93123ced7a66b2fbd2c9fd5f15c3d"
+    },
+    {
+      "path": "tests/n06/run_cases.py",
+      "base_sha256": "c760922adb4da0e3f843d77e2c25e4161f1c44b90ac05178ad3bb1edf696c8c6",
+      "sha256": "b1015f8e22736dcf68bca000fb653ac2d5fb0dd7c654ed310800da5706e80b0d"
+    },
+    {
+      "path": "tests/n06/test_judge.py",
+      "base_sha256": "a58a261bc59c17f41a3dc31cb9b4e8c6f8e4dbc6553887b78ff4f9b0fa5ab113",
+      "sha256": "f1df55fe1d797d5a3b96bbb1bb6c809a554b4a2c786164b3b4a193f6fadeb6aa"
+    }
+  ],
+  "gates": [
+    {
+      "kind": "libraries",
+      "build_id": "30104858719682877",
+      "wrapper_id": "rchw-e792b54e-710c-477e-8121-ef96e983bc29",
+      "receipt_root": "f905718331d74a0a89a1df5f3fba2fba92e9208c79d77d813b00b0c00da4c269",
+      "command_sha256": "fb0a0ace63582cd22f7a92363205956728dbba3a4f3e59a64b2cdb6d9a895bbe",
+      "exit_code": 0,
+      "matched_files": 1535,
+      "ack": true,
+      "wrapper_dead": true,
+      "all_custody_retired": true
+    },
+    {
+      "kind": "allocator",
+      "build_id": "30104858719682884",
+      "wrapper_id": "rchw-eed23a61-57b9-49fd-b075-94d675de96a0",
+      "receipt_root": "d2aa6d949c795ec3340b9a3b532b7d3e7d82e78c2337a992d6731c5348ee5d16",
+      "command_sha256": "1b64c81760b51064741a1cd11b4db9a0802c542dcb8f41ae2ac0bab72c1fffc5",
+      "exit_code": 0,
+      "matched_files": 1535,
+      "ack": true,
+      "wrapper_dead": true,
+      "all_custody_retired": true
+    },
+    {
+      "kind": "clippy",
+      "build_id": "30104858719682886",
+      "wrapper_id": "rchw-f68a57eb-8913-4c96-b7cf-5842bbdfc9e5",
+      "receipt_root": "f38aa0b6c49e0c87c27091e00cbbb5383caa375d8725bf304ae32896d8b51b2b",
+      "command_sha256": "01c4b2642fa4678fb53e37f387207922d9453a7bc5efe4e696ea7e2274158197",
+      "exit_code": 0,
+      "matched_files": 1535,
+      "ack": true,
+      "wrapper_dead": true,
+      "all_custody_retired": true
+    }
+  ],
+  "reference": "pending; new exact-candidate reference82889 is not credited",
+  "smoke": {
+    "expected": 3,
+    "passed": 3,
+    "failed": 0,
+    "blocked": 0,
+    "not_run": 0,
+    "diagnostics_dropped": 0,
+    "qualified": false,
+    "combined_log_sha256": "b71e14e22cbcdb7fcdffe21a74c7e54d244e98ebe52a9ee8ab2a860b09a51862"
+  }
+}
