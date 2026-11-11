@@ -36,6 +36,7 @@ import argparse
 import datetime
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import platform
@@ -237,14 +238,42 @@ class Logs:
         elif self.tests[key] != status:
             self.conflicting_tests.add(key)
 
-    def add(self, path: str) -> None:
-        digest = sha256_file(path)
+    def _section_line(self, section: Optional[dict], line: str) -> None:
+        """Hook for a consumer that needs records bound to the same section."""
+
+    def _section_attributed(self, stem: Optional[str], section: dict) -> None:
+        """Hook after the ordinary counted-section attribution decision."""
+
+    def _section_closed(self, section: dict) -> None:
+        """Hook for a consumer requiring a terminal libtest section marker."""
+
+    def _begin_input(self, path: str, digest: str) -> bool:
         if digest in self._digests:
             self.repeated_inputs.append(os.path.basename(path))
-            return
+            return False
         self._digests.add(digest)
         self.files.append((path, digest))
+        return True
 
+    def add(self, path: str) -> None:
+        # Preserve the original chunked hash and line-by-line path; log size is not capped here.
+        digest = sha256_file(path)
+        if not self._begin_input(path, digest):
+            return
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            self._parse_lines(path, handle)
+
+    def add_captured(self, path: str, data: bytes) -> None:
+        """Parse the exact immutable captured bytes with the same line parser as :meth:`add`."""
+        if not isinstance(data, bytes):
+            raise TypeError("captured log must be immutable bytes")
+        digest = hashlib.sha256(data).hexdigest()
+        if not self._begin_input(path, digest):
+            return
+        with io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="replace") as handle:
+            self._parse_lines(path, handle)
+
+    def _parse_lines(self, path: str, handle: Any) -> None:
         headers: List[str] = []
         sections: List[dict] = []
         orphans: List[Tuple[str, str]] = []
@@ -279,81 +308,83 @@ class Logs:
                 self.failure_context.setdefault(live[0], live[1])  # the first panic of a test wins, in either form
             live = None
 
-        with open(path, encoding="utf-8", errors="replace") as handle:
-            for number, line in enumerate(handle, 1):
-                hit = PANIC_LIVE.search(line)
-                if hit:
+        for number, line in enumerate(handle, 1):
+            hit = PANIC_LIVE.search(line)
+            if hit:
+                flush_live()
+                live = [hit.group(1), f"{base}:{number}: thread '{hit.group(1)}' panicked at {hit.group(2)[:200]}", 0]
+            elif live is not None:
+                live[2] += 1
+                said = line.strip()
+                if said and not (TEST_LINE.search(line) or OPEN_PREFIX.match(said) or RUNNING.match(line)):
+                    live[1] += f" | {said[:200]}"  # the message sits under the `panicked at` line
                     flush_live()
-                    live = [hit.group(1), f"{base}:{number}: thread '{hit.group(1)}' panicked at {hit.group(2)[:200]}", 0]
-                elif live is not None:
-                    live[2] += 1
-                    said = line.strip()
-                    if said and not (TEST_LINE.search(line) or OPEN_PREFIX.match(said) or RUNNING.match(line)):
-                        live[1] += f" | {said[:200]}"  # the message sits under the `panicked at` line
-                        flush_live()
-                    elif said or live[2] >= FAILURE_WINDOW:
-                        flush_live()  # something else came first: the cause is the panic line alone
-                head = FAILURE_HEAD.match(line)
-                if head:
+                elif said or live[2] >= FAILURE_WINDOW:
+                    flush_live()  # something else came first: the cause is the panic line alone
+            head = FAILURE_HEAD.match(line)
+            if head:
+                flush_failure()
+                failing = [head.group(1), 0, None]
+            elif failing is not None:
+                failing[1] += 1
+                seen = line.strip()
+                if failing[2] is None:
+                    if "panicked at" in line:
+                        failing[2] = f"{base}:{number}: {seen[:200]}"
+                elif seen:
+                    failing[2] += f" | {seen[:200]}"  # the message sits under the `panicked at` line
                     flush_failure()
-                    failing = [head.group(1), 0, None]
-                elif failing is not None:
-                    failing[1] += 1
-                    seen = line.strip()
-                    if failing[2] is None:
-                        if "panicked at" in line:
-                            failing[2] = f"{base}:{number}: {seen[:200]}"
-                    elif seen:
-                        failing[2] += f" | {seen[:200]}"  # the message sits under the `panicked at` line
-                        flush_failure()
-                    if failing is not None and failing[1] >= FAILURE_WINDOW:
-                        flush_failure()
-                running = RUNNING.match(line)
-                if running:
-                    headers.append(running.group(1))
-                    continue
-                doc = DOC_TESTS.match(line)
-                if doc:
-                    headers.append("doc:" + doc.group(1))
-                    continue
-                start = SECTION_START.match(line)
-                if start:
-                    if open_prefix is not None:
-                        drop(f"line {number}: a test section starts while `test {open_prefix[0]} ... ` (line {open_prefix[1]}) has no result")
-                    current = {"declared": int(start.group(1)), "tests": [], "interrupted": []}
-                    sections.append(current)
-                    continue
-                if SECTION_RESULT.match(line):
-                    if open_prefix is not None:
-                        drop(f"line {number}: a test section ends while `test {open_prefix[0]} ... ` (line {open_prefix[1]}) has no result")
-                    current = None
-                    continue
-                observed = OBSERVED.search(line)
-                if observed:
-                    self._record_observation(observed.group(1))
-                text = line.rstrip("\r\n")
-                whole = TEST_LINE.search(line)
-                glued = GLUED_RESULT.match(text)
-                prefix = OPEN_PREFIX.match(text)
+                if failing is not None and failing[1] >= FAILURE_WINDOW:
+                    flush_failure()
+            running = RUNNING.match(line)
+            if running:
+                headers.append(running.group(1))
+                continue
+            doc = DOC_TESTS.match(line)
+            if doc:
+                headers.append("doc:" + doc.group(1))
+                continue
+            start = SECTION_START.match(line)
+            if start:
                 if open_prefix is not None:
-                    if whole or glued or prefix:
-                        # Only the main thread writes prefixes, one test at a time: two are open, and which of the two the next
-                        # token belongs to cannot be told. Neither is reported.
-                        name = (whole or glued or prefix).group(1)
-                        drop(f"line {number}: `test {name} ... ` starts while `test {open_prefix[0]} ... ` (line {open_prefix[1]}) is open; neither is attributed")
-                    elif RESULT_AT_START.match(text):
-                        report(open_prefix[0], RESULT_AT_START.match(text).group(1), True)
-                        self.interrupted_results += 1
-                        open_prefix = None
-                    continue
-                if whole:
-                    report(whole.group(1), whole.group(2), False)
-                elif glued:
-                    report(glued.group(1), glued.group(2), False)
-                elif prefix:
-                    open_prefix = (prefix.group(1), number)
-                elif BARE_RESULT.match(text) and current is not None:
-                    notes.append(f"{base}: line {number}: a result token with no test prefix open")
+                    drop(f"line {number}: a test section starts while `test {open_prefix[0]} ... ` (line {open_prefix[1]}) has no result")
+                current = {"declared": int(start.group(1)), "tests": [], "interrupted": []}
+                sections.append(current)
+                continue
+            if SECTION_RESULT.match(line):
+                if open_prefix is not None:
+                    drop(f"line {number}: a test section ends while `test {open_prefix[0]} ... ` (line {open_prefix[1]}) has no result")
+                if current is not None:
+                    self._section_closed(current)
+                current = None
+                continue
+            self._section_line(current, line)
+            observed = OBSERVED.search(line)
+            if observed:
+                self._record_observation(observed.group(1))
+            text = line.rstrip("\r\n")
+            whole = TEST_LINE.search(line)
+            glued = GLUED_RESULT.match(text)
+            prefix = OPEN_PREFIX.match(text)
+            if open_prefix is not None:
+                if whole or glued or prefix:
+                    # Only the main thread writes prefixes, one test at a time: two are open, and which of the two the next
+                    # token belongs to cannot be told. Neither is reported.
+                    name = (whole or glued or prefix).group(1)
+                    drop(f"line {number}: `test {name} ... ` starts while `test {open_prefix[0]} ... ` (line {open_prefix[1]}) is open; neither is attributed")
+                elif RESULT_AT_START.match(text):
+                    report(open_prefix[0], RESULT_AT_START.match(text).group(1), True)
+                    self.interrupted_results += 1
+                    open_prefix = None
+                continue
+            if whole:
+                report(whole.group(1), whole.group(2), False)
+            elif glued:
+                report(glued.group(1), glued.group(2), False)
+            elif prefix:
+                open_prefix = (prefix.group(1), number)
+            elif BARE_RESULT.match(text) and current is not None:
+                notes.append(f"{base}: line {number}: a result token with no test prefix open")
         flush_failure()
         flush_live()
         if open_prefix is not None:
@@ -377,6 +408,7 @@ class Logs:
         consistent = not orphans and all(len(s["tests"]) == s["declared"] for s in sections)
         if headers and len(headers) == len(sections) and consistent:
             for stem, section in zip(headers, sections):
+                self._section_attributed(stem, section)
                 for name, status in section["tests"]:
                     self._record_test(stem, name, status)
             return
@@ -384,6 +416,8 @@ class Logs:
         self.unattributed_logs.append(
             f"{os.path.basename(path)}: {len(headers)} header(s), {len(sections)} section(s), "
             f"{len(orphans)} orphan test line(s)")
+        for section in sections:
+            self._section_attributed(None, section)
         seen: Dict[str, int] = {}
         for name, _ in orphans + [t for s in sections for t in s["tests"]]:
             seen[name] = seen.get(name, 0) + 1

@@ -20,6 +20,7 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from typing import Any, List, Optional
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -1032,6 +1033,102 @@ class AcceptanceMap(unittest.TestCase):
             self.assertTrue(any(w in status for w in ("covered", "partly", "open", "not ")), row)
             if "open" in status or "partly" in status:
                 self.assertTrue("code" in row.lower() or "waits" in row.lower() or "not a code" in row.lower(), "an open or partial row must say code or waits: " + row)
+
+
+class CapturedInput(Harness):
+    def test_large_path_uses_chunked_hash_and_line_iteration(self) -> None:
+        path = os.path.join(self.tmp.name, "large-stream.log")
+        prefix = (b"     Running unittests src/lib.rs (target/debug/deps/franken_dsp-01234567)\n"
+                  b"running 1 test\ntest format::tests::streamed ... ok\ntest result: ok.\n")
+        chunk = b"non-result diagnostic line\n" * 4096
+        with open(path, "wb") as output:
+            output.write(prefix)
+            for _ in range(100):
+                output.write(chunk)
+        self.assertGreater(os.path.getsize(path), 10 * 1024 * 1024)
+        real_open = open
+        reads = []
+        iterated = []
+
+        class GuardedFile:
+            def __init__(self, handle, mode):
+                self.handle, self.mode = handle, mode
+
+            def __enter__(self):
+                self.handle.__enter__()
+                return self
+
+            def __exit__(self, *args):
+                return self.handle.__exit__(*args)
+
+            def read(self, size=-1):
+                if size <= 0 or size > 1 << 20:
+                    raise AssertionError("path used an unbounded or oversized read")
+                reads.append(size)
+                return self.handle.read(size)
+
+            def __iter__(self):
+                self_test.assertNotIn("b", self.mode)
+                iterated.append(True)
+                return iter(self.handle)
+
+            def __getattr__(self, name):
+                return getattr(self.handle, name)
+
+        def guarded_open(filename, mode="r", *args, **kwargs):
+            handle = real_open(filename, mode, *args, **kwargs)
+            return GuardedFile(handle, mode) if os.fspath(filename) == path else handle
+
+        self_test = self
+        by_path = runner.Logs()
+        with mock.patch("builtins.open", side_effect=guarded_open):
+            with self.assertRaisesRegex(AssertionError, "unbounded"):
+                with open(path, "rb") as source:
+                    source.read()
+            by_path.add(path)
+        self.assertGreater(len(reads), 10)
+        self.assertTrue(iterated)
+        self.assertEqual(by_path.tests[("franken_dsp", "format::tests::streamed")], "ok")
+        with open(path, "rb") as source:
+            data = source.read()
+        by_bytes = runner.Logs()
+        by_bytes.add_captured(path, data)
+        self.assertEqual(vars(by_path), vars(by_bytes))
+
+    def test_captured_bytes_match_the_file_parser_and_digest(self) -> None:
+        text = cargo_log(self.doc, layout="rch")
+        data = text.encode("utf-8")
+        path = os.path.join(self.tmp.name, "captured.log")
+        with open(path, "wb") as output:
+            output.write(data)
+        by_file, by_bytes = runner.Logs(), runner.Logs()
+        by_file.add(path)
+        by_bytes.add_captured(path, data)
+        self.assertEqual(vars(by_file), vars(by_bytes))
+        self.assertEqual(by_bytes.files, [(path, hashlib.sha256(data).hexdigest())])
+
+    def test_capture_keeps_original_bytes_when_the_file_changes(self) -> None:
+        data = cargo_log(self.doc, layout="rch").encode("utf-8")
+        path = os.path.join(self.tmp.name, "changed.log")
+        with open(path, "wb") as output:
+            output.write(data)
+        with open(path, "rb") as source:
+            captured = source.read()
+        with open(path, "wb") as output:
+            output.write(b"changed after capture\n")
+        by_bytes, changed_file = runner.Logs(), runner.Logs()
+        by_bytes.add_captured(path, captured)
+        changed_file.add(path)
+        self.assertEqual(by_bytes.files, [(path, hashlib.sha256(data).hexdigest())])
+        self.assertNotEqual(by_bytes.files[0][1], changed_file.files[0][1])
+        self.assertTrue(by_bytes.tests)
+        self.assertFalse(changed_file.tests)
+
+    def test_mutable_capture_is_refused(self) -> None:
+        logs = runner.Logs()
+        with self.assertRaises(TypeError):
+            logs.add_captured("mutable.log", bytearray(b"running 0 tests\n"))
+        self.assertFalse(logs.files)
 
 
 if __name__ == "__main__":

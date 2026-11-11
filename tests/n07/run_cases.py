@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -88,7 +89,43 @@ CARRIER_PORT_TESTS = [C + name for name in (
     "n07_a_report_is_checked_with_the_key_of_the_stream_it_names_and_credits_only_that_streams_peer",
     "n07_a_source_restart_takes_a_fresh_stream_and_a_newer_epoch_and_touches_nothing_else",
     "n07_a_receiver_follows_a_source_restart_reports_the_new_stream_from_zero_and_refuses_the_old",
-    "n07_group_membership_is_bounded_and_each_refusal_changes_nothing")]
+    "n07_group_membership_is_bounded_and_each_refusal_changes_nothing",
+    "n07_all_peer_n01_backpressure_preserves_queues_then_delivers_each_pcm_once",
+    "n07_all_peer_n01_invalid_stale_cancel_and_membership_refuse_before_mutation",
+    "n07_all_peer_n01_respects_profile_sequence_headroom_and_live_path",
+    "n07_all_peer_n01_membership_change_and_unfenced_small_mtu_are_checked",
+    "n07_all_peer_n01_repair_refused_and_overlap_capacity_exact_boundary",
+    "n07_all_peer_n01_deadline_uses_separate_group_and_interface_clocks",
+    "n07_all_peer_snapshot_fences_foreign_sender_and_same_id_aba",
+    "n07_clocked_n01_pump_uses_group_deadline_and_delivers_real_pcm",
+    "n07_clocked_n01_rejects_missing_wrong_duplicate_and_late_views",
+    "n07_clocked_n01_held_retry_respects_group_cutoff",
+    "n07_clocked_n01_backward_view_fences_until_fresh_epoch",
+    "n07_all_peer_admission_observes_retry_time_and_latches_rollback",
+    "n07_clocked_n01_after_cutoff_never_sends_queued_media",
+    "n07_clocked_n01_last_sequence_recovery_is_not_stale_playback",
+    "n07_clocked_n01_missing_view_allows_only_existing_stall_probe",
+    "n07_n01_unrelated_group_change_retains_lifetime_fence_authority",
+    "n07_n01_predecode_eligibility_tracks_live_capacity_and_snapshot",
+    "n07_n01_predecode_checks_actual_full_block_not_configured_floor",
+    "n07_n01_exclusive_source_blocks_competitors_and_pump_bypass",
+    "n07_n01_claim_blocks_legacy_queue_held_and_cached_probe_bypass",
+    "n07_n01_selected_pump_never_sends_other_selected_group",
+    "n07_n01_selected_source_continues_after_unrelated_group_changes_and_rollback",
+    "n07_selected_pump_cannot_emit_unclaimed_other_group_protected_probe",
+    "n07_n01_selected_same_group_route_change_invalidates_and_fences",
+    "n07_n01_selected_fence_survives_unrelated_group_mutation",
+    "n07_n01_source_claim_rejects_old_protected_state",
+    "n07_isolated_retry_cooldown_cannot_steal_healthy_peer_capacity",
+    "n07_isolated_fanout_continues_healthy_peer_and_never_replays_skipped_pcm",
+    "n07_isolated_fanout_all_unavailable_waits_then_expired_skips_once",
+    "n07_isolated_fanout_partial_capacity_rotates_and_validates_every_profile",
+    "n07_clocked_n01_lifetime_bound_fence_blocks_queued_media_until_new_epoch",
+    "n07_all_peer_same_snapshot_recovers_link_fence_and_mtu_backpressure",
+    "n07_all_peer_audio_survives_legacy_and_fec_aggregate_pressure",
+    "n07_clocked_n01_mixed_queues_preserve_each_deadline_domain",
+    "n07_clocked_n01_missing_view_preserves_legacy_progress_and_blocks_protected",
+    "n07_all_peer_accepted_queue_is_fenced_on_route_and_membership_change")]
 LINK_TESTS =[L + name for name in (
     "n07_the_ownership_matrix_is_consistent_and_claims_nothing_e04_does_not_know",
     "n07_every_profile_stays_unqualified_and_wireless_is_tracked_as_required",
@@ -178,8 +215,129 @@ CASES = [
     {"id": "N07-E22", "scenario": None,
      "tests": [P + "n07_s9_a_source_restart_under_a_new_stream_identity_is_followed_through_the_real_endpoint"],
      "what": "a source restart under a new stream identity (fresh id, newer epoch) is followed through the real endpoint, loopback sockets and N04: the old queue is dropped, an old-stream datagram is refused, audio resumes muted, credit restarts"}]
-TEST_LINE = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)\s*$", re.M)
-OBSERVED = re.compile(r"^N07-OBSERVED (\{.*\})\s*$", re.M)
+OBSERVED = re.compile(r"N07-OBSERVED (\{.*\})\s*$")
+STDOUT_BANNER = re.compile(r"^---- (\S+) stdout ----\s*$")
+
+
+def load_d01():
+    path = os.path.join(REPO, "tests", "d01", "run_cases.py")
+    spec = importlib.util.spec_from_file_location("n07_d01_parser", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+d01 = load_d01()
+
+
+def expected_binary(name):
+    if name.startswith((C, L)):
+        return "franken_stream"
+    if name.startswith(P):
+        return "franken_speaker"
+    return "n07_ownership" if name in OWNERSHIP_TESTS else "n07_carrier"
+
+
+def observation_test(record):
+    key = record.get("id") or record.get("case")
+    matches = [case["tests"][0] for case in CASES
+               if (case.get("scenario") == key or case.get("speaker") == key)
+               and key is not None and len(case["tests"]) == 1]
+    return matches[0] if len(matches) == 1 else None
+
+
+def header_origins(data):
+    """Collect exact target labels in D01 header order, including non-N07 targets."""
+    headers = []
+    with io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="replace") as lines:
+        for line in lines:
+            matched = d01.RUNNING.match(line)
+            if matched:
+                stem = matched.group(1)
+                if stem in ("franken_stream", "franken_speaker"):
+                    expected = "unittests src/lib.rs"
+                elif stem in ("n07_carrier", "n07_ownership"):
+                    expected = "tests/%s.rs" % stem
+                else:
+                    expected = None
+                valid = expected is not None and re.match(
+                    r"^\s*Running\s+" + re.escape(expected) + r"\s+\(", line) is not None
+                headers.append((stem, valid))
+            elif re.match(r"^\s*Running\b", line):
+                return None
+            else:
+                doc = d01.DOC_TESTS.match(line)
+                if doc:
+                    headers.append(("doc:" + doc.group(1), False))
+    return headers
+
+
+class N07Logs(d01.Logs):
+    """D01's counted ordinal sections with strict verdict and observation origins."""
+    def __init__(self, headers):
+        super().__init__()
+        self.headers = headers
+        self.header_index = 0
+        self.n07_tests = []
+        self.n07_observations = []
+        self.current_origin = None
+        self.closed_section = None
+        self.stdout_test = None
+
+    def _section_line(self, section, line):
+        if line.startswith("---- "):
+            banner = STDOUT_BANNER.match(line)
+            target = section if section is not None else self.closed_section
+            name = banner.group(1) if banner else ""
+            if section is not None:
+                section["n07_active_banner"] = name
+            else:
+                self.stdout_test = name if target is not None else None
+            if target is not None:
+                counts = target.setdefault("n07_banners", {})
+                counts[name] = counts.get(name, 0) + 1
+            return
+        match = OBSERVED.search(line)
+        if not match:
+            return
+        try:
+            record = json.loads(match.group(1))
+        except ValueError:
+            return
+        if not isinstance(record, dict):
+            return
+        if section is None:
+            if self.closed_section is not None and self.stdout_test is not None:
+                self.closed_section.setdefault("n07_post_observations", []).append((self.stdout_test, record))
+            else:
+                self.n07_observations.append((None, record))
+        else:
+            section.setdefault("n07_observations", []).append((section.get("n07_active_banner"), record))
+
+    def _section_closed(self, section):
+        section["n07_closed"] = True
+        self.closed_section = section
+        self.stdout_test = None
+
+    def _section_attributed(self, stem, section):
+        header = (self.headers[self.header_index]
+                  if self.headers is not None and self.header_index < len(self.headers) else None)
+        self.header_index += 1
+        self.current_origin = (stem if stem is not None and header == (stem, True)
+                               and section.get("n07_closed") else None)
+        def valid_banner(name, record):
+            if name is None:
+                return True
+            matches = [status for test, status in section["tests"] if test == name]
+            return (matches == ["ok"] and observation_test(record) == name
+                    and section.get("n07_banners", {}).get(name) == 1)
+        for name, record in section.get("n07_observations", []) + section.get("n07_post_observations", []):
+            self.n07_observations.append((self.current_origin if valid_banner(name, record) else None, record))
+
+    def _record_test(self, stem, name, status):
+        origin = stem if stem is not None and stem == self.current_origin else None
+        self.n07_tests.append((origin, name, status))
 
 
 def load_model():
@@ -366,18 +524,20 @@ def defaults_for(carrier, struct):
 
 
 def judge(model, texts):
-    """Results per case id: (status, why). `texts` is the concatenated cargo output."""
+    """Results per case id, from D01's ordinal-attributed captured sections."""
     results, observed = {}, {}
-    text = "\n".join(texts)
-    tests = {}
-    for name, verdict in TEST_LINE.findall(text):
-        tests[name] = verdict
-    for raw in OBSERVED.findall(text):
-        try:
-            record = json.loads(raw)
-        except ValueError:
-            continue
-        observed.setdefault(record.get("id") or record.get("case"), []).append(record)
+    tests, origins, observed_origins = {}, {}, {}
+    for index, value in enumerate(texts):
+        data = value if isinstance(value, bytes) else value.encode("utf-8")
+        parser = N07Logs(header_origins(data))
+        parser.add_captured("capture-%d.log" % index, data)
+        for stem, name, verdict in parser.n07_tests:
+            tests[name] = verdict if name not in tests else "ambiguous"
+            origins.setdefault(name, []).append(stem)
+        for stem, record in parser.n07_observations:
+            key = record.get("id") or record.get("case")
+            observed.setdefault(key, []).append(record)
+            observed_origins.setdefault(key, []).append(stem)
     scenarios = {s["id"]: s for s in model.scenarios()}
     for case in CASES:
         why = None
@@ -387,18 +547,24 @@ def judge(model, texts):
                 why = "test %s is not in the log" % test
             elif verdict != "ok":
                 why = "test %s reported %s" % (test, verdict)
+            elif origins[test] != [expected_binary(test)]:
+                why = "test %s has wrong or ambiguous binary attribution" % test
             if why:
                 break
         if why is None and case.get("speaker"):
             records = observed.get(case["speaker"], [])
             if len(records) == 0 or len(records) >= 2:
                 why = "%d N07-OBSERVED records for world %s, expected exactly 1" % (len(records), case["speaker"])
+            elif observed_origins[case["speaker"]] != ["franken_speaker"]:
+                why = "N07-OBSERVED world %s has wrong or ambiguous binary attribution" % case["speaker"]
             else:
                 why = speaker_accounting(records[0])
         if why is None and case["scenario"]:
             records = observed.get(case["scenario"], [])
             if len(records) != 1:
                 why = "%d N07-OBSERVED records for %s, expected exactly 1" % (len(records), case["scenario"])
+            elif observed_origins[case["scenario"]] != ["n07_carrier"]:
+                why = "N07-OBSERVED %s has wrong or ambiguous binary attribution" % case["scenario"]
             else:
                 record = records[0]
                 want = model.expected_observation(scenarios[case["scenario"]])
@@ -433,7 +599,8 @@ def main(argv=None):
     texts = []
     for path in args.judge:
         try:
-            texts.append(read(path))
+            with open(path, "rb") as handle:
+                texts.append(handle.read())
         except OSError as exc:
             print("cannot read %s: %s" % (path, exc), file=sys.stderr)
             return 2
@@ -462,7 +629,7 @@ def main(argv=None):
                                            for pid, p in rec["peers"].items()},
                     "queue_delay_ns_max": {pid: p["view"]["counters"]["queue_delay_ns_max"] for pid, p in rec["peers"].items()}}
             cases.append(entry)
-        receipt = {"schema": RECEIPT_SCHEMA, "revision": args.revision, "log_sha256": [hashlib.sha256(t.encode("utf-8")).hexdigest() for t in texts],
+        receipt = {"schema": RECEIPT_SCHEMA, "revision": args.revision, "log_sha256": [hashlib.sha256(t).hexdigest() for t in texts],
                    "not_measured": ["cpu", "memory", "physical radio", "interfaces, leases and resolvers (simulated or absent)"],
                    "first_failure": first_failure, "cases": cases}
         os.makedirs(args.receipts, exist_ok=True)

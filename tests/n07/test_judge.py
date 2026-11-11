@@ -12,6 +12,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import types
@@ -58,28 +59,71 @@ def speaker_record(world):
 
 
 SPEAKER_RECORDS = {world: speaker_record(world) for _, world, _, _ in rc.SPEAKER_WORLDS}
+FILE_SEPARATOR = "\n=== N07 SYNTHETIC FILE BOUNDARY ===\n"
+HEADERS = {
+    "franken_stream": "     Running unittests src/lib.rs (target/debug/deps/franken_stream-0123456789abcdef)",
+    "n07_carrier": "     Running tests/n07_carrier.rs (target/debug/deps/n07_carrier-0123456789abcdef)",
+    "n07_ownership": "     Running tests/n07_ownership.rs (target/debug/deps/n07_ownership-0123456789abcdef)",
+    "franken_speaker": "     Running unittests src/lib.rs (target/debug/deps/franken_speaker-0123456789abcdef)",
+}
+OWNERSHIP_NAMES = {
+    "n07_the_ownership_matrix_carries_the_committed_e04_radio_duties_exactly",
+    "n07_the_two_e04_radio_blockers_are_the_ones_the_matrix_names",
+    "n07_the_radio_duties_the_bead_requires_to_stay_tracked_are_all_present",
+}
+
+
+def fixture_binary(test):
+    if test.startswith(("carrier::tests::", "link::tests::")):
+        return "franken_stream"
+    if test.startswith("net_carrier::tests::"):
+        return "franken_speaker"
+    return "n07_ownership" if test in OWNERSHIP_NAMES else "n07_carrier"
 
 
 def log_text(observations=None, skip_tests=(), failed=(), extra="", speakers=None):
     """What a green central run would print, built from the model's own records."""
     observations = EXPECTED if observations is None else observations
-    lines = ["running tests"]
+    sections = {stem: [] for stem in HEADERS}
     for case in rc.CASES:
         for test in case["tests"]:
             if test in skip_tests:
                 continue
-            lines.append("test %s ... %s" % (test, "FAILED" if test in failed else "ok"))
-    lines.append("test result: ok.")
+            sections[fixture_binary(test)].append("test %s ... %s" % (test, "FAILED" if test in failed else "ok"))
+    counts = {stem: len(section) for stem, section in sections.items()}
     for record in observations if isinstance(observations, list) else observations.values():
-        lines.append("N07-OBSERVED " + json.dumps(record, sort_keys=True))
+        sections["n07_carrier"].append("N07-OBSERVED " + json.dumps(record, sort_keys=True))
     for record in (SPEAKER_RECORDS if speakers is None else speakers).values():
-        lines.append("N07-OBSERVED " + json.dumps(record, sort_keys=True))
-    return "\n".join(lines) + "\n" + extra
+        sections["franken_speaker"].append("N07-OBSERVED " + json.dumps(record, sort_keys=True))
+    logs = []
+    for stem, section in sections.items():
+        lines = [HEADERS[stem], "running %d tests" % counts[stem], *section, "test result: ok."]
+        logs.append("\n".join(lines) + "\n")
+    return FILE_SEPARATOR.join(logs) + extra
 
 
 def judged(module, text):
-    results, _, _ = module.judge(model, [text])
+    results, _, _ = module.judge(model, text.split(FILE_SEPARATOR))
     return results
+
+
+def write_logs(directory, prefix, text):
+    paths = []
+    for index, section in enumerate(text.split(FILE_SEPARATOR)):
+        path = os.path.join(directory, "%s-%d.log" % (prefix, index))
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(section)
+        paths.append(path)
+    return paths
+
+
+def change_count(section, delta):
+    return re.sub(r"(?m)^running (\d+) tests$",
+                  lambda match: "running %d tests" % (int(match.group(1)) + delta), section, count=1)
+
+
+def before_result(section, text):
+    return section.replace("test result: ok.\n", text + "test result: ok.\n", 1)
 
 
 def failures(results):
@@ -370,14 +414,12 @@ class Positives(unittest.TestCase):
 
     def test_the_command_line_exits_0_on_a_good_log_1_on_a_bad_one_and_3_on_none(self):
         with tempfile.TemporaryDirectory() as tmp:
-            good, bad, receipts = (os.path.join(tmp, n) for n in ("good.log", "bad.log", "receipts"))
-            with open(good, "w", encoding="utf-8") as handle:
-                handle.write(log_text())
-            with open(bad, "w", encoding="utf-8") as handle:
-                handle.write(log_text(failed=(rc.CASES[0]["tests"][0],)))
+            receipts = os.path.join(tmp, "receipts")
+            good = write_logs(tmp, "good", log_text())
+            bad = write_logs(tmp, "bad", log_text(failed=(rc.CASES[0]["tests"][0],)))
             with redirect_stdout(io.StringIO()):
-                self.assertEqual(rc.main(["--judge", good, "--revision", "abc123", "--receipts", receipts]), 0)
-                self.assertEqual(rc.main(["--judge", bad]), 1)
+                self.assertEqual(rc.main(["--judge", *good, "--revision", "abc123", "--receipts", receipts]), 0)
+                self.assertEqual(rc.main(["--judge", *bad]), 1)
                 self.assertEqual(rc.main([]), 3)
             with open(os.path.join(receipts, "receipt.json"), encoding="utf-8") as handle:
                 receipt = json.load(handle)
@@ -599,11 +641,9 @@ class SpeakerWorlds(unittest.TestCase):
 
     def test_the_receipt_names_the_seed_the_fault_schedule_and_the_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
-            good = os.path.join(tmp, "good.log")
-            with open(good, "w", encoding="utf-8") as handle:
-                handle.write(log_text())
+            good = write_logs(tmp, "good", log_text())
             with redirect_stdout(io.StringIO()):
-                self.assertEqual(rc.main(["--judge", good, "--revision", "r1", "--receipts", tmp]), 0)
+                self.assertEqual(rc.main(["--judge", *good, "--revision", "r1", "--receipts", tmp]), 0)
             with open(os.path.join(tmp, "receipt.json"), encoding="utf-8") as handle:
                 receipt = json.load(handle)
             seven = next(c for c in receipt["cases"] if c["id"] == "N07-E18")["observed"]
@@ -619,6 +659,285 @@ class SpeakerWorlds(unittest.TestCase):
             self.assertEqual(failures(judged(rc, log_text(speakers=broken))), {})
         finally:
             rc.speaker_accounting = original
+
+
+class AllPeerNativeEvidence(unittest.TestCase):
+    """The new carrier checks are required evidence, not model execution."""
+
+    ADDED = (
+        "n07_all_peer_n01_backpressure_preserves_queues_then_delivers_each_pcm_once",
+        "n07_all_peer_n01_invalid_stale_cancel_and_membership_refuse_before_mutation",
+        "n07_all_peer_n01_respects_profile_sequence_headroom_and_live_path",
+        "n07_all_peer_n01_membership_change_and_unfenced_small_mtu_are_checked",
+        "n07_all_peer_n01_repair_refused_and_overlap_capacity_exact_boundary",
+        "n07_all_peer_n01_deadline_uses_separate_group_and_interface_clocks",
+        "n07_all_peer_snapshot_fences_foreign_sender_and_same_id_aba",
+        "n07_clocked_n01_pump_uses_group_deadline_and_delivers_real_pcm",
+        "n07_clocked_n01_rejects_missing_wrong_duplicate_and_late_views",
+        "n07_clocked_n01_held_retry_respects_group_cutoff",
+        "n07_clocked_n01_backward_view_fences_until_fresh_epoch",
+        "n07_all_peer_admission_observes_retry_time_and_latches_rollback",
+        "n07_clocked_n01_after_cutoff_never_sends_queued_media",
+        "n07_clocked_n01_last_sequence_recovery_is_not_stale_playback",
+        "n07_clocked_n01_missing_view_allows_only_existing_stall_probe",
+        "n07_n01_unrelated_group_change_retains_lifetime_fence_authority",
+        "n07_n01_predecode_eligibility_tracks_live_capacity_and_snapshot",
+        "n07_n01_predecode_checks_actual_full_block_not_configured_floor",
+        "n07_n01_exclusive_source_blocks_competitors_and_pump_bypass",
+        "n07_n01_claim_blocks_legacy_queue_held_and_cached_probe_bypass",
+        "n07_n01_selected_pump_never_sends_other_selected_group",
+        "n07_n01_selected_source_continues_after_unrelated_group_changes_and_rollback",
+        "n07_selected_pump_cannot_emit_unclaimed_other_group_protected_probe",
+        "n07_n01_selected_same_group_route_change_invalidates_and_fences",
+        "n07_n01_selected_fence_survives_unrelated_group_mutation",
+        "n07_n01_source_claim_rejects_old_protected_state",
+        "n07_isolated_retry_cooldown_cannot_steal_healthy_peer_capacity",
+        "n07_isolated_fanout_continues_healthy_peer_and_never_replays_skipped_pcm",
+        "n07_isolated_fanout_all_unavailable_waits_then_expired_skips_once",
+        "n07_isolated_fanout_partial_capacity_rotates_and_validates_every_profile",
+        "n07_clocked_n01_lifetime_bound_fence_blocks_queued_media_until_new_epoch",
+        "n07_all_peer_same_snapshot_recovers_link_fence_and_mtu_backpressure",
+        "n07_all_peer_audio_survives_legacy_and_fec_aggregate_pressure",
+        "n07_clocked_n01_mixed_queues_preserve_each_deadline_domain",
+        "n07_clocked_n01_missing_view_preserves_legacy_progress_and_blocks_protected",
+        "n07_all_peer_accepted_queue_is_fenced_on_route_and_membership_change",
+    )
+
+    def test_all_thirty_six_are_required_by_the_existing_u02_case(self):
+        u02 = next(case for case in rc.CASES if case["id"] == "N07-U02")
+        names = [rc.C + name for name in self.ADDED]
+        self.assertEqual(len(rc.CASES), 25)
+        self.assertEqual(len(u02["tests"]), 72)
+        self.assertEqual(len(set(u02["tests"])), 72)
+        self.assertEqual(len(set(names[:15])), 15)
+        self.assertEqual(len(set(names)), 36)
+        for name in names:
+            self.assertEqual(u02["tests"].count(name), 1, name)
+        self.assertEqual(judged(rc, log_text())["N07-U02"], ("passed", ""))
+
+    def test_each_new_name_rejects_missing_ignored_failed_and_ambiguous(self):
+        good = log_text()
+        baseline = judged(rc, good)
+        self.assertEqual(baseline["N07-U02"], ("passed", ""))
+        stream_count = sum(1 for case in rc.CASES for test in case["tests"] if fixture_binary(test) == "franken_stream")
+        count_line = "running %d tests" % stream_count
+        duplicate_count = "running %d tests" % (stream_count + 1)
+        for suffix in self.ADDED:
+            name = rc.C + suffix
+            line = "test %s ... ok\n" % name
+            self.assertEqual(good.count(line), 1)
+            variants = {
+                "missing": (good.replace(line, "").replace(count_line, "running %d tests" % (stream_count - 1)), "not in the log"),
+                "ignored": (good.replace(line, "test %s ... ignored\n" % name), "reported ignored"),
+                "ignored with reason": (good.replace(line, "test %s ... ignored, requires fixture\n" % name), "reported ignored"),
+                "failed": (good.replace(line, "test %s ... FAILED\n" % name), "reported FAILED"),
+                "duplicate ok": (good.replace(line, line + line).replace(count_line, duplicate_count), "reported ambiguous"),
+                "ignored with reason then ok": (good.replace(line, "test %s ... ignored, requires fixture\n" % name + line).replace(count_line, duplicate_count), "reported ambiguous"),
+                "failed then ok": (good.replace(line, "test %s ... FAILED\n" % name + line).replace(count_line, duplicate_count), "reported ambiguous"),
+                "ok then failed": (good.replace(line, line + "test %s ... FAILED\n" % name).replace(count_line, duplicate_count), "reported ambiguous"),
+            }
+            for label, (text, reason) in variants.items():
+                with self.subTest(name=name, variation=label):
+                    result = judged(rc, text)
+                    self.assertEqual(result["N07-U02"][0], "failed")
+                    self.assertIn(reason, result["N07-U02"][1])
+                    self.assertEqual({k: v for k, v in result.items() if k != "N07-U02"},
+                                     {k: v for k, v in baseline.items() if k != "N07-U02"})
+
+
+class BinaryAttribution(unittest.TestCase):
+    """Synthetic libtest-shaped files exercise attribution, not native execution."""
+
+    def test_every_new_carrier_verdict_requires_one_matching_binary(self):
+        good = log_text()
+        self.assertEqual(failures(judged(rc, good)), {})
+        sections = good.split(FILE_SEPARATOR)
+        for suffix in AllPeerNativeEvidence.ADDED:
+            name = "carrier::tests::" + suffix
+            line = "test %s ... ok\n" % name
+            self.assertEqual(sections[0].count(line), 1)
+            moved = sections.copy()
+            moved[0] = change_count(moved[0].replace(line, ""), -1)
+            moved[3] = change_count(before_result(moved[3], line), 1)
+            variants = {
+                "headerless": sections[0].replace(HEADERS["franken_stream"], ""),
+                "unknown binary": sections[0].replace("franken_stream-0123456789abcdef", "other_binary-deadbeef"),
+                "wrong binary": sections[0].replace("franken_stream-0123456789abcdef", "franken_speaker-0123456789abcdef"),
+                "mismatched target": sections[0].replace("unittests src/lib.rs", "tests/n07_carrier.rs"),
+                "mismatched count": change_count(sections[0], 1),
+                "unclosed section": sections[0].replace("test result: ok.\n", "", 1),
+                "duplicate header": sections[0] + "\n" + HEADERS["franken_stream"] + "\n",
+                "conflicting headers": sections[0] + "\n" + HEADERS["franken_speaker"] + "\n",
+            }
+            for label, stream in variants.items():
+                with self.subTest(name=name, variant=label):
+                    result = rc.judge(model, [stream, *sections[1:]])[0]
+                    self.assertEqual(result["N07-U02"][0], "failed")
+                    self.assertIn("binary attribution", result["N07-U02"][1])
+            result = rc.judge(model, moved)[0]
+            self.assertEqual(result["N07-U02"][0], "failed", name)
+            self.assertIn("binary attribution", result["N07-U02"][1])
+            self.assertIn(name, result["N07-U02"][1])
+
+    def test_delayed_header_is_accepted_only_for_one_dedicated_capture(self):
+        sections = log_text().split(FILE_SEPARATOR)
+        stream = sections[0].replace(HEADERS["franken_stream"] + "\n", "")
+        sections[0] = stream + HEADERS["franken_stream"] + "\n"
+        self.assertEqual(failures(rc.judge(model, sections)[0]), {})
+        sections[0] += HEADERS["n07_carrier"] + "\n"
+        self.assertEqual(rc.judge(model, sections)[0]["N07-U02"][0], "failed")
+
+    def test_combined_rch_headers_pair_by_complete_section_order(self):
+        sections = log_text().split(FILE_SEPARATOR)
+        headers = list(HEADERS.values())
+        bodies = [section.replace(header + "\n", "", 1) for section, header in zip(sections, headers)]
+        lines = bodies[0].splitlines(keepends=True)
+        lines.insert(4, headers[2] + "\n")
+        first = "".join(lines)
+        lines = bodies[1].splitlines(keepends=True)
+        lines.insert(3, headers[3] + "\n")
+        combined = headers[0] + "\n" + headers[1] + "\n" + first + "".join(lines) + bodies[2] + bodies[3]
+        self.assertEqual(failures(rc.judge(model, [combined])[0]), {})
+        broken_count = change_count(combined, 1)
+        self.assertEqual(rc.judge(model, [broken_count])[0]["N07-U02"][0], "failed")
+        truncated = combined.replace("test result: ok.\n", "", 1)
+        self.assertEqual(rc.judge(model, [truncated])[0]["N07-U02"][0], "failed")
+
+    def test_combined_speaker_main_zero_test_section_preserves_ordinal_labels(self):
+        sections = log_text().split(FILE_SEPARATOR)
+        speaker_main = "     Running unittests src/main.rs (target/debug/deps/franken_speaker-abcdef0123456789)"
+        headers = list(HEADERS.values()) + [speaker_main]
+        bodies = [section.replace(header + "\n", "", 1)
+                  for section, header in zip(sections, headers)]
+        bodies.append("running 0 tests\ntest result: ok.\n")
+        # Cargo stderr may deliver the main header during the preceding lib section.
+        speaker = bodies[3].splitlines(keepends=True)
+        speaker.insert(2, headers[4] + "\n")
+        combined = "\n".join(headers[:4]) + "\n" + "".join(bodies[:3]) + "".join(speaker) + bodies[4]
+        self.assertEqual(failures(rc.judge(model, [combined])[0]), {})
+        self.assertEqual(rc.judge(model, [change_count(combined, 1)])[0]["N07-U02"][0], "failed")
+        self.assertEqual(rc.judge(model, [combined + speaker_main + "\n"])[0]["N07-U02"][0], "failed")
+
+        # Plant an otherwise valid library verdict in the same-stem main target.
+        case = next(case for case in rc.CASES if case["id"] == "N07-E10")
+        name = case["tests"][0]
+        line = "test %s ... ok\n" % name
+        self.assertEqual(bodies[3].count(line), 1)
+        wrong_lib = change_count(bodies[3].replace(line, ""), -1)
+        wrong_main = "running 1 test\n" + line + "test result: ok.\n"
+        planted = "\n".join(headers) + "\n" + "".join(bodies[:3]) + wrong_lib + wrong_main
+        result = rc.judge(model, [planted])[0]["N07-E10"]
+        self.assertEqual(result[0], "failed")
+        self.assertIn("binary attribution", result[1])
+
+        # A right stem paired with an integration target label is not a lib target.
+        wrong_target = combined.replace(HEADERS["franken_speaker"],
+            HEADERS["franken_speaker"].replace("unittests src/lib.rs", "tests/n07_carrier.rs"))
+        result = rc.judge(model, [wrong_target])[0]["N07-E10"]
+        self.assertEqual(result[0], "failed")
+        self.assertIn("binary attribution", result[1])
+
+    def test_interrupted_libtest_verdict_and_in_line_observation_are_attributed(self):
+        sections = log_text().split(FILE_SEPARATOR)
+        name = "n07_s1_zero_loss_paced"
+        result_line = "test %s ... ok\n" % name
+        observation = "N07-OBSERVED " + json.dumps(EXPECTED[S1], sort_keys=True) + "\n"
+        self.assertEqual(sections[1].count(result_line), 1)
+        self.assertEqual(sections[1].count(observation), 1)
+        sections[1] = sections[1].replace(observation, "").replace(
+            result_line, "test %s ... " % name + observation + "ok\n")
+        self.assertEqual(failures(rc.judge(model, sections)[0]), {})
+        broken = sections.copy()
+        broken[1] = broken[1].replace("test %s ... " % name,
+                                      "test %s ... interrupted\ntest stranger ... ok\n" % name, 1)
+        self.assertEqual(rc.judge(model, broken)[0]["N07-E01"][0], "failed")
+
+    def test_show_output_banners_bind_records_before_or_after_the_footer(self):
+        sections = log_text().split(FILE_SEPARATOR)
+        for case_id, source, name, record in (
+            ("N07-E01", 1, "n07_s1_zero_loss_paced", EXPECTED[S1]),
+            ("N07-E11", 3, "net_carrier::tests::n07_s1_zero_loss_paced_delivery_into_the_playout_path", SPEAKER_RECORDS["S1"]),
+        ):
+            line = "N07-OBSERVED " + json.dumps(record, sort_keys=True) + "\n"
+            banner = "---- %s stdout ----\n" % name
+            for position in ("before", "after"):
+                good = sections.copy()
+                good[source] = good[source].replace(line, "")
+                if position == "before":
+                    good[source] = before_result(good[source], banner + line)
+                else:
+                    good[source] += banner + line
+                with self.subTest(case=case_id, position=position):
+                    self.assertEqual(failures(rc.judge(model, good)[0]), {})
+                if position == "after":
+                    without_banner = good.copy()
+                    without_banner[source] = without_banner[source].replace(banner, "")
+                    self.assertEqual(rc.judge(model, without_banner)[0][case_id][0], "failed")
+                for label, bad in (
+                    ("wrong", good[source].replace(banner, "---- other_test stdout ----\n")),
+                    ("stderr", good[source].replace(banner, "---- %s stderr ----\n" % name)),
+                    ("duplicate banner", good[source].replace(banner, banner + banner)),
+                    ("failed producer", good[source].replace("test %s ... ok\n" % name, "test %s ... FAILED\n" % name)),
+                ):
+                    changed = good.copy()
+                    changed[source] = bad
+                    with self.subTest(case=case_id, position=position, variant=label):
+                        self.assertEqual(rc.judge(model, changed)[0][case_id][0], "failed")
+
+    def test_combined_delayed_headers_accept_post_footer_show_output(self):
+        sections = log_text().split(FILE_SEPARATOR)
+        case_name = "n07_s1_zero_loss_paced"
+        line = "N07-OBSERVED " + json.dumps(EXPECTED[S1], sort_keys=True) + "\n"
+        sections[1] = sections[1].replace(line, "") + "---- %s stdout ----\n" % case_name + line
+        headers = list(HEADERS.values())
+        bodies = [section.replace(header + "\n", "", 1) for section, header in zip(sections, headers)]
+        lines = bodies[0].splitlines(keepends=True)
+        lines.insert(4, headers[2] + "\n")
+        combined = headers[0] + "\n" + headers[1] + "\n" + "".join(lines) + headers[3] + "\n" + "".join(bodies[1:])
+        self.assertEqual(failures(rc.judge(model, [combined])[0]), {})
+
+    def test_each_case_family_requires_its_own_real_shaped_binary(self):
+        sections = log_text().split(FILE_SEPARATOR)
+        examples = [("N07-U01", 0), ("N07-U03", 0), ("N07-E01", 1),
+                    ("N07-E09", 2), ("N07-E10", 3), ("N07-E11", 3)]
+        for case_id, source in examples:
+            case = next(case for case in rc.CASES if case["id"] == case_id)
+            line = "test %s ... ok\n" % case["tests"][0]
+            wrong = (source + 1) % len(sections)
+            changed = sections.copy()
+            changed[source] = change_count(changed[source].replace(line, ""), -1)
+            changed[wrong] = change_count(before_result(changed[wrong], line), 1)
+            with self.subTest(case=case_id):
+                result = rc.judge(model, changed)[0]
+                self.assertEqual(result[case_id][0], "failed")
+                self.assertIn("binary attribution", result[case_id][1])
+
+    def test_observations_require_the_correct_capture_and_reject_ambiguity(self):
+        sections = log_text().split(FILE_SEPARATOR)
+        self.assertEqual(failures(rc.judge(model, sections)[0]), {})
+        for case_id, source, key, record in (
+            ("N07-E01", 1, S1, EXPECTED[S1]),
+            ("N07-E11", 3, "S1", SPEAKER_RECORDS["S1"]),
+        ):
+            line = "N07-OBSERVED " + json.dumps(record, sort_keys=True) + "\n"
+            self.assertEqual(sections[source].count(line), 1)
+            for variant in ("wrong", "headerless", "duplicate", "conflicting"):
+                changed = sections.copy()
+                if variant in ("wrong", "headerless"):
+                    changed[source] = changed[source].replace(line, "")
+                    if variant == "wrong":
+                        destination = (source + 1) % len(changed)
+                        changed[destination] = before_result(changed[destination], line)
+                    else:
+                        changed.append(line)
+                elif variant == "duplicate":
+                    changed.append(line)
+                else:
+                    changed[source] += HEADERS["franken_stream"] + "\n"
+                with self.subTest(case=case_id, key=key, variant=variant):
+                    status, reason = rc.judge(model, changed)[0][case_id]
+                    self.assertEqual(status, "failed")
+                    self.assertTrue("attribution" in reason or "expected exactly 1" in reason, reason)
 
 
 class IdleFecObservations(unittest.TestCase):
