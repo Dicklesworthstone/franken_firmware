@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.join(REPO, "tests", "n01"))
 import reference_frames as n01  # noqa: E402
 
 SCENARIOS = {s["id"]: s for s in model.scenarios()}
-EXPECTED = {sid: model.expected(s) for sid, s in SCENARIOS.items()}
+EXPECTED = {sid: model.expected_observation(s) for sid, s in SCENARIOS.items()}
 S1, S2, S3, S4, S5, S6, S7 = ("N07-S1-zero-loss-paced", "N07-S2-slow-peer-isolated", "N07-S3-saturation-control-priority",
                               "N07-S4-epoch-fence", "N07-S5-mtu-admission-address-family", "N07-S6-link-and-address-change",
                               "N07-S7-loss-and-reorder")
@@ -619,6 +619,42 @@ class SpeakerWorlds(unittest.TestCase):
             self.assertEqual(failures(judged(rc, log_text(speakers=broken))), {})
         finally:
             rc.speaker_accounting = original
+
+
+class IdleFecObservations(unittest.TestCase):
+    def test_legacy_vectors_are_unchanged_and_current_idle_fields_are_strict(self):
+        with open(model.SCENARIOS, encoding="utf-8") as source:
+            vectors = json.load(source)
+        for scenario in vectors["scenarios"]:
+            self.assertEqual(model.expected(scenario), scenario["expect"])
+            want = model.expected_observation(scenario)
+            self.assertIsNone(rc.first_difference("", want, want))
+            paths = [["stats", field] for field in model.IDLE_FEC_CARRIER_STATS]
+            for peer, entry in want["peers"].items():
+                if entry["view"] is None:
+                    continue
+                paths.append(["peers", peer, "view", "fec_feedback_pending"])
+                paths.extend(["peers", peer, "view", "counters", field]
+                             for field in model.IDLE_FEC_PEER_COUNTERS)
+            for path in paths:
+                original = want
+                for key in path:
+                    original = original[key]
+                wrong_values = (True, 0, None, "0") if type(original) is bool else (1, False, None, "0")
+                for wrong in wrong_values:
+                    changed = copy.deepcopy(want)
+                    node = changed
+                    for key in path[:-1]:
+                        node = node[key]
+                    node[path[-1]] = wrong
+                    with self.subTest(scenario=scenario["id"], path=path, wrong=wrong):
+                        self.assertIsNotNone(rc.first_difference("", changed, want))
+            missing = copy.deepcopy(want)
+            del missing["stats"]["fec_work_refused"]
+            self.assertIn("missing", rc.first_difference("", missing, want))
+            unknown = copy.deepcopy(want)
+            unknown["stats"]["undeclared_counter"] = 0
+            self.assertIn("not in the expected", rc.first_difference("", unknown, want))
 
 
 if __name__ == "__main__":

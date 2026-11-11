@@ -161,8 +161,9 @@ CASES = [
      "what": "seeded loss and reorder on one hop: the replay window and reports cope, the clean peer is unaffected"},
     {"id": "N07-E08", "scenario": None,
      "tests": ["n07_the_carrier_binds_loopback_only_and_refuses_anything_else_before_a_socket_is_used",
-               "n07_a_report_that_is_not_authentic_or_not_from_the_peer_moves_nothing"],
-     "what": "loopback-only binding; unauthentic reports move nothing (and the peer's own does)"},
+               "n07_a_report_that_is_not_authentic_or_not_from_the_peer_moves_nothing",
+               "n07_idle_fec_expectations_reject_nonzero_missing_mistyped_and_unknown_fields"],
+     "what": "loopback-only binding; unauthentic reports move nothing (and the peer's own does); idle FEC telemetry is exact, not ignored"},
     {"id": "N07-U01", "scenario": None, "tests": UNIT_TESTS,
      "what": "unit: payload sizing, the pacer's deadlines, the report codec, the limit bounds, address policy"},
     {"id": "N07-U02", "scenario": None, "tests": CARRIER_PORT_TESTS,
@@ -314,7 +315,8 @@ def meta(model):
         body = re.search(r"pub struct %s \{(.*?)\n\}" % name, carrier, re.S).group(1)
         return re.findall(r"pub (\w+): u64", body)
 
-    lists = {"PeerCounters": model.PEER_COUNTERS, "CarrierStats": model.CARRIER_STATS, "ReceiverStats": model.RECEIVER_STATS}
+    lists = {"PeerCounters": model.OBSERVED_PEER_COUNTERS, "CarrierStats": model.OBSERVED_CARRIER_STATS,
+             "ReceiverStats": model.RECEIVER_STATS}
     bad = [n for n, want in lists.items() if struct_fields(n) != want]
     check("META-COUNTERS", not bad, "the model's counter lists equal the Rust structs' fields, in order" if not bad
           else "counter lists differ from the Rust for %s" % bad)
@@ -399,7 +401,7 @@ def judge(model, texts):
                 why = "%d N07-OBSERVED records for %s, expected exactly 1" % (len(records), case["scenario"])
             else:
                 record = records[0]
-                want = model.expected(scenarios[case["scenario"]])
+                want = model.expected_observation(scenarios[case["scenario"]])
                 why = first_difference("", record, want) or accounting(record)
                 if why:
                     why = "observation disagrees with the model: " + why if first_difference("", record, want) else why

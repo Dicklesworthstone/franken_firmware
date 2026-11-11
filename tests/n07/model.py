@@ -79,6 +79,15 @@ STREAM_COUNTERS = [
     "rejected_authentication", "rejected_malformed_fields", "rejected_wrong_stream", "rejected_stale_epoch",
     "rejected_future_epoch", "rejected_replay", "rejected_future_sequence", "rejected_not_negotiated",
 ]
+# Explicit current telemetry schema. The v1 model/vector state above remains
+# unchanged; FEC is never selected by these N01 scripted worlds.
+IDLE_FEC_PEER_COUNTERS = ["fec_sent_packets", "fec_feedback_accepted", "fec_feedback_refused",
+                          "fec_feedback_deferred", "fec_feedback_overflow"]
+IDLE_FEC_CARRIER_STATS = ["fec_feedback_accepted", "fec_feedback_refused", "fec_work_refused",
+                         "fec_feedback_deferred", "fec_feedback_overflow"]
+OBSERVED_PEER_COUNTERS = PEER_COUNTERS[:4] + IDLE_FEC_PEER_COUNTERS + PEER_COUNTERS[4:]
+_AFTER_REPORTS = CARRIER_STATS.index("reports_invalid") + 1
+OBSERVED_CARRIER_STATS = CARRIER_STATS[:_AFTER_REPORTS] + IDLE_FEC_CARRIER_STATS + CARRIER_STATS[_AFTER_REPORTS:]
 DROP_KINDS = ("overflow", "aggregate", "late", "fenced", "send_error")
 
 
@@ -789,6 +798,34 @@ class World:
 
 def expected(scenario):
     return World(copy.deepcopy(scenario)).run()
+
+
+def expected_observation(scenario):
+    """Extend the original N01-only record with explicitly idle N06 telemetry.
+
+    The committed v1 scenario vectors remain byte-for-byte unchanged. These
+    worlds never select FEC or send its feedback: its five interface counters,
+    five per-peer counters and pending flag must therefore be exactly zero or
+    false. Only the EXPECTED side is extended; an actual missing, nonzero,
+    mistyped or unknown field must still fail the strict comparison.
+    """
+    result = expected(scenario)
+    for field in IDLE_FEC_CARRIER_STATS:
+        if field in result["stats"]:
+            raise ValueError("legacy interface expectation already has " + field)
+        result["stats"][field] = 0
+    for peer in result["peers"].values():
+        view = peer["view"]
+        if view is None:
+            continue
+        if "fec_feedback_pending" in view:
+            raise ValueError("legacy peer expectation already has fec_feedback_pending")
+        view["fec_feedback_pending"] = False
+        for field in IDLE_FEC_PEER_COUNTERS:
+            if field in view["counters"]:
+                raise ValueError("legacy peer expectation already has " + field)
+            view["counters"][field] = 0
+    return result
 
 
 # ---------------------------------------------------------------------------------------------------------------------------

@@ -672,6 +672,117 @@ fn first_difference(path: &str, observed: &Value, expected: &Value) -> Option<St
     }
 }
 
+/// The original scenario vectors describe N01 worlds and remain unchanged. A world
+/// never selects FEC or emits FEC feedback, so its added telemetry is explicitly
+/// zero/false. Extend only the independent expectation; never drop actual fields.
+fn expected_with_idle_fec(legacy: &Value) -> Value {
+    let mut expected = legacy.clone();
+    let stats = expected["stats"]
+        .as_object_mut()
+        .expect("legacy interface stats");
+    for field in [
+        "fec_feedback_accepted",
+        "fec_feedback_refused",
+        "fec_work_refused",
+        "fec_feedback_deferred",
+        "fec_feedback_overflow",
+    ] {
+        assert!(stats.insert(field.to_string(), json!(0)).is_none());
+    }
+    for peer in expected["peers"]
+        .as_object_mut()
+        .expect("legacy peers")
+        .values_mut()
+    {
+        if peer["view"].is_null() {
+            continue;
+        }
+        let view = peer["view"].as_object_mut().expect("legacy peer view");
+        assert!(
+            view.insert("fec_feedback_pending".into(), json!(false))
+                .is_none()
+        );
+        let counters = view["counters"]
+            .as_object_mut()
+            .expect("legacy peer counters");
+        for field in [
+            "fec_sent_packets",
+            "fec_feedback_accepted",
+            "fec_feedback_refused",
+            "fec_feedback_deferred",
+            "fec_feedback_overflow",
+        ] {
+            assert!(counters.insert(field.to_string(), json!(0)).is_none());
+        }
+    }
+    expected
+}
+
+#[test]
+fn n07_idle_fec_expectations_reject_nonzero_missing_mistyped_and_unknown_fields() {
+    let doc: Value = serde_json::from_str(SCENARIOS).expect("scenario vectors");
+    for scenario in doc["scenarios"].as_array().expect("scenarios") {
+        let expected = expected_with_idle_fec(&scenario["expect"]);
+        assert_eq!(first_difference("", &expected, &expected), None);
+        let mut paths = Vec::new();
+        for field in [
+            "fec_feedback_accepted",
+            "fec_feedback_refused",
+            "fec_work_refused",
+            "fec_feedback_deferred",
+            "fec_feedback_overflow",
+        ] {
+            paths.push(format!("/stats/{field}"));
+        }
+        for (peer, entry) in expected["peers"].as_object().unwrap() {
+            if entry["view"].is_null() {
+                continue;
+            }
+            paths.push(format!("/peers/{peer}/view/fec_feedback_pending"));
+            for field in [
+                "fec_sent_packets",
+                "fec_feedback_accepted",
+                "fec_feedback_refused",
+                "fec_feedback_deferred",
+                "fec_feedback_overflow",
+            ] {
+                paths.push(format!("/peers/{peer}/view/counters/{field}"));
+            }
+        }
+        for path in paths {
+            let original = expected.pointer(&path).unwrap();
+            let mut altered = expected.clone();
+            *altered.pointer_mut(&path).unwrap() = if original.is_boolean() {
+                json!(true)
+            } else {
+                json!(1)
+            };
+            assert!(
+                first_difference("", &altered, &expected).is_some(),
+                "nonzero {path}"
+            );
+            *altered.pointer_mut(&path).unwrap() = if original.is_boolean() {
+                json!(0)
+            } else {
+                json!(false)
+            };
+            assert!(
+                first_difference("", &altered, &expected).is_some(),
+                "wrong type {path}"
+            );
+        }
+        let mut missing = expected.clone();
+        missing["stats"]
+            .as_object_mut()
+            .unwrap()
+            .remove("fec_work_refused");
+        assert!(first_difference("", &missing, &expected).is_some());
+        let mut unknown = expected.clone();
+        unknown["stats"]["undeclared_counter"] = json!(0);
+        assert!(first_difference("", &unknown, &expected).is_some());
+    }
+}
+
 fn run_scenario(id: &str) {
     let doc: Value = serde_json::from_str(SCENARIOS).expect("the scenario file parses");
     let scenario = doc["scenarios"]
@@ -697,7 +808,8 @@ fn run_scenario(id: &str) {
             "{id}: peer {peer} received nothing, so no sample was compared"
         );
     }
-    if let Some(found) = first_difference("", &observed, &scenario["expect"]) {
+    let expected = expected_with_idle_fec(&scenario["expect"]);
+    if let Some(found) = first_difference("", &observed, &expected) {
         panic!("{id}: the carrier disagrees with the model: {found}");
     }
 }
