@@ -25,8 +25,8 @@
 //!   and an epoch, with its own peers). Every group's peers draw on the same bucket, the same control share, the same
 //!   aggregate caps, the same per-pump work bounds and the same admission sum: those bounds are the interface's, not a
 //!   group's, and a second sender over the same interface would have its own, which is why groups live here. Peers are
-//!   served round robin as peers, so a group's share of a saturated interface follows its member count. Repair traffic of
-//!   a future paced N06 sender is not charged here yet.
+//!   served round robin as peers, so a group's share of a saturated interface follows its member count. Selected host N06
+//!   source, repair and feedback replies use those same interface budgets; selection alone is not negotiation or board admission.
 //!
 //! A pump never blocks: sockets are non-blocking and a would-block is counted, not waited on.
 
@@ -546,6 +546,11 @@ pub struct PeerCounters {
     pub media_submitted_bytes: u64,
     pub media_sent_packets: u64,
     pub media_sent_bytes: u64,
+    pub fec_sent_packets: u64,
+    pub fec_feedback_accepted: u64,
+    pub fec_feedback_refused: u64,
+    pub fec_feedback_deferred: u64,
+    pub fec_feedback_overflow: u64,
     pub media_dropped_overflow_packets: u64,
     pub media_dropped_overflow_bytes: u64,
     pub media_dropped_aggregate_packets: u64,
@@ -611,6 +616,11 @@ pub struct CarrierStats {
     pub reports_stale_epoch: u64,
     pub reports_unknown_source: u64,
     pub reports_invalid: u64,
+    pub fec_feedback_accepted: u64,
+    pub fec_feedback_refused: u64,
+    pub fec_work_refused: u64,
+    pub fec_feedback_deferred: u64,
+    pub fec_feedback_overflow: u64,
     pub recv_errors: u64,
     pub link_events: u64,
     pub path_changes: u64,
@@ -686,6 +696,7 @@ pub struct PeerView {
     pub queued_packets: usize,
     pub queued_bytes: usize,
     pub control_queued: usize,
+    pub fec_feedback_pending: bool,
     pub sent_next: u64,
     pub reported_next: u64,
     pub in_flight: u64,
@@ -700,6 +711,9 @@ pub struct GroupView {
     pub group: GroupId,
     pub stream_id: u64,
     pub epoch: u64,
+    /// Host development format; this is not board admission or negotiation proof.
+    pub selected_strategy: &'static str,
+    pub fec_retained_windows: usize,
     pub peers: usize,
     pub queued_packets: usize,
     pub queued_bytes: usize,
@@ -711,6 +725,24 @@ struct GroupState {
     key: StreamKey,
     stream_id: StreamId,
     epoch: u64,
+    fec: Option<FecGroup>,
+    /// A selected FEC epoch was interrupted and cannot silently become N01.
+    fec_fenced: bool,
+}
+
+struct FecGroup {
+    config: crate::fec::SessionConfig,
+    windows: VecDeque<(u64, crate::fec::SenderWindow)>,
+    next_window: u64,
+    last_group_ns: Option<u64>,
+    clock_failed: bool,
+}
+
+struct FecDatagram {
+    wire: Vec<u8>,
+    enqueued_ns: u64,
+    consume_by_ns: u64,
+    attempts: u8,
 }
 
 struct QueuedFrame {
@@ -749,6 +781,10 @@ struct PeerState {
     sender: StreamSender,
     media_q: VecDeque<QueuedFrame>,
     media_q_bytes: usize,
+    fec_q: VecDeque<FecDatagram>,
+    fec_q_bytes: usize,
+    /// At most one attributable feedback request awaiting a usable group clock.
+    pending_fec_feedback: Option<[u8; crate::fec::FEEDBACK_BYTES]>,
     control_q: VecDeque<Vec<u8>>,
     /// The next sequence number the framer will allocate. A number is allocated when a frame is signed and is never reused; it
     /// says nothing about what was transmitted (that is `in_flight`).
@@ -816,12 +852,12 @@ impl PeerState {
 
     /// Packets queued for this peer: the queue and the held datagram.
     fn queued_packets(&self) -> usize {
-        self.media_q.len() + usize::from(self.held.is_some())
+        self.media_q.len() + self.fec_q.len() + usize::from(self.held.is_some())
     }
 
     /// Wire bytes queued for this peer: the queue and the held datagram.
     fn queued_bytes(&self) -> usize {
-        self.media_q_bytes + self.held.as_ref().map_or(0, |held| held.wire_len)
+        self.media_q_bytes + self.fec_q_bytes + self.held.as_ref().map_or(0, |held| held.wire_len)
     }
 
     /// A report moved `reported_next`: forget the datagrams it covers, and re-open probing if the window is open again.
@@ -843,6 +879,7 @@ impl PeerState {
     /// fence are not part of the numbering and are kept.
     fn restart_numbering(&mut self) {
         self.purge_all(DropKind::Fenced);
+        self.pending_fec_feedback = None;
         self.sent_next = 0;
         self.reported_next = 0;
         self.forget_in_flight();
@@ -857,7 +894,17 @@ impl PeerState {
     }
 
     fn drop_oldest(&mut self, kind: DropKind) {
-        if let Some(old) = self.media_q.pop_front() {
+        let fec_first = match (self.media_q.front(), self.fec_q.front()) {
+            (Some(a), Some(b)) => b.enqueued_ns < a.enqueued_ns,
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        if fec_first {
+            if let Some(old) = self.fec_q.pop_front() {
+                self.fec_q_bytes -= old.wire.len();
+                add_drop(&mut self.counters, kind, old.wire.len());
+            }
+        } else if let Some(old) = self.media_q.pop_front() {
             self.media_q_bytes -= old.wire_len;
             add_drop(&mut self.counters, kind, old.wire_len);
         }
@@ -872,7 +919,7 @@ impl PeerState {
                 add_drop(&mut self.counters, kind, held.wire_len);
             }
         }
-        while !self.media_q.is_empty() {
+        while !self.media_q.is_empty() || !self.fec_q.is_empty() {
             self.drop_oldest(kind);
         }
     }
@@ -1025,6 +1072,8 @@ pub struct CarrierSender<P: DatagramPort = HostUdp> {
     control_pacer: Pacer,
     media_cursor: usize,
     control_cursor: usize,
+    fec_work_start_ns: Option<u64>,
+    fec_work_charged: u64,
     stats: CarrierStats,
     control_stats: ControlStats,
     faults: PortFaults,
@@ -1089,6 +1138,8 @@ impl<P: DatagramPort> CarrierSender<P> {
             key,
             stream_id,
             epoch,
+            fec: None,
+            fec_fenced: false,
         });
         Ok(Self {
             limits,
@@ -1101,6 +1152,8 @@ impl<P: DatagramPort> CarrierSender<P> {
             control_pacer,
             media_cursor: 0,
             control_cursor: 0,
+            fec_work_start_ns: None,
+            fec_work_charged: 0,
             stats: CarrierStats::default(),
             control_stats: ControlStats::default(),
             faults: PortFaults::default(),
@@ -1165,6 +1218,10 @@ impl<P: DatagramPort> CarrierSender<P> {
             return Err(CarrierError::Io(fault_text(&fault)));
         }
         self.faults.rebinds = self.faults.rebinds.saturating_add(1);
+        let groups: Vec<_> = self.groups.iter().map(|g| g.id).collect();
+        for group in groups {
+            self.invalidate_group_fec(group);
+        }
         Ok((
             port_addr(&self.port, Lane::Media)?,
             port_addr(&self.port, Lane::Control)?,
@@ -1191,6 +1248,16 @@ impl<P: DatagramPort> CarrierSender<P> {
             group,
             stream_id: state.stream_id.get(),
             epoch: state.epoch,
+            selected_strategy: if state.fec_fenced
+                || state.fec.as_ref().is_some_and(|fec| fec.clock_failed)
+            {
+                "transition-required"
+            } else if state.fec.is_some() {
+                crate::fec::PROFILE
+            } else {
+                "n01"
+            },
+            fec_retained_windows: state.fec.as_ref().map_or(0, |fec| fec.windows.len()),
             peers: members().count(),
             queued_packets: members().map(PeerState::queued_packets).sum(),
             queued_bytes: members().map(PeerState::queued_bytes).sum(),
@@ -1219,7 +1286,8 @@ impl<P: DatagramPort> CarrierSender<P> {
             out.cached += peer.cached_bytes();
             out.unreported += peer.in_flight.capacity() * std::mem::size_of::<u64>();
             out.control += peer.control_q.iter().map(Vec::capacity).sum::<usize>();
-            out.queue_slots += peer.media_q.capacity() + peer.control_q.capacity();
+            out.queue_slots +=
+                peer.media_q.capacity() + peer.fec_q.capacity() + peer.control_q.capacity();
         }
         out
     }
@@ -1261,6 +1329,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             queued_packets: p.queued_packets(),
             queued_bytes: p.queued_bytes(),
             control_queued: p.control_q.len(),
+            fec_feedback_pending: p.pending_fec_feedback.is_some(),
             sent_next: p.sent_next,
             reported_next: p.reported_next,
             in_flight: p.in_flight.len() as u64,
@@ -1317,6 +1386,11 @@ impl<P: DatagramPort> CarrierSender<P> {
         path_mtu: usize,
     ) -> Result<(), CarrierError> {
         let gi = self.group_index(group)?;
+        if self.groups[gi].fec.is_some() {
+            return Err(CarrierError::InvalidLimits(
+                "change FEC membership only after an epoch transition",
+            ));
+        }
         if self.peers.iter().any(|p| p.id == id) {
             return Err(CarrierError::DuplicatePeer(id));
         }
@@ -1339,7 +1413,22 @@ impl<P: DatagramPort> CarrierSender<P> {
                 required: self.limits.required_payload_bytes,
             });
         }
-        let needed = (self.peers.len() as u64 + 1) * self.limits.peer_load_bytes_per_sec;
+        let existing = self.peers.iter().fold(0_u64, |sum, p| {
+            let selected = self
+                .groups
+                .iter()
+                .any(|g| g.id == p.group && g.fec.is_some());
+            let rate = if selected {
+                let cost = (crate::fec::N + crate::fec::K) as u64
+                    * (crate::fec::DATAGRAM + p.overhead()) as u64
+                    * 48_000;
+                self.limits.peer_load_bytes_per_sec.max(cost.div_ceil(1024))
+            } else {
+                self.limits.peer_load_bytes_per_sec
+            };
+            sum.saturating_add(rate)
+        });
+        let needed = existing.saturating_add(self.limits.peer_load_bytes_per_sec);
         if needed > self.limits.pace_bytes_per_sec {
             return Err(CarrierError::OverBudget {
                 peer: id,
@@ -1360,6 +1449,9 @@ impl<P: DatagramPort> CarrierSender<P> {
             sender,
             media_q: VecDeque::new(),
             media_q_bytes: 0,
+            fec_q: VecDeque::new(),
+            fec_q_bytes: 0,
+            pending_fec_feedback: None,
             control_q: VecDeque::new(),
             sent_next: 0,
             reported_next: 0,
@@ -1380,6 +1472,8 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// A peer leaves. What it still had queued is counted, not forgotten.
     pub fn remove_peer(&mut self, id: u32) -> Result<(), CarrierError> {
         let idx = self.index_of(id)?;
+        let group = self.peers[idx].group;
+        self.invalidate_group_fec(group);
         let gone = self.peers.remove(idx);
         self.stats.removed_peer_dropped_packets +=
             gone.media_q.len() as u64 + u64::from(gone.held.is_some());
@@ -1411,6 +1505,9 @@ impl<P: DatagramPort> CarrierSender<P> {
                 required,
             });
         }
+        let group = peer.group;
+        self.invalidate_group_fec(group);
+        let peer = &mut self.peers[idx];
         peer.media_addr = media_addr;
         peer.control_addr = control_addr;
         peer.ipv6 = media_addr.is_ipv6();
@@ -1423,10 +1520,13 @@ impl<P: DatagramPort> CarrierSender<P> {
     pub fn set_path_mtu(&mut self, id: u32, path_mtu: usize) -> Result<PathOutcome, CarrierError> {
         let idx = self.index_of(id)?;
         let required = self.limits.required_payload_bytes;
+        let group = self.peers[idx].group;
+        let selected = self.groups.iter().any(|g| g.id == group && g.fec.is_some());
         let peer = &mut self.peers[idx];
         let capacity = max_payload_for_path_mtu(path_mtu, peer.ipv6).unwrap_or(0);
+        let fec_too_small = selected && path_mtu < crate::fec::DATAGRAM + peer.overhead();
         peer.path_mtu = path_mtu;
-        if capacity < required {
+        if capacity < required || fec_too_small {
             if peer.fence.is_none() {
                 peer.fence = Some(FenceReason::PathMtuTooSmall);
                 peer.purge_media(DropKind::Fenced);
@@ -1471,10 +1571,13 @@ impl<P: DatagramPort> CarrierSender<P> {
             }));
         }
         for peer in self.peers.iter_mut().filter(|p| p.group == group) {
+            peer.pending_fec_feedback = None;
             peer.sender.advance_epoch(new_epoch)?;
             peer.restart_numbering();
         }
         self.groups[gi].epoch = new_epoch;
+        self.groups[gi].fec = None;
+        self.groups[gi].fec_fenced = false;
         self.stats.epoch_advances += 1;
         Ok(())
     }
@@ -1508,6 +1611,8 @@ impl<P: DatagramPort> CarrierSender<P> {
             key,
             stream_id,
             epoch,
+            fec: None,
+            fec_fenced: false,
         });
         Ok(id)
     }
@@ -1571,6 +1676,8 @@ impl<P: DatagramPort> CarrierSender<P> {
         }
         self.groups[gi].stream_id = new_stream_id;
         self.groups[gi].epoch = new_epoch;
+        self.groups[gi].fec = None;
+        self.groups[gi].fec_fenced = false;
         self.stats.epoch_advances += 1;
         Ok(())
     }
@@ -1585,18 +1692,331 @@ impl<P: DatagramPort> CarrierSender<P> {
     fn largest_media_queue(&self) -> Option<usize> {
         let mut best: Option<(usize, usize)> = None;
         for (idx, peer) in self.peers.iter().enumerate() {
-            if peer.media_q.is_empty() {
+            if peer.media_q.is_empty() && peer.fec_q.is_empty() {
                 continue;
             }
             let longer = match best {
-                Some((_, bytes)) => peer.media_q_bytes > bytes,
+                Some((_, bytes)) => peer.media_q_bytes + peer.fec_q_bytes > bytes,
                 None => true,
             };
             if longer {
-                best = Some((idx, peer.media_q_bytes));
+                best = Some((idx, peer.media_q_bytes + peer.fec_q_bytes));
             }
         }
         best.map(|(idx, _)| idx)
+    }
+
+    /// Fixed retained source-window allocation, separate from queued datagrams.
+    #[must_use]
+    pub fn fec_retained_bytes(&self) -> usize {
+        self.groups
+            .iter()
+            .filter_map(|g| g.fec.as_ref())
+            .map(|f| {
+                f.windows
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<(u64, crate::fec::SenderWindow)>())
+            })
+            .sum()
+    }
+
+    /// Synthetic work charged across all groups in the current sender interval.
+    #[must_use]
+    pub const fn fec_work_charged(&self) -> u64 {
+        self.fec_work_charged
+    }
+
+    fn reserve_fec_work(&mut self, now_ns: u64, cost: u64) -> bool {
+        const INTERVAL_NS: u64 = 21_333_334;
+        if self
+            .fec_work_start_ns
+            .is_none_or(|start| now_ns >= start.saturating_add(INTERVAL_NS))
+        {
+            self.fec_work_start_ns = Some(now_ns);
+            self.fec_work_charged = 0;
+        }
+        let Some(total) = self.fec_work_charged.checked_add(cost) else {
+            self.stats.fec_work_refused += 1;
+            return false;
+        };
+        if total > crate::fec::WINDOW_ALLOWANCE_NS / crate::fec::WORK_UNIT_NS {
+            self.stats.fec_work_refused += 1;
+            return false;
+        }
+        self.fec_work_charged = total;
+        true
+    }
+
+    fn fec_work_available(&self, now_ns: u64, cost: u64) -> bool {
+        const INTERVAL_NS: u64 = 21_333_334;
+        let charged = if self
+            .fec_work_start_ns
+            .is_none_or(|start| now_ns >= start.saturating_add(INTERVAL_NS))
+        {
+            0
+        } else {
+            self.fec_work_charged
+        };
+        charged.checked_add(cost).is_some_and(|total| {
+            total <= crate::fec::WINDOW_ALLOWANCE_NS / crate::fec::WORK_UNIT_NS
+        })
+    }
+
+    fn invalidate_group_fec(&mut self, group: GroupId) {
+        if let Some(state) = self.groups.iter_mut().find(|g| g.id == group)
+            && state.fec.take().is_some()
+        {
+            state.fec_fenced = true;
+        }
+        for peer in self.peers.iter_mut().filter(|p| p.group == group) {
+            peer.pending_fec_feedback = None;
+            while let Some(packet) = peer.fec_q.pop_front() {
+                peer.fec_q_bytes -= packet.wire.len();
+                add_drop(&mut peer.counters, DropKind::Fenced, packet.wire.len());
+            }
+        }
+    }
+
+    /// Select the fixed host profile after the trusted control plane validates
+    /// the exact member list. This call does not authenticate negotiation.
+    pub fn select_group_fec(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        origin_ns: u64,
+        validated_peer_ids: &[u32],
+    ) -> Result<(), CarrierError> {
+        let gi = self.group_index(group)?;
+        let members: Vec<_> = self.peers.iter().filter(|p| p.group == group).collect();
+        if members.is_empty()
+            || members.len() > crate::fec::MAX_GROUP_MEMBERS
+            || validated_peer_ids.len() != members.len()
+            || members
+                .iter()
+                .any(|p| validated_peer_ids.iter().filter(|id| **id == p.id).count() != 1)
+            || members.iter().enumerate().any(|(i, p)| {
+                members
+                    .iter()
+                    .skip(i + 1)
+                    .any(|q| p.control_addr == q.control_addr)
+            })
+        {
+            return Err(CarrierError::InvalidLimits(
+                "FEC requires the exact unique acknowledged members",
+            ));
+        }
+        if epoch <= self.groups[gi].epoch {
+            return Err(CarrierError::StaleEpoch {
+                submitted: epoch,
+                current: self.groups[gi].epoch,
+            });
+        }
+        let config = crate::fec::SessionConfig {
+            stream: self.groups[gi].stream_id,
+            epoch,
+            presentation_origin_ns: origin_ns,
+            key: self.groups[gi].key.clone(),
+        };
+        config
+            .metadata(0)
+            .map_err(|_| CarrierError::InvalidLimits("invalid FEC timeline"))?;
+        let mut needed = 0_u64;
+        for p in &self.peers {
+            let selected = p.group == group
+                || self
+                    .groups
+                    .iter()
+                    .any(|g| g.id == p.group && g.fec.is_some());
+            if selected && p.path_mtu < crate::fec::DATAGRAM + p.overhead() {
+                return Err(CarrierError::PathMtuTooSmall {
+                    path_mtu: p.path_mtu,
+                    capacity: p.path_mtu.saturating_sub(p.overhead()),
+                    required: crate::fec::DATAGRAM,
+                });
+            }
+            // At most eight original symbols and four aggregate feedback replies per 1024 frames.
+            let fec_rate = ((crate::fec::N + crate::fec::K) as u64
+                * (crate::fec::DATAGRAM + p.overhead()) as u64
+                * 48_000)
+                .div_ceil(1024);
+            needed = needed.saturating_add(if selected {
+                self.limits.peer_load_bytes_per_sec.max(fec_rate)
+            } else {
+                self.limits.peer_load_bytes_per_sec
+            });
+        }
+        if needed > self.limits.pace_bytes_per_sec {
+            return Err(CarrierError::OverBudget {
+                peer: 0,
+                needed,
+                budget: self.limits.pace_bytes_per_sec,
+            });
+        }
+        let max_overhead = members
+            .iter()
+            .map(|peer| peer.overhead())
+            .max()
+            .unwrap_or(0);
+        if self.limits.pace_burst_bytes < (crate::fec::DATAGRAM + max_overhead) as u64
+            || self.limits.peer_queue_bytes < crate::fec::DATAGRAM
+            || self.limits.aggregate_queue_bytes < crate::fec::DATAGRAM
+        {
+            return Err(CarrierError::InvalidLimits(
+                "FEC datagram does not fit carrier bounds",
+            ));
+        }
+        self.advance_group_epoch(group, epoch)?;
+        self.groups[gi].fec = Some(FecGroup {
+            config,
+            windows: VecDeque::with_capacity(crate::fec::WINDOWS),
+            next_window: 0,
+            last_group_ns: None,
+            clock_failed: false,
+        });
+        Ok(())
+    }
+
+    /// Queue a complete host FEC window for the registered group, on the
+    /// existing per-peer and aggregate media queues and interface pacer.
+    pub fn submit_group_fec_window(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        window: u64,
+        source: [[u8; crate::fec::BYTES]; crate::fec::K],
+        now_ns: u64,
+    ) -> Result<SubmitReport, CarrierError> {
+        let gi = self.group_index(group)?;
+        let current = self.groups[gi].epoch;
+        if epoch != current {
+            return Err(CarrierError::StaleEpoch {
+                submitted: epoch,
+                current,
+            });
+        }
+        let fec = self.groups[gi]
+            .fec
+            .as_ref()
+            .ok_or(CarrierError::InvalidLimits("FEC not selected"))?;
+        if fec.clock_failed || window != fec.next_window {
+            return Err(CarrierError::InvalidLimits("FEC window unavailable"));
+        }
+        let config = fec.config.clone();
+        let metadata = config
+            .metadata(window)
+            .map_err(|_| CarrierError::InvalidLimits("invalid FEC window"))?;
+        // Two source digests, eight bounded encodes and eight authentications.
+        // The synthetic ledger is aggregate across groups and is not a WCET claim.
+        let work = 2
+            * (66 * crate::fec::solver::HASH_WORK + (crate::fec::K * crate::fec::BYTES) as u64)
+            + crate::fec::N as u64
+                * (crate::fec::AUTH_WORK + (crate::fec::K * crate::fec::BYTES) as u64);
+        if !self.reserve_fec_work(now_ns, work) {
+            return Err(CarrierError::InvalidLimits("aggregate FEC work exhausted"));
+        }
+        let deadline = be_u64(&metadata, 52);
+        let digest = crate::fec::content_digest(&metadata, &source);
+        let members = self.peers.iter().filter(|p| p.group == group).count();
+        let retained = crate::fec::SenderWindow::new(config.clone(), window, source, members)
+            .map_err(|_| CarrierError::InvalidLimits("invalid FEC sender window"))?;
+        let mut wires = Vec::with_capacity(crate::fec::N);
+        for esi in 0..crate::fec::N {
+            let symbol = crate::fec::encode_symbol(&source, esi)
+                .map_err(|_| CarrierError::InvalidLimits("FEC symbol encoding failed"))?;
+            let kind = if esi < crate::fec::K { 0 } else { 2 };
+            let wire = crate::fec::sign_symbol(&config, window, esi, kind, digest, &symbol)
+                .map_err(|_| CarrierError::InvalidLimits("FEC symbol signing failed"))?;
+            wires.push(wire);
+        }
+        let fec = self.groups[gi].fec.as_mut().expect("selection checked");
+        if fec.windows.len() == crate::fec::WINDOWS {
+            // New sequential source windows replace the oldest bounded slot.
+            // A failed submission above must never evict a useful window.
+            fec.windows.pop_front();
+        }
+        fec.windows.push_back((window, retained));
+        fec.next_window = window
+            .checked_add(1)
+            .ok_or(CarrierError::InvalidLimits("FEC window exhausted"))?;
+        let mut report = SubmitReport::default();
+        for idx in 0..self.peers.len() {
+            if self.peers[idx].group != group {
+                continue;
+            }
+            for (esi, wire) in wires.iter().enumerate() {
+                let offset = if esi < crate::fec::K {
+                    crate::playout::frames_to_ns(esi as u64 * 256)
+                } else {
+                    // A repair equation can still recover the last live source
+                    // after an earlier source has already been committed.
+                    crate::playout::frames_to_ns((crate::fec::K as u64 - 1) * 256)
+                };
+                self.enqueue_fec(
+                    idx,
+                    wire,
+                    now_ns,
+                    deadline.saturating_add(offset),
+                    &mut report,
+                );
+            }
+        }
+        Ok(report)
+    }
+
+    fn enqueue_fec(
+        &mut self,
+        idx: usize,
+        wire: &[u8; crate::fec::DATAGRAM],
+        now_ns: u64,
+        deadline: u64,
+        report: &mut SubmitReport,
+    ) {
+        let len = wire.len();
+        self.peers[idx].counters.media_submitted_packets += 1;
+        self.peers[idx].counters.media_submitted_bytes += len as u64;
+        if self.peers[idx].fence.is_some() {
+            add_drop(&mut self.peers[idx].counters, DropKind::Fenced, len);
+            report.skipped_fenced += 1;
+            return;
+        }
+        loop {
+            let p = &self.peers[idx];
+            if p.queued_packets() < self.limits.peer_queue_packets
+                && p.queued_bytes() + len <= self.limits.peer_queue_bytes
+            {
+                break;
+            }
+            if p.media_q.is_empty() && p.fec_q.is_empty() {
+                add_drop(&mut self.peers[idx].counters, DropKind::Overflow, len);
+                return;
+            }
+            self.peers[idx].drop_oldest(DropKind::Overflow);
+            report.evicted += 1;
+        }
+        loop {
+            let (packets, bytes) = self.aggregate_media();
+            if packets < self.limits.aggregate_queue_packets
+                && bytes + len <= self.limits.aggregate_queue_bytes
+            {
+                break;
+            }
+            let Some(victim) = self.largest_media_queue() else {
+                add_drop(&mut self.peers[idx].counters, DropKind::Aggregate, len);
+                report.rejected_aggregate += 1;
+                return;
+            };
+            self.peers[victim].drop_oldest(DropKind::Aggregate);
+            report.evicted += 1;
+        }
+        let p = &mut self.peers[idx];
+        p.fec_q_bytes += len;
+        p.fec_q.push_back(FecDatagram {
+            wire: wire.to_vec(),
+            enqueued_ns: now_ns,
+            consume_by_ns: deadline,
+            attempts: 0,
+        });
+        report.queued += 1;
     }
 
     /// Queue one frame for every peer, under the epoch the caller was authorised for. A stale epoch is refused before
@@ -1621,7 +2041,13 @@ impl<P: DatagramPort> CarrierSender<P> {
         frame: &OutboundFrame,
         now_ns: u64,
     ) -> Result<SubmitReport, CarrierError> {
-        let current = self.groups[self.group_index(group)?].epoch;
+        let group_index = self.group_index(group)?;
+        let current = self.groups[group_index].epoch;
+        if self.groups[group_index].fec.is_some() || self.groups[group_index].fec_fenced {
+            return Err(CarrierError::InvalidLimits(
+                "group uses FEC or needs an epoch transition",
+            ));
+        }
         if epoch != current {
             self.stats.stale_submits += 1;
             return Err(CarrierError::StaleEpoch {
@@ -1666,7 +2092,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 break;
             }
             // The held datagram occupies room but is not evictable: with nothing else queued, the newcomer is what is refused.
-            if peer.media_q.is_empty() {
+            if peer.media_q.is_empty() && peer.fec_q.is_empty() {
                 add_drop(&mut self.peers[idx].counters, DropKind::Overflow, wire_len);
                 return;
             }
@@ -1716,6 +2142,54 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// then try media for as long as the pacer, the windows and `max_sends_per_pump` (a common bound on every media-lane attempt,
     /// probes and refused sends included) allow.
     pub fn pump(&mut self, now_ns: u64) -> PumpReport {
+        self.pump_fec(now_ns, &[], &std::sync::atomic::AtomicBool::new(false))
+    }
+
+    /// Pump all groups through the same interface pacer and per-call limits.
+    /// FEC groups without exactly one usable group-clock view are not sent.
+    pub fn pump_fec(
+        &mut self,
+        now_ns: u64,
+        clocks: &[(GroupId, crate::playout::ClockView)],
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> PumpReport {
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            let groups: Vec<_> = self
+                .groups
+                .iter()
+                .filter(|g| g.fec.is_some())
+                .map(|g| g.id)
+                .collect();
+            for group in groups {
+                self.invalidate_group_fec(group);
+            }
+        }
+        for group in &mut self.groups {
+            if let Some(fec) = &mut group.fec {
+                let mut matching = clocks.iter().filter(|(id, _)| *id == group.id);
+                if let (Some((_, view)), None) = (matching.next(), matching.next())
+                    && view.usable
+                {
+                    if fec.last_group_ns.is_some_and(|last| view.group_ns < last) {
+                        fec.clock_failed = true;
+                    }
+                    fec.last_group_ns = Some(view.group_ns);
+                    if !fec.clock_failed {
+                        while let Some((window, _)) = fec.windows.front() {
+                            let Ok(metadata) = fec.config.metadata(*window) else {
+                                break;
+                            };
+                            let last = be_u64(&metadata, 52)
+                                .saturating_add(crate::playout::frames_to_ns(3 * 256));
+                            if view.group_ns <= last {
+                                break;
+                            }
+                            fec.windows.pop_front();
+                        }
+                    }
+                }
+            }
+        }
         let mut out = PumpReport::default();
         self.stats.pumps += 1;
         if !self.link_up {
@@ -1723,12 +2197,12 @@ impl<P: DatagramPort> CarrierSender<P> {
             out.link_down = true;
             return out;
         }
-        out.reports_applied = self.poll_reports();
+        out.reports_applied = self.poll_reports_fec(now_ns, clocks, cancelled);
         self.pacer.refill(now_ns);
         self.control_pacer.refill(now_ns);
         out.control_sent = self.pump_control();
         out.late_dropped = self.expire_late(now_ns);
-        self.pump_media(now_ns, &mut out);
+        self.pump_media(now_ns, clocks, cancelled, &mut out);
         let window = self.limits.window_packets;
         for peer in &mut self.peers {
             if !peer.media_q.is_empty() && peer.fence.is_none() && peer.stalled(window) {
@@ -1743,13 +2217,117 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// current ones. A pump does this first; a caller that wants to see a report's effect before the next pump may too.
     /// Returns how many reports moved a peer's position.
     pub fn poll_reports(&mut self) -> u32 {
+        self.poll_reports_fec(0, &[], &std::sync::atomic::AtomicBool::new(false))
+    }
+
+    fn poll_reports_fec(
+        &mut self,
+        now_ns: u64,
+        clocks: &[(GroupId, crate::playout::ClockView)],
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> u32 {
         let mut applied = 0;
+        let mut budget = self.limits.max_reads_per_pump;
+        for idx in 0..self.peers.len() {
+            if budget == 0 {
+                break;
+            }
+            let group = self.peers[idx].group;
+            if self.peers[idx].pending_fec_feedback.is_some() && self.fec_has_clock(group, clocks) {
+                let wire = self.peers[idx].pending_fec_feedback.expect("checked");
+                if !self.feedback_relevant(group, &wire) {
+                    self.peers[idx].pending_fec_feedback = None;
+                    self.peers[idx].counters.fec_feedback_refused += 1;
+                    self.stats.fec_feedback_refused += 1;
+                    continue;
+                }
+                let requested = u64::from((wire[64] & 15).count_ones());
+                let work =
+                    crate::fec::AUTH_WORK + requested * (crate::fec::AUTH_WORK + 1024 + 1000);
+                if !self.fec_work_available(now_ns, work) {
+                    continue;
+                }
+                let wire = self.peers[idx]
+                    .pending_fec_feedback
+                    .take()
+                    .expect("checked");
+                let addr = self.peers[idx].control_addr;
+                budget -= 1;
+                if self.on_fec_feedback(&wire, Some(addr), now_ns, clocks, cancelled) {
+                    applied += 1;
+                }
+            }
+        }
         let mut buf = [0u8; 128];
-        for _ in 0..self.limits.max_reads_per_pump {
+        for _ in 0..budget {
+            // With no budget even to authenticate an FEC message, leave the
+            // next control datagram in the bounded port instead of consuming
+            // a one-shot request that cannot yet be checked.
+            if self.groups.iter().any(|g| g.fec.is_some())
+                && !self.fec_work_available(now_ns, crate::fec::AUTH_WORK)
+            {
+                break;
+            }
             match self.port.recv(Lane::Control, &mut buf) {
                 Ok(got) => {
                     let len = got.len.min(buf.len());
-                    if self.on_control_datagram(&buf[..len], got.from) {
+                    if &buf[..len.min(4)] == b"FFWA" {
+                        self.stats.control_datagrams_in += 1;
+                        let peer = self.feedback_source(&buf[..len], got.from);
+                        if let Some(idx) = peer
+                            && (!self.fec_has_clock(self.peers[idx].group, clocks)
+                                || !self.fec_work_available(
+                                    now_ns,
+                                    crate::fec::AUTH_WORK
+                                        + u64::from((buf[64] & 15).count_ones())
+                                            * (crate::fec::AUTH_WORK + 1024 + 1000),
+                                ))
+                        {
+                            let group = self.peers[idx].group;
+                            if self.peers[idx]
+                                .pending_fec_feedback
+                                .is_some_and(|wire| !self.feedback_relevant(group, &wire))
+                            {
+                                self.peers[idx].pending_fec_feedback = None;
+                                self.stats.fec_feedback_refused += 1;
+                                self.peers[idx].counters.fec_feedback_refused += 1;
+                            }
+                            if !self.feedback_relevant(group, &buf[..len]) {
+                                self.peers[idx].counters.fec_feedback_refused += 1;
+                                self.stats.fec_feedback_refused += 1;
+                            } else if self.peers[idx].pending_fec_feedback.is_some() {
+                                self.peers[idx].counters.fec_feedback_overflow += 1;
+                                self.stats.fec_feedback_overflow += 1;
+                                self.stats.fec_feedback_refused += 1;
+                            } else if self.reserve_fec_work(now_ns, crate::fec::AUTH_WORK)
+                                && self
+                                    .groups
+                                    .iter()
+                                    .find(|g| g.id == self.peers[idx].group)
+                                    .and_then(|g| g.fec.as_ref())
+                                    .is_some_and(|fec| {
+                                        crate::fec::verify_feedback(&fec.config, &buf[..len])
+                                    })
+                            {
+                                let mut wire = [0; crate::fec::FEEDBACK_BYTES];
+                                wire.copy_from_slice(&buf[..len]);
+                                self.peers[idx].pending_fec_feedback = Some(wire);
+                                self.peers[idx].counters.fec_feedback_deferred += 1;
+                                self.stats.fec_feedback_deferred += 1;
+                            } else {
+                                self.peers[idx].counters.fec_feedback_refused += 1;
+                                self.stats.fec_feedback_refused += 1;
+                            }
+                        } else if self.on_fec_feedback(
+                            &buf[..len],
+                            got.from,
+                            now_ns,
+                            clocks,
+                            cancelled,
+                        ) {
+                            applied += 1;
+                        }
+                    } else if self.on_control_datagram(&buf[..len], got.from) {
                         applied += 1;
                     }
                 }
@@ -1765,6 +2343,218 @@ impl<P: DatagramPort> CarrierSender<P> {
             }
         }
         applied
+    }
+
+    fn fec_has_clock(
+        &self,
+        group: GroupId,
+        clocks: &[(GroupId, crate::playout::ClockView)],
+    ) -> bool {
+        let usable_group = self
+            .groups
+            .iter()
+            .find(|g| g.id == group)
+            .and_then(|g| g.fec.as_ref())
+            .is_some_and(|fec| !fec.clock_failed);
+        let mut views = clocks.iter().filter(|(id, _)| *id == group);
+        usable_group
+            && matches!((views.next(), views.next()), (Some((_, view)), None) if view.usable)
+    }
+
+    fn feedback_relevant(&self, group: GroupId, wire: &[u8]) -> bool {
+        if wire.len() != crate::fec::FEEDBACK_BYTES {
+            return false;
+        }
+        let window = be_u64(wire, 28);
+        self.groups
+            .iter()
+            .find(|g| g.id == group)
+            .and_then(|g| g.fec.as_ref())
+            .and_then(|fec| fec.windows.iter().find(|(id, _)| *id == window))
+            .is_some_and(|(_, retained)| retained.has_unserved(wire[64]))
+    }
+
+    fn feedback_source(&self, wire: &[u8], from: Option<SocketAddr>) -> Option<usize> {
+        if wire.len() != crate::fec::FEEDBACK_BYTES {
+            return None;
+        }
+        let addr = from?;
+        let group = self
+            .groups
+            .iter()
+            .find(|g| {
+                g.fec.is_some()
+                    && g.stream_id.get() == be_u64(wire, 12)
+                    && g.epoch == be_u64(wire, 20)
+            })?
+            .id;
+        self.peers
+            .iter()
+            .position(|p| p.group == group && p.control_addr == addr)
+    }
+
+    fn on_fec_feedback(
+        &mut self,
+        wire: &[u8],
+        from: Option<SocketAddr>,
+        now_ns: u64,
+        clocks: &[(GroupId, crate::playout::ClockView)],
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> bool {
+        let accepted = self.process_fec_feedback(wire, from, now_ns, clocks, cancelled);
+        if accepted {
+            self.stats.fec_feedback_accepted += 1;
+        } else {
+            self.stats.fec_feedback_refused += 1;
+        }
+        accepted
+    }
+
+    fn process_fec_feedback(
+        &mut self,
+        wire: &[u8],
+        from: Option<SocketAddr>,
+        now_ns: u64,
+        clocks: &[(GroupId, crate::playout::ClockView)],
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> bool {
+        if wire.len() != crate::fec::FEEDBACK_BYTES {
+            return false;
+        }
+        let stream = be_u64(wire, 12);
+        let epoch = be_u64(wire, 20);
+        let window = be_u64(wire, 28);
+        let Some(gi) = self
+            .groups
+            .iter()
+            .position(|g| g.stream_id.get() == stream && g.epoch == epoch && g.fec.is_some())
+        else {
+            return false;
+        };
+        let group = self.groups[gi].id;
+        let Some(addr) = from else {
+            return false;
+        };
+        let Some(peer) = self
+            .peers
+            .iter()
+            .position(|p| p.group == group && p.control_addr == addr)
+        else {
+            return false;
+        };
+        // Charge an upper bound before authentication, including every requested
+        // symbol, so forged requests cannot obtain free cryptographic work.
+        let requested = u64::from((wire[64] & 15).count_ones());
+        let work = crate::fec::AUTH_WORK + requested * (crate::fec::AUTH_WORK + 1024 + 1000);
+        if !self.reserve_fec_work(now_ns, work) {
+            self.peers[peer].counters.fec_feedback_refused += 1;
+            return false;
+        }
+        let mut views = clocks.iter().filter(|(id, _)| *id == group);
+        let view = match (views.next(), views.next()) {
+            (Some((_, view)), None) if view.usable => crate::fec::profile_view(*view),
+            _ => {
+                self.peers[peer].counters.fec_feedback_refused += 1;
+                return false;
+            }
+        };
+        let fec = self.groups[gi].fec.as_mut().expect("selected");
+        if fec.clock_failed {
+            self.peers[peer].counters.fec_feedback_refused += 1;
+            return false;
+        }
+        let Some((_, retained)) = fec.windows.iter_mut().find(|(id, _)| *id == window) else {
+            self.peers[peer].counters.fec_feedback_refused += 1;
+            return false;
+        };
+        let replies = match retained.serve(view, wire, cancelled) {
+            Ok(replies) => replies,
+            Err(_) => {
+                self.peers[peer].counters.fec_feedback_refused += 1;
+                return false;
+            }
+        };
+        let metadata = match fec.config.metadata(window) {
+            Ok(meta) => meta,
+            Err(_) => return false,
+        };
+        let first_deadline = be_u64(&metadata, 52);
+        self.peers[peer].counters.fec_feedback_accepted += 1;
+        let mut report = SubmitReport::default();
+        for idx in 0..self.peers.len() {
+            if self.peers[idx].group != group {
+                continue;
+            }
+            for (esi, packet) in replies.packets.iter().enumerate() {
+                if let Some(packet) = packet {
+                    let deadline = first_deadline
+                        .saturating_add(crate::playout::frames_to_ns(esi as u64 * 256))
+                        .saturating_sub(crate::fec::TAIL_TRANSIT_RESERVE_NS);
+                    self.enqueue_fec(idx, packet, now_ns, deadline, &mut report);
+                }
+            }
+        }
+        true
+    }
+
+    fn send_fec_datagram(
+        &mut self,
+        idx: usize,
+        now_ns: u64,
+        clocks: &[(GroupId, crate::playout::ClockView)],
+        out: &mut PumpReport,
+    ) {
+        let Some(mut packet) = self.peers[idx].fec_q.pop_front() else {
+            return;
+        };
+        let len = packet.wire.len();
+        self.peers[idx].fec_q_bytes -= len;
+        let Some((_, view)) = clocks.iter().find(|(id, _)| *id == self.peers[idx].group) else {
+            return;
+        };
+        let deadline = packet
+            .consume_by_ns
+            .saturating_sub(view.uncertainty_ns.saturating_sub(500_000));
+        if view.group_ns >= deadline {
+            add_drop(&mut self.peers[idx].counters, DropKind::Late, len);
+            out.late_dropped += 1;
+            return;
+        }
+        let result = self
+            .port
+            .send_to(Lane::Media, &packet.wire, self.peers[idx].media_addr);
+        let peer = &mut self.peers[idx];
+        match result {
+            Ok(()) => {
+                peer.send_hold_until_ns = None;
+                peer.counters.media_sent_packets += 1;
+                peer.counters.media_sent_bytes += len as u64;
+                peer.counters.fec_sent_packets += 1;
+                let delay = now_ns.saturating_sub(packet.enqueued_ns);
+                peer.counters.queue_delay_ns_total += delay;
+                peer.counters.queue_delay_ns_max = peer.counters.queue_delay_ns_max.max(delay);
+                out.media_sent += 1;
+            }
+            Err(fault) => {
+                self.faults.on_send(&fault);
+                packet.attempts += 1;
+                if fault == PortFault::MessageTooLong {
+                    add_drop(&mut peer.counters, DropKind::SendError, len);
+                    if peer.fence.is_none() {
+                        peer.fence = Some(FenceReason::PathMtuTooSmall);
+                        peer.purge_media(DropKind::Fenced);
+                        self.stats.mtu_fences += 1;
+                    }
+                } else if packet.attempts >= SEND_RETRY_ATTEMPTS {
+                    add_drop(&mut peer.counters, DropKind::SendError, len);
+                    peer.send_hold_until_ns = Some(now_ns.saturating_add(STALL_PROBE_NS));
+                } else {
+                    peer.fec_q_bytes += len;
+                    peer.fec_q.push_front(packet);
+                    peer.send_hold_until_ns = Some(now_ns.saturating_add(1));
+                }
+            }
+        }
     }
 
     /// The peer a report belongs to. A report that names a peer is attributed by that number, and, when the port can say
@@ -1931,7 +2721,12 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// The next peer, round robin from the cursor, that is not fenced, is not holding off and has something to send, with the
     /// cost in link bytes. A peer that is waiting (a full window, or a spent sequence budget) is offered only for a probe
     /// that is due: its newest transmitted datagram, again. Otherwise a held datagram goes first, else the queue's head.
-    fn next_sendable(&self, now_ns: u64) -> Option<(usize, usize)> {
+    fn next_sendable(
+        &self,
+        now_ns: u64,
+        clocks: &[(GroupId, crate::playout::ClockView)],
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Option<(usize, usize, bool)> {
         let n = self.peers.len();
         let window = self.limits.window_packets;
         for step in 0..n {
@@ -1940,11 +2735,27 @@ impl<P: DatagramPort> CarrierSender<P> {
             if peer.fence.is_some() || peer.send_hold_until_ns.is_some_and(|until| now_ns < until) {
                 continue;
             }
+            let mut views = clocks.iter().filter(|(id, _)| *id == peer.group);
+            let view = match (views.next(), views.next()) {
+                (Some((_, view)), None) if view.usable => Some(*view),
+                _ => None,
+            };
+            let fec_ok = self
+                .groups
+                .iter()
+                .find(|g| g.id == peer.group)
+                .and_then(|g| g.fec.as_ref())
+                .is_some_and(|f| !f.clock_failed)
+                && !cancelled.load(std::sync::atomic::Ordering::Acquire)
+                && view.is_some();
+            if fec_ok && let Some(head) = peer.fec_q.front() {
+                return Some((idx, head.wire.len() + peer.overhead(), true));
+            }
             if peer.waiting(window) {
                 if peer.probe_due(window, now_ns)
                     && let Some(last) = &peer.last_sent
                 {
-                    return Some((idx, last.wire_len + peer.overhead()));
+                    return Some((idx, last.wire_len + peer.overhead(), false));
                 }
                 continue;
             }
@@ -1953,7 +2764,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 (None, Some(head)) => head.wire_len,
                 (None, None) => continue,
             };
-            return Some((idx, wire_len + peer.overhead()));
+            return Some((idx, wire_len + peer.overhead(), false));
         }
         None
     }
@@ -1987,7 +2798,13 @@ impl<P: DatagramPort> CarrierSender<P> {
         }
     }
 
-    fn pump_media(&mut self, now_ns: u64, out: &mut PumpReport) {
+    fn pump_media(
+        &mut self,
+        now_ns: u64,
+        clocks: &[(GroupId, crate::playout::ClockView)],
+        cancelled: &std::sync::atomic::AtomicBool,
+        out: &mut PumpReport,
+    ) {
         let n = self.peers.len();
         if n == 0 {
             return;
@@ -2002,7 +2819,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 self.stats.send_cap_pumps += 1;
                 break;
             }
-            let Some((idx, cost)) = self.next_sendable(now_ns) else {
+            let Some((idx, cost, fec)) = self.next_sendable(now_ns, clocks, cancelled) else {
                 break;
             };
             let cost = cost as u64;
@@ -2014,6 +2831,11 @@ impl<P: DatagramPort> CarrierSender<P> {
             }
             self.pacer.spend(cost);
             self.media_cursor = (idx + 1) % n;
+            if fec {
+                attempts += 1;
+                self.send_fec_datagram(idx, now_ns, clocks, out);
+                continue;
+            }
             if self.peers[idx].waiting(window) {
                 attempts += 1;
                 self.send_probe(idx, now_ns);
@@ -2593,6 +3415,28 @@ impl<P: DatagramPort> CarrierReceiver<P> {
         out
     }
 
+    /// Send one fixed-size N06 feedback message for this stream and epoch to the
+    /// configured sender. The sender authenticates it and attributes its source.
+    pub fn send_fec_feedback(
+        &mut self,
+        feedback: &crate::fec::Feedback,
+    ) -> Result<(), CarrierError> {
+        let wire = &feedback.0;
+        if &wire[..4] != b"FFWA"
+            || be_u64(wire, 12) != self.stream_id.get()
+            || be_u64(wire, 20) != self.receiver.active_epoch()
+        {
+            return Err(CarrierError::InvalidLimits(
+                "FEC feedback stream or epoch mismatch",
+            ));
+        }
+        if let Err(fault) = self.port.send_to(Lane::Control, wire, self.sender_control) {
+            self.faults.on_send(&fault);
+            return Err(CarrierError::Io(fault_text(&fault)));
+        }
+        Ok(())
+    }
+
     /// Send the authenticated consumption report to the sender's control socket.
     pub fn send_report(&mut self) -> Result<(), CarrierError> {
         let wire = encode_report(
@@ -2611,5 +3455,7 @@ impl<P: DatagramPort> CarrierReceiver<P> {
     }
 }
 
+#[cfg(test)]
+mod fec_tests;
 #[cfg(test)]
 mod tests;

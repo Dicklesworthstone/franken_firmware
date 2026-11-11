@@ -466,6 +466,39 @@ impl MediaPlayout {
         fec.deferral(&self.engine, view)
     }
 
+    /// Fallible readiness for a control write, unlike the best-effort socket
+    /// polling query above. A transient failed clock read cannot be hidden by
+    /// a subsequent successful reading before feedback leaves the endpoint.
+    pub fn checked_host_fec_deferral<O: KernelOps>(
+        &mut self,
+        platform: &mut PlatformLayer<O>,
+        clock: &mut GroupClock,
+    ) -> Result<Option<u64>, MediaRefusal> {
+        if self.fec.is_empty() {
+            return Ok(None);
+        }
+        let local = self
+            .local_ns(platform, clock)
+            .map_err(LocalTimeRefusal::for_ingest)?;
+        let view = self.bridge.at_local(clock, local);
+        if !view.usable || matches!(clock.output(local), Output::Muted(_)) {
+            return Err(MediaRefusal::Fec(franken_stream::fec::Refusal::Clock));
+        }
+        Ok(self.host_fec_deferral_at(view))
+    }
+
+    /// Recheck protection using the same admitted, fresh clock view that
+    /// authorizes a pending write. This pure query reads no second clock and
+    /// cannot hide an earlier platform error; the caller must validate the view.
+    pub(crate) fn host_fec_deferral_at(
+        &self,
+        view: franken_stream::playout::ClockView,
+    ) -> Option<u64> {
+        self.fec
+            .first()
+            .and_then(|fec| fec.deferral(&self.engine, view))
+    }
+
     /// Turn the engine's diagnostics on (or restart them) under the same ledger line: the ring is charged beside this path's own bytes
     /// and `resident_elsewhere_bytes`, and a restart counts the old ring and the new one together. A refusal leaves the log running as
     /// it was.

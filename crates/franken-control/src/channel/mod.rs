@@ -29,6 +29,7 @@
 pub mod custody;
 pub mod diag;
 pub mod endpoint;
+pub mod fec_negotiation;
 pub mod ledger;
 pub mod limiter;
 pub mod peer;

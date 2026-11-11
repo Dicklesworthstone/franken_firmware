@@ -65,6 +65,7 @@ use serde::Serialize;
 use std::sync::atomic::AtomicBool;
 
 use crate::SpeakerReadinessState;
+use crate::clock_view::ClockViewBridge;
 use crate::media_playout::{
     AuthenticatedFormat, AuthenticatedIngress, MediaPlayout, MediaRefusal, Preparation,
     StartRefusal,
@@ -466,15 +467,24 @@ impl<O: KernelOps> MediaSink for PlayoutSink<'_, O> {
         if !self.fec_selected {
             return true;
         }
-        if self
+        match self
             .media
-            .host_fec_deferral(self.platform, self.clock)
-            .is_some()
+            .checked_host_fec_deferral(self.platform, self.clock)
         {
-            self.verdicts.fec_deferred_polls = self.verdicts.fec_deferred_polls.saturating_add(1);
-            return false;
+            Ok(Some(_)) => {
+                self.verdicts.fec_deferred_polls =
+                    self.verdicts.fec_deferred_polls.saturating_add(1);
+                false
+            }
+            Ok(None) => true,
+            Err(_) => {
+                // The readiness read itself is a real platform clock read.
+                // Do not swallow its failure and admit the datagram using a
+                // second, successful read; leave the wire in the port instead.
+                self.backpressure();
+                false
+            }
         }
-        true
     }
 
     /// The selected N06 wire is longer than N01's largest datagram; with it selected the carrier must read that much.
@@ -495,6 +505,79 @@ pub struct MediaEndpoint<P: DatagramPort> {
     verdicts: EngineVerdicts,
     /// The FEC origin generation credit is being held under, if the N06 hybrid has been selected. A change restarts credit.
     credit_origin: Option<u64>,
+    pending_feedback: Option<PendingFeedback>,
+    feedback_clock: ClockViewBridge,
+    feedback_counters: FeedbackCounters,
+}
+
+/// Feedback is generated once per coding window; a failed datagram write must
+/// not consume that opportunity without a bounded retry of the same bytes.
+struct PendingFeedback {
+    wire: Feedback,
+    identity: (u64, u64, u64),
+    retry_at_local_ns: u64,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct FeedbackCounters {
+    pub generated: u64,
+    pub sent: u64,
+    pub retries: u64,
+    pub send_errors: u64,
+    pub expired: u64,
+    pub retired: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedbackProgress {
+    Idle,
+    Deferred,
+    Sent { window: u64 },
+    Expired { window: u64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum FeedbackError {
+    #[error("feedback media admission refused: {0:?}")]
+    Media(MediaRefusal),
+    #[error("feedback transport refused: {0}")]
+    Transport(CarrierError),
+}
+
+#[derive(Debug)]
+pub struct FecPollReport {
+    pub decode: DecodeState,
+    pub feedback: Result<FeedbackProgress, FeedbackError>,
+}
+
+const FEEDBACK_RETRY_NS: u64 = 1_000_000;
+
+fn feedback_u64(wire: &Feedback, offset: usize) -> u64 {
+    let mut bytes = [0; 8];
+    bytes.copy_from_slice(&wire.0[offset..offset + 8]);
+    u64::from_be_bytes(bytes)
+}
+
+/// Last useful *send* time, earlier than the last requested block's consume-by.
+/// The sender still rechecks its own current clock and work budget on arrival.
+fn feedback_send_deadline(wire: &Feedback, uncertainty_ns: u64) -> Option<u64> {
+    let mask = wire.0[64];
+    if mask == 0 || mask & !15 != 0 {
+        return None;
+    }
+    let last = (0..fec::K).rev().find(|i| mask & (1 << i) != 0)?;
+    let presentation = feedback_u64(wire, 44)
+        .checked_add(franken_stream::playout::frames_to_ns(last as u64 * 256))?;
+    let cutoff = franken_stream::playout::consume_by(
+        presentation,
+        1_000_000,
+        1_000_000,
+        uncertainty_ns.max(500_000),
+    );
+    let tail_work = u64::from(mask.count_ones())
+        .checked_mul(fec::AUTH_WORK + 1024 + 1000)?
+        .checked_mul(fec::WORK_UNIT_NS)?;
+    cutoff.checked_sub(fec::TAIL_TRANSIT_RESERVE_NS.checked_add(tail_work)?)
 }
 
 impl<P: DatagramPort> MediaEndpoint<P> {
@@ -505,6 +588,9 @@ impl<P: DatagramPort> MediaEndpoint<P> {
             media,
             verdicts: EngineVerdicts::default(),
             credit_origin: None,
+            pending_feedback: None,
+            feedback_clock: ClockViewBridge::default(),
+            feedback_counters: FeedbackCounters::default(),
         }
     }
 
@@ -513,6 +599,14 @@ impl<P: DatagramPort> MediaEndpoint<P> {
     /// start (this endpoint's `admit_start`, or the media path reached through `media_mut`). The first generation, and a
     /// generation after FEC was deselected, start from whatever credit stands (an epoch change already reset it).
     fn note_generation(&mut self) {
+        let identity = self.media.host_fec_identity();
+        if self.pending_feedback.as_ref().is_some_and(|pending| {
+            Some(pending.identity) != identity
+                || pending.identity.0 != self.carrier.stream_id().get()
+                || pending.identity.1 != self.carrier.epoch()
+        }) {
+            self.retire_feedback();
+        }
         let origin = self.media.host_fec_origin();
         if let (Some(held), Some(now)) = (self.credit_origin, origin)
             && held != now
@@ -600,6 +694,169 @@ impl<P: DatagramPort> MediaEndpoint<P> {
         self.media.host_fec_feedback(platform, clock)
     }
 
+    fn retire_feedback(&mut self) {
+        if self.pending_feedback.take().is_some() {
+            self.feedback_counters.retired = self.feedback_counters.retired.saturating_add(1);
+        }
+    }
+
+    #[must_use]
+    pub const fn feedback_counters(&self) -> &FeedbackCounters {
+        &self.feedback_counters
+    }
+
+    /// Retained wire payload, excluding this endpoint's fixed inline state.
+    #[must_use]
+    pub fn pending_feedback_bytes(&self) -> usize {
+        self.pending_feedback
+            .as_ref()
+            .map_or(0, |_| fec::FEEDBACK_BYTES)
+    }
+
+    /// Generate at most one aggregate request and attempt one control write.
+    /// A failed write retains exactly the same authenticated bytes, with at
+    /// most one retry per millisecond and only while a tail can still arrive.
+    /// Selection/epoch/origin changes, cancellation or a clock fault retire it.
+    /// This is host-development transport behavior, not radio/board admission.
+    pub fn pump_fec_feedback<O: KernelOps>(
+        &mut self,
+        platform: &mut PlatformLayer<O>,
+        clock: &mut GroupClock,
+        cancelled: &AtomicBool,
+    ) -> Result<FeedbackProgress, FeedbackError> {
+        self.note_generation();
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            self.retire_feedback();
+            return Err(FeedbackError::Media(MediaRefusal::Fec(
+                fec::Refusal::Cancelled,
+            )));
+        }
+        let Some(identity) = self.media.host_fec_identity() else {
+            return Ok(FeedbackProgress::Idle);
+        };
+        if identity.0 != self.carrier.stream_id().get() || identity.1 != self.carrier.epoch() {
+            self.retire_feedback();
+            return Err(FeedbackError::Media(MediaRefusal::Fec(
+                fec::Refusal::Identity,
+            )));
+        }
+        if self.pending_feedback.is_none() {
+            let Some(wire) = self
+                .media
+                .host_fec_feedback(platform, clock)
+                .map_err(FeedbackError::Media)?
+            else {
+                return Ok(FeedbackProgress::Idle);
+            };
+            self.pending_feedback = Some(PendingFeedback {
+                wire,
+                identity,
+                retry_at_local_ns: 0,
+            });
+            self.feedback_counters.generated = self.feedback_counters.generated.saturating_add(1);
+        }
+        // Retrying a previously authenticated request still does socket work.
+        // Leave that work outside the same protected render interval as ingress
+        // and decoder work; use a fresh reading below after this readiness check.
+        match self.media.checked_host_fec_deferral(platform, clock) {
+            Ok(Some(_)) => return Ok(FeedbackProgress::Deferred),
+            Ok(None) => {}
+            Err(error) => {
+                self.retire_feedback();
+                return Err(FeedbackError::Media(error));
+            }
+        }
+        let local = match platform.now_ns() {
+            Ok(local) => local,
+            Err(error) => {
+                clock.report_clock_fault();
+                self.retire_feedback();
+                return Err(FeedbackError::Media(MediaRefusal::Clock(error)));
+            }
+        };
+        let view = self.feedback_clock.at_local(clock, local);
+        if !view.usable || matches!(clock.output(local), franken_clock::group::Output::Muted(_)) {
+            self.retire_feedback();
+            return Err(FeedbackError::Media(MediaRefusal::Fec(fec::Refusal::Clock)));
+        }
+        // Time can cross the render fence between the readiness read and this
+        // fresh send-authorizing reading. Reuse this exact view for protection
+        // as well as the deadline; another clock read would reopen that gap.
+        if self.media.host_fec_deferral_at(view).is_some() {
+            return Ok(FeedbackProgress::Deferred);
+        }
+        let pending = self
+            .pending_feedback
+            .as_ref()
+            .expect("generated or retained feedback");
+        let window = feedback_u64(&pending.wire, 28);
+        if view.group_ns < feedback_u64(&pending.wire, 72) {
+            self.retire_feedback();
+            return Err(FeedbackError::Media(MediaRefusal::Fec(fec::Refusal::Clock)));
+        }
+        if feedback_send_deadline(&pending.wire, view.uncertainty_ns)
+            .is_none_or(|deadline| view.group_ns >= deadline)
+        {
+            self.pending_feedback = None;
+            self.feedback_counters.expired = self.feedback_counters.expired.saturating_add(1);
+            return Ok(FeedbackProgress::Expired { window });
+        }
+        if local < pending.retry_at_local_ns {
+            return Ok(FeedbackProgress::Deferred);
+        }
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            self.retire_feedback();
+            return Err(FeedbackError::Media(MediaRefusal::Fec(
+                fec::Refusal::Cancelled,
+            )));
+        }
+        if pending.retry_at_local_ns != 0 {
+            self.feedback_counters.retries = self.feedback_counters.retries.saturating_add(1);
+        }
+        match self.carrier.send_fec_feedback(&pending.wire) {
+            Ok(()) => {
+                self.pending_feedback = None;
+                self.feedback_counters.sent = self.feedback_counters.sent.saturating_add(1);
+                Ok(FeedbackProgress::Sent { window })
+            }
+            Err(error) => {
+                self.feedback_counters.send_errors =
+                    self.feedback_counters.send_errors.saturating_add(1);
+                self.pending_feedback
+                    .as_mut()
+                    .expect("retained feedback")
+                    .retry_at_local_ns = local.saturating_add(FEEDBACK_RETRY_NS);
+                Err(FeedbackError::Transport(error))
+            }
+        }
+    }
+
+    /// One cooperative endpoint step: bounded decode/publication followed by
+    /// bounded feedback transport. A transport failure cannot rewrite the
+    /// decoder's outcome and remains separately visible to the caller.
+    pub fn poll_fec_with_feedback<O: KernelOps>(
+        &mut self,
+        platform: &mut PlatformLayer<O>,
+        clock: &mut GroupClock,
+        cancelled: &AtomicBool,
+    ) -> Result<FecPollReport, MediaRefusal> {
+        let decode = match self.poll_fec(platform, clock, cancelled) {
+            Ok(decode) => decode,
+            Err(error) => {
+                if matches!(
+                    error,
+                    MediaRefusal::Clock(_)
+                        | MediaRefusal::Fec(fec::Refusal::Clock | fec::Refusal::Cancelled)
+                ) {
+                    self.retire_feedback();
+                }
+                return Err(error);
+            }
+        };
+        let feedback = self.pump_fec_feedback(platform, clock, cancelled);
+        Ok(FecPollReport { decode, feedback })
+    }
+
     /// Prepare at most one block of PCM for a scheduled downstream sink; see [`MediaPlayout::prepare`].
     ///
     /// # Errors
@@ -644,6 +901,7 @@ impl<P: DatagramPort> MediaEndpoint<P> {
     /// dropped). The group clock and the engine are the control path's calls, as for an epoch restart: `MediaPlayout::begin_epoch`
     /// and [`Self::admit_start`].
     pub fn restart_stream(&mut self, stream_id: StreamId, epoch: u64) {
+        self.retire_feedback();
         self.media.bind_stream(stream_id, epoch);
         self.carrier.restart_stream(stream_id, epoch);
     }
@@ -665,6 +923,10 @@ pub enum EndpointError {
     Directory(#[from] DirectoryError),
     #[error("{0}")]
     Carrier(#[from] CarrierError),
+    #[error("FEC agreement refused: {0:?}")]
+    FecAgreement(franken_control::channel::fec_negotiation::FecError),
+    #[error("FEC control-to-carrier binding refused: {0}")]
+    FecBinding(&'static str),
 }
 
 /// Where this sender can be reached now, for the control channel to tell its receivers after a rebind.
@@ -716,6 +978,70 @@ impl<P: DatagramPort> SenderEndpoint<P> {
     #[must_use]
     pub const fn directory(&self) -> &PeerDirectory {
         &self.directory
+    }
+
+    /// Select the local sender from a freshly revalidated authenticated round.
+    /// Routes bind enrolled control peers to the configured speaker identities;
+    /// no caller-created proof or boolean can stand in for member acknowledgments.
+    /// All checks precede the carrier's atomic local epoch/profile transition.
+    ///
+    /// This does not perform remote receiver preflight or a distributed cutover.
+    /// The control owner still coordinates the group's session, clocks and starts.
+    pub fn select_acknowledged_host_fec<A: franken_control::channel::peer::PeerAuthority>(
+        &mut self,
+        group: franken_stream::carrier::GroupId,
+        coordinator: &franken_control::channel::fec_negotiation::FecCoordinator,
+        authority: &A,
+        session: &franken_session::UnifiedGroupSession,
+        member_routes: &[(franken_control::channel::peer::PeerId, u64)],
+    ) -> Result<(), EndpointError> {
+        let selected = coordinator
+            .validated_selection(authority, session)
+            .map_err(EndpointError::FecAgreement)?;
+        if selected.profile() != fec::PROFILE
+            || selected.coding_revision() != fec::CODING_REVISION
+            || usize::from(selected.k()) != fec::K
+            || usize::from(selected.n()) != fec::N
+            || usize::from(selected.datagram_bytes()) != fec::DATAGRAM
+        {
+            return Err(EndpointError::FecBinding("unsupported exact profile"));
+        }
+        let proposal = selected.proposal();
+        let current = self
+            .carrier
+            .group_view(group)
+            .ok_or(CarrierError::UnknownGroup(group))?;
+        if current.stream_id != proposal.stream() || current.epoch != proposal.current_epoch() {
+            return Err(EndpointError::FecBinding("stream or epoch changed"));
+        }
+        if member_routes.len() != selected.members().len() {
+            return Err(EndpointError::FecBinding("incomplete member routes"));
+        }
+        let mut peer_ids = Vec::with_capacity(selected.members().len());
+        for member in selected.members() {
+            let mut routes = member_routes
+                .iter()
+                .filter(|(peer, _)| peer == &member.peer);
+            let (Some((_, speaker)), None) = (routes.next(), routes.next()) else {
+                return Err(EndpointError::FecBinding(
+                    "missing or duplicate control peer route",
+                ));
+            };
+            let Some((peer, _)) = self.directory.lookup(*speaker) else {
+                return Err(EndpointError::FecBinding("speaker is not announced"));
+            };
+            if peer_ids.contains(&peer) {
+                return Err(EndpointError::FecBinding("duplicate carrier peer route"));
+            }
+            peer_ids.push(peer);
+        }
+        self.carrier.select_group_fec(
+            group,
+            proposal.next_epoch(),
+            proposal.origin_ns(),
+            &peer_ids,
+        )?;
+        Ok(())
     }
 
     /// Where this sender's receivers must now send reports.

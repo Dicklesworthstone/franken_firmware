@@ -41,17 +41,65 @@ CASES["N06-CONSUMER"].extend([
     ("franken_speaker", SPEAKER + "n06_media_relock_catches_up_absolute_window_without_restarting_the_healthy_group"),
     ("franken_speaker", SPEAKER + "n06_media_ready_second_platform_read_fault_retires_without_publication"),
 ])
+# Existing typed carrier ingress and real feedback transport tests. These are
+# native test names, not a substitute for the independent observations below.
+SPEAKER_CARRIER = "net_carrier::fec_tests::"
+SENDER_CARRIER = "carrier::fec_tests::"
+CASES["N06-CONSUMER"].extend(("franken_speaker", SPEAKER_CARRIER + name) for name in (
+    "n06_carrier_credits_selected_n06_at_authenticated_sequences_and_decodes_to_exact_pcm",
+    "n06_carrier_credit_is_bounded_by_the_fec_receivers_authenticated_window_range",
+    "n06_carrier_render_protection_leaves_datagrams_in_the_port_and_credits_them_next_poll",
+    "n06_carrier_protection_that_begins_between_the_check_and_the_offer_drops_one_as_backpressure",
+    "n06_carrier_a_media_epoch_the_carrier_does_not_report_earns_no_credit",
+    "n06_carrier_a_moved_fec_origin_restarts_credit_and_a_refused_start_changes_nothing",
+    "n06_carrier_baseline_asks_no_clock_for_readiness_and_credits_the_authenticated_n01_sequence",
+    "n06_carrier_reads_the_datagram_length_the_sink_declares_and_no_more",
+    "n06_carrier_a_start_admitted_behind_the_endpoint_restarts_credit_at_the_next_poll",
+    "n06_carrier_credit_is_refused_unless_stream_epoch_origin_and_format_all_match",
+    "n06_carrier_bind_stream_swaps_streams_and_ends_a_selected_fec_session",
+    "n06_carrier_restart_stream_swaps_media_and_carrier_together_and_credit_restarts_from_zero",
+))
+CASES["N06-TAIL"].extend(("franken_speaker", SPEAKER_CARRIER + "feedback::" + name) for name in (
+    "n06_endpoint_feedback_reaches_real_tail_and_prepares_missing_pcm",
+    "n06_endpoint_actual_paced_sender_feedback_roundtrip_recovers_missing_pcm",
+    "n06_endpoint_feedback_retries_same_bytes_without_regenerating_or_busy_spinning",
+))
+CASES["N06-DEADLINE"].extend(("franken_speaker", SPEAKER_CARRIER + "feedback::" + name) for name in (
+    "n06_endpoint_feedback_expires_before_a_tail_could_reach_its_cutoff",
+    "n06_endpoint_feedback_clock_fault_cannot_release_a_retained_request",
+    "n06_endpoint_feedback_one_shot_readiness_clock_error_is_not_swallowed",
+    "n06_endpoint_ingress_readiness_clock_fault_keeps_wire_until_relock",
+    "n06_endpoint_feedback_retry_waits_out_the_protected_render_interval",
+))
+CASES["N06-RESTART"].extend(("franken_speaker", SPEAKER_CARRIER + "feedback::" + name) for name in (
+    "n06_endpoint_feedback_cancel_and_new_stream_retire_pending_authority",
+    "n06_endpoint_feedback_origin_change_retires_old_bytes_and_can_send_new_window",
+    "n06_endpoint_feedback_combined_poll_cancel_retires_queued_transport",
+))
+CASES["N06-TAIL"].extend(("franken_stream", SENDER_CARRIER + name) for name in (
+    "n06_paced_sender_lost_source_feedback_and_actual_pcm",
+    "n06_retired_feedback_cannot_displace_live_window_recovery",
+    "n06_feedback_send_checks_receiver_identity_and_transport_fault",
+))
+CASES["N06-DEADLINE"].append(("franken_stream", SENDER_CARRIER + "n06_paced_sender_admission_clock_deadline_and_cancel_are_bounded"))
+CASES["N06-DEADLINE"].append(("franken_stream", SENDER_CARRIER + "n06_paced_parity_after_first_cutoff_recovers_later_live_pcm"))
+CASES["N06-STORM"].append(("franken_stream", SENDER_CARRIER + "n06_pacer_attempt_limit_retry_and_backward_clock_fence"))
+CASES["N06-RESTART"].append(("franken_stream", SENDER_CARRIER + "n06_rebind_clears_fec_authority_and_old_queued_symbols"))
+CASES["N06-CONSUMER"].extend(("franken_speaker", SPEAKER_CARRIER + "selection::" + name) for name in (
+    "n06_sender_selection_consumes_encoded_all_member_agreement_and_preserves_n01_on_refusal",
+    "n06_sender_selection_revalidates_revocation_and_stream_binding_before_mutation",
+))
 # Concrete integration gaps named by root: these remain full acceptance blockers.
 # No invented Rust test, disabled requirement, or refusal-only qualification.
 PENDING = {
-    "N06-CARRIER": "peer format selection/negotiation and N07 typed selected-format ingress are not integrated/qualified",
-    "N06-PACED-SENDER": "CarrierSender still encodes N01; paced authenticated FEC transmission is not implemented/qualified",
+    "N06-CARRIER": "typed ingress exists; authenticated peer selection and end-to-end carrier qualification remain pending",
+    "N06-PACED-SENDER": "paced FEC sender candidate exists; combined native and original acceptance qualification remain pending",
 }
 
 
 def source_registry():
     actual = set()
-    for relative in ("crates/franken-stream/src/fec/tests.rs", "crates/franken-speaker/src/media_playout.rs", "toolchain/n06-fec-profile/src/lib.rs"):
+    for relative in ("crates/franken-stream/src/fec/tests.rs", "crates/franken-speaker/src/media_playout.rs", "toolchain/n06-fec-profile/src/lib.rs", "crates/franken-stream/src/carrier/fec_tests.rs", "crates/franken-speaker/src/net_carrier/fec_tests.rs", "crates/franken-speaker/src/net_carrier/fec_tests/feedback.rs", "crates/franken-speaker/src/net_carrier/fec_tests/selection.rs"):
         actual.update(re.findall(r"fn\s+(n06_[A-Za-z0-9_]+)\s*\(", (ROOT / relative).read_text()))
     mapped = {name.rsplit("::", 1)[-1] for tests in CASES.values() for _, name in tests}
     assert actual == mapped, "missing/stale N06 native test consumer"

@@ -1,0 +1,186 @@
+N06 host-development carrier integration: selected actual observations, 2026-11-11.
+Proof class: offline-host-synthetic. production_fec_profile_admitted=false.
+These are host tests, not target/QEMU, board, provider, radio, DAC or deployment evidence.
+Full N06 acceptance remains open: the full adapter deliberately retains two blocked qualification cases.
+Base revision before landing: 3dd356d05e18d072cb99db2f1e6bbb53f94db99d
+Commands below normalize worker selection; exact command and full private capture hashes are recorded separately.
+All Rust invocations used RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt and CARGO_INCREMENTAL=0. Workspace test and workspace Clippy also set CARGO_PROFILE_TEST_DEBUG=0 and RUSTFLAGS=-D warnings -C debuginfo=0. The standalone reference and qualifier Clippy did not set those latter two environment variables; qualifier Clippy explicitly denied warnings with -- -D warnings.
+
+[workspace]
+cargo +1.99.0 test -p franken-stream -p franken-speaker -p franken-control --lib --locked -j1 --no-fail-fast -- --show-output
+Native build: 30103800983323092; remote command exit: 0.
+Exact RCH command SHA-256: 501f72a96029e56eae0e9591f57fd352ac1e12258a4df2bf3974f412d756128a
+Full private capture SHA-256: 4baa1f0938872ebe278318663bdc93b54d653307c7fd976bdb1f48318f07aed4
+Finished `test` profile [unoptimized] target(s) in 24.55s
+test result: ok. 604 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.18s
+test result: ok. 450 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.09s
+test result: ok. 206 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+
+[workspace-clippy]
+cargo +1.99.0 clippy -p franken-stream -p franken-speaker -p franken-control --all-targets --locked -j1 --keep-going -- -D warnings
+Native build: 30103800983323093; remote command exit: 0.
+Exact RCH command SHA-256: 5543e53ad35de1eae8f31ed47bfdde53d4846c9294f77d94bc4b7a582a59a991
+Full private capture SHA-256: 3525496c2d671f1c9209fcf32b793b2a169dd021c509ab6a8841c222c0df7922
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 33.35s
+
+[reference]
+cargo +1.99.0 test --manifest-path toolchain/n06-fec-profile/Cargo.toml --locked --offline -j1 -- --show-output
+Native build: 30103800983323096; remote command exit: 0.
+Exact RCH command SHA-256: f6e3780fb8ced7c56b0942debe114b29fe6b6ecd6294ad8a1fddbe4087c3dcbc
+Full private capture SHA-256: 03168fabd84951ddd56b117847dbb52ae8eb7eaa846ea37aca9ca51ecbf1695f
+Finished `test` profile [optimized] target(s) in 17m 32s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[qualifier-clippy]
+cargo +1.99.0 clippy --manifest-path toolchain/n06-fec-profile/Cargo.toml --all-targets --locked -j1 -- -D warnings
+Native build: 30103800983323103; remote command exit: 0.
+Exact RCH command SHA-256: d144e140b831110fa6c115749b83e72e38e4c25c4992bba3f14d5d171f5741a2
+Full private capture SHA-256: 6d778888fd4525ef1f91d0303050776c0b9bcd3fed5115901a630842a718b521
+Finished `dev` profile [optimized] target(s) in 5m 00s
+
+[Selected actual workspace libtest rows]
+The full suite ran 1260 tests (604 control + 450 speaker + 206 stream), zero failed/ignored/filtered.
+All 62 predeclared workspace N06 names and all 8 additional coordinator unit names are selected below.
+test channel::fec_negotiation::tests::delayed_pre_rebind_member_ack_is_stale_and_new_generation_succeeds ... ok
+test channel::fec_negotiation::tests::bad_proofs_unknown_role_malformed_and_conflicts_never_count_as_acks ... ok
+test channel::fec_negotiation::tests::altered_tuple_wrong_group_and_every_truncation_fail_without_spending_a_member ... ok
+test channel::fec_negotiation::tests::delayed_pre_rebind_proposer_proof_is_stale_and_new_generation_succeeds ... ok
+test channel::fec_negotiation::tests::ordinary_n02_control_is_still_dispatched_when_fec_is_missing ... ok
+test channel::fec_negotiation::tests::encoded_peer_authenticated_proposal_and_all_mixed_members_select_exact_profile ... ok
+test channel::fec_negotiation::tests::old_round_ack_wrong_epoch_and_wrong_role_are_refused_with_positive_control ... ok
+test channel::fec_negotiation::tests::stale_membership_rebind_and_revocation_invalidate_selection_without_cutover ... ok
+test media_playout::tests::n06_media_baseline_remains_n01_and_unselected_fec_cannot_change_it ... ok
+test media_playout::tests::n06_media_clock_fault_mute_relock_and_readmission_resume_real_recovery ... ok
+test media_playout::tests::n06_media_consumer_selects_budgeted_fec_and_returns_authenticated_typed_sequence ... ok
+test media_playout::tests::n06_media_ready_second_platform_read_fault_retires_without_publication ... ok
+test media_playout::tests::n06_media_relock_catches_up_absolute_window_without_restarting_the_healthy_group ... ok
+test net_carrier::fec_tests::feedback::n06_endpoint_actual_paced_sender_feedback_roundtrip_recovers_missing_pcm ... ok
+test net_carrier::fec_tests::feedback::n06_endpoint_feedback_cancel_and_new_stream_retire_pending_authority ... ok
+test net_carrier::fec_tests::feedback::n06_endpoint_feedback_clock_fault_cannot_release_a_retained_request ... ok
+test net_carrier::fec_tests::feedback::n06_endpoint_feedback_combined_poll_cancel_retires_queued_transport ... ok
+test net_carrier::fec_tests::feedback::n06_endpoint_feedback_expires_before_a_tail_could_reach_its_cutoff ... ok
+test net_carrier::fec_tests::feedback::n06_endpoint_feedback_one_shot_readiness_clock_error_is_not_swallowed ... ok
+test net_carrier::fec_tests::feedback::n06_endpoint_feedback_origin_change_retires_old_bytes_and_can_send_new_window ... ok
+test net_carrier::fec_tests::feedback::n06_endpoint_feedback_reaches_real_tail_and_prepares_missing_pcm ... ok
+test net_carrier::fec_tests::feedback::n06_endpoint_feedback_retries_same_bytes_without_regenerating_or_busy_spinning ... ok
+test net_carrier::fec_tests::feedback::n06_endpoint_feedback_retry_waits_out_the_protected_render_interval ... ok
+test net_carrier::fec_tests::feedback::n06_endpoint_ingress_readiness_clock_fault_keeps_wire_until_relock ... ok
+test net_carrier::fec_tests::n06_carrier_a_media_epoch_the_carrier_does_not_report_earns_no_credit ... ok
+test net_carrier::fec_tests::n06_carrier_a_moved_fec_origin_restarts_credit_and_a_refused_start_changes_nothing ... ok
+test net_carrier::fec_tests::n06_carrier_a_start_admitted_behind_the_endpoint_restarts_credit_at_the_next_poll ... ok
+test net_carrier::fec_tests::n06_carrier_baseline_asks_no_clock_for_readiness_and_credits_the_authenticated_n01_sequence ... ok
+test net_carrier::fec_tests::n06_carrier_bind_stream_swaps_streams_and_ends_a_selected_fec_session ... ok
+test net_carrier::fec_tests::n06_carrier_credit_is_bounded_by_the_fec_receivers_authenticated_window_range ... ok
+test net_carrier::fec_tests::n06_carrier_credit_is_refused_unless_stream_epoch_origin_and_format_all_match ... ok
+test net_carrier::fec_tests::n06_carrier_credits_selected_n06_at_authenticated_sequences_and_decodes_to_exact_pcm ... ok
+test net_carrier::fec_tests::n06_carrier_protection_that_begins_between_the_check_and_the_offer_drops_one_as_backpressure ... ok
+test net_carrier::fec_tests::n06_carrier_reads_the_datagram_length_the_sink_declares_and_no_more ... ok
+test net_carrier::fec_tests::n06_carrier_render_protection_leaves_datagrams_in_the_port_and_credits_them_next_poll ... ok
+test net_carrier::fec_tests::n06_carrier_restart_stream_swaps_media_and_carrier_together_and_credit_restarts_from_zero ... ok
+test net_carrier::fec_tests::selection::n06_sender_selection_consumes_encoded_all_member_agreement_and_preserves_n01_on_refusal ... ok
+test net_carrier::fec_tests::selection::n06_sender_selection_revalidates_revocation_and_stream_binding_before_mutation ... ok
+test carrier::fec_tests::n06_feedback_send_checks_receiver_identity_and_transport_fault ... ok
+test carrier::fec_tests::n06_paced_sender_lost_source_feedback_and_actual_pcm ... ok
+test carrier::fec_tests::n06_pacer_attempt_limit_retry_and_backward_clock_fence ... ok
+test carrier::fec_tests::n06_paced_parity_after_first_cutoff_recovers_later_live_pcm ... ok
+test carrier::fec_tests::n06_retired_feedback_cannot_displace_live_window_recovery ... ok
+test carrier::fec_tests::n06_rebind_clears_fec_authority_and_old_queued_symbols ... ok
+test fec::tests::n06_authenticated_feedback_corruption_deadline_and_storm_cannot_amplify ... ok
+test carrier::fec_tests::n06_paced_sender_admission_clock_deadline_and_cancel_are_bounded ... ok
+test fec::tests::n06_authenticated_future_bounds_and_zero_budget_cancel_are_paired_with_positive_paths ... ok
+test fec::tests::n06_authenticated_recovery_reaches_the_real_n04_consumer_once ... ok
+test fec::tests::n06_conservative_work_refusal_and_render_protection_keep_following_real ... ok
+test fec::tests::n06_cancel_releases_reservation_and_next_window_and_restart_really_recover ... ok
+test fec::tests::n06_corrupt_authenticated_equations_and_source_digest_never_publish_recovery ... ok
+test fec::tests::n06_duplicate_and_packet_storm_caps_leave_fixed_state_and_later_recovery ... ok
+test fec::tests::n06_earliest_window_failed_transition_and_idle_cancel_preserve_recovery ... ok
+test fec::tests::n06_inflight_expiry_cannot_publish_over_committed_concealment ... ok
+test fec::tests::n06_no_information_hybrid_tail_really_recovers_and_is_one_attempt ... ok
+test fec::tests::n06_pre_roll_rebind_retains_sources_and_complete_credit_identity_changes_with_origin ... ok
+test fec::tests::n06_distinct_forgery_work_exhaustion_and_targeted_pair_denial_have_live_recovery ... ok
+test fec::tests::n06_rebind_preserves_pair_quota_until_next_interval ... ok
+test fec::tests::n06_rebase_accounts_for_publication_in_the_fresh_clock_interval ... ok
+test fec::tests::n06_render_end_preserves_late_before_dac_and_still_live_positive_recovery ... ok
+test fec::tests::n06_epoch_transition_preserves_work_cap_and_next_interval_recovers ... ok
+test fec::tests::n06_shape_identity_epoch_and_symbol_fuzz_are_bounded_before_state_commit ... ok
+test fec::tests::n06_epoch_new_leader_clock_rebases_work_without_refund_or_stranding ... ok
+test fec::tests::n06_rebase_cannot_refund_work_spent_in_the_same_aligned_interval ... ok
+test fec::tests::n06_two_receivers_different_losses_share_bounded_broadcast_tail ... ok
+test fec::tests::n06_protected_retry_overdue_render_and_typed_credit_have_real_boundaries ... ok
+test fec::tests::n06_six_member_feedback_is_fair_at_the_fleet_cap_and_one_broadcast_is_final ... ok
+test fec::tests::n06_stored_source_retries_after_horizon_and_old_alias_cannot_evict_newer ... ok
+test fec::tests::n06_stop_and_control_epoch_transition_release_and_rebind_real_recovery ... ok
+test fec::tests::n06_replay_baseline_hybrid_and_decode_overload_use_independent_pcm_observations ... ok
+
+[Selected actual standalone libtest rows]
+The reference command's separate zero-doctest summary adds nothing to the 3/3 denominator.
+test tests::n06_real_ingress_scalar_decode_and_cancel_allocate_no_packet_heap ... ok
+test tests::n06_generator_and_every_gf_product_match_actual_pinned_asup ... ok
+test tests::n06_all163_subsets_match_actual_asup_and_independent_raptorq ... ok
+
+[Selected actual structured observations]
+N06-ENDPOINT-FEEDBACK {"feedback":{"expired":0,"generated":1,"retired":0,"retries":0,"send_errors":0,"sent":1},"prepared_real":true,"profile":"n06.host-hybrid.k4-r4.v1","proof":"scripted-host-port-real-wire","schema":"n06.endpoint-feedback.v1","tail_sources":2}
+N06-PACED-ENDPOINT {"feedback":{"expired":0,"generated":1,"retired":0,"retries":0,"send_errors":0,"sent":1},"initial_sent":8,"injected_losses":5,"prepared_real":true,"profile":"n06.host-hybrid.k4-r4.v1","proof":"scripted-host-link-real-carrier-endpoint-wire","schema":"n06.paced-endpoint.v1","tail_sent":1}
+N06-ALLOCATION {"fixed_receiver_bytes":75328,"packet_allocation_calls":0,"packet_requested_bytes":0,"profile":"n06.host-hybrid.k4-r4.v1","recovered":2,"schema":"n06.allocation.v1","sensor_bytes":1024,"sensor_calls":1}
+N06-GENERATOR {"asup":"14032b8f2c832ee7ef1946404f5efb18162af045","basis_encodes":4,"generator":[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[1,231,134,93],[205,116,135,33],[170,185,126,59],[59,211,122,228]],"gf_products":65536,"profile":"n06.host-hybrid.k4-r4.v1","schema":"n06.generator.v1"}
+N06-SUBSETS {"asup":"14032b8f2c832ee7ef1946404f5efb18162af045","expected":163,"includes_publication_reserve":8192,"limit_work":120000,"maximum_work":103420,"observed":163,"profile":"n06.host-hybrid.k4-r4.v1","recovered":163,"schema":"n06.subsets.v1"}
+
+[Actual evidence-adapter output]
+scripts/e2e/n06 --tier full --judge <workspace-log> --judge <reference-log>
+Observed adapter exit: 3
+N06-AUTH: passed
+N06-CORRUPTION: passed
+N06-OVERLOAD: passed
+N06-STORM: passed
+N06-CANCEL: passed
+N06-DEADLINE: passed
+N06-RESTART: passed
+N06-TAIL: passed
+N06-REFERENCE: passed
+N06-CONSUMER: passed
+N06-REPLAY: passed
+N06-CARRIER: blocked (typed ingress exists; authenticated peer selection and end-to-end carrier qualification remain pending)
+N06-PACED-SENDER: blocked (paced FEC sender candidate exists; combined native and original acceptance qualification remain pending)
+{"blocked": 2, "diagnostics_dropped": 0, "evidence_class": "offline-host-synthetic", "expected": 13, "failed": 0, "log_sha256": "543fe82f37ca68be92508a5550b2bfa4c44d9e0d358f2feb2d16210382644969", "not_run": 0, "passed": 11, "production_fec_profile_admitted": false, "profile": "n06.host-hybrid.k4-r4.v1", "qualified": false, "schema": "n06.receipt.v1", "tier": "full"}
+
+scripts/e2e/n06 --tier smoke --judge <workspace-log> --judge <reference-log>
+Observed adapter exit: 0
+N06-AUTH: passed
+N06-CONSUMER: passed
+N06-DEADLINE: passed
+{"blocked": 0, "diagnostics_dropped": 0, "evidence_class": "offline-host-synthetic", "expected": 3, "failed": 0, "log_sha256": "543fe82f37ca68be92508a5550b2bfa4c44d9e0d358f2feb2d16210382644969", "not_run": 0, "passed": 3, "production_fec_profile_admitted": false, "profile": "n06.host-hybrid.k4-r4.v1", "qualified": false, "schema": "n06.receipt.v1", "tier": "smoke"}
+
+Additional local checks observed separately: Python N06 controls 7/7; py_compile of the two touched Python files passed.
+No full-bead closure follows from these results. Durable proposal IDs, FFCN token buckets, 16/21-member control capacity, receiver preflight and coordinated cutover remain open.
+
+[Historical guard counterexample, actual prior output]
+Native build 30103800983323064 used the earlier production guard and failed before its correction.
+This baseline is distinct from the final pass and predates the authenticated-PCM positive-fixture repair.
+Full private baseline capture SHA-256: 2cfb98e5ab9db36d2376414ff5b004fcc5e9f3fff71a4c23997dfaf32ce11588
+test net_carrier::fec_tests::feedback::n06_endpoint_feedback_retry_waits_out_the_protected_render_interval ... FAILED
+  left: Ok(Sent { window: 16 })
+ right: Ok(Deferred)
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 449 filtered out; finished in 0.00s
+
+[Source SHA-256 entries, independently matched in all four worker receipts]
+2eb7280b4abc4551b43f8dd07555c3550ed53bc3d9d07b1901c17cb32c65b490  crates/franken-speaker/src/net_carrier.rs
+1f9e804432f1d19b7d0c14935cd4e4b1345f0ed6f6c31ee7c7135b91487be11c  crates/franken-speaker/src/net_carrier/fec_tests.rs
+b5e06f23b74e9370f2800edbea531fee262369ebc8e0559c054251e4e978fa7f  crates/franken-speaker/src/net_carrier/fec_tests/feedback.rs
+bcae06835fa0798cb8409123d917f07ad0dedc168ba5c5b529b971aec0ae3024  crates/franken-speaker/src/net_carrier/fec_tests/selection.rs
+5a5754492d758f0ef2cfc503a85b4b3f911f3a73cfe66fac3ebe7b294167e87e  crates/franken-speaker/src/media_playout.rs
+0cc6d643d42997da16c191655abb74e13aa163a9bbaa4e7190a5a9020b7ae386  crates/franken-stream/src/carrier.rs
+ba7633d83ae2167133ff355b3665bfd4d35cd33b456edafdfbc7b52484c36856  crates/franken-stream/src/carrier/fec_tests.rs
+85f89a79ef67b348451d62606feebd0016fe7fdf67b16f03c1a19d620ca1226a  crates/franken-stream/src/fec.rs
+6e16735d8b2d19688cdbd8ee6d458cfd30a1c11783abd0eacba3c465877e7308  crates/franken-control/src/channel/fec_negotiation.rs
+6e3568f23720d1b647d03c29104142aa7ec0a39c974259c8f1d2636576d6ecd3  crates/franken-control/src/channel/endpoint.rs
+f14766fbd24f5c6e17b71f249bf567d85c55a0693762c0b73a5fbd7ed35d9003  crates/franken-control/src/channel/mod.rs
+226e755fb509d25d66c2ef445b5d2c3baa7144acbb5e5b84b90c9fa2dcbab7db  tests/n06/run_cases.py
+2b2a34565686410a2d32008bbd7e440d4dca279ccafcf3294c484d6ada9ea8bb  tests/n06/test_judge.py
+3adb741b86d933039ceba0468671b38ebeb03dbc1dfb0839838f431e98165ded  docs/contracts/n06.md
+600bef19e3f4bc5eb3b53b297fd57f4b60df46c7f21af16bc610574fd61f5c2a  toolchain/n06-fec-profile/Cargo.lock
+d79b4cc6e68261a2c159e814fa101f7e8b74ef125ed682790921e48ced49791e  toolchain/n06-fec-profile/Cargo.toml
+f212be3e86a0a6bf573d096c7f066dc28b8de9b5615493467c47f0cf534ce286  toolchain/n06-fec-profile/src/lib.rs
+fc895a8d22adad5eee12f6dea149ef7246a1aaf0c19aac81b31375c4c1ca25bf  tests/n06/reference.py
+6aaae8aac3d87262cd7057749b84bb4df921dcee810dd5d03cfdddc1c4ebe107  Cargo.toml
+39e70649d690a342c74157bada974cfabaf76bfbbcb4dc05a33fa0af6181c58c  Cargo.lock

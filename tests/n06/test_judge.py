@@ -19,7 +19,7 @@ class Controls(unittest.TestCase):
 
     def test_owned_source_registry_and_pending_integration_are_explicit(self):
         run_cases.source_registry()
-        self.assertEqual(len({name for rows in run_cases.CASES.values() for _, name in rows}), 33)
+        self.assertEqual(len({name for rows in run_cases.CASES.values() for _, name in rows}), 65)
         self.assertEqual(set(run_cases.PENDING), {"N06-CARRIER", "N06-PACED-SENDER"})
 
     def test_missing_native_never_shrinks_denominator_or_qualifies(self):

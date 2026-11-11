@@ -17,6 +17,8 @@ pub const WINDOWS: usize = 8;
 pub const AUTH_WORK: u64 = 8192;
 pub const WINDOW_ALLOWANCE_NS: u64 = 20_000_000;
 pub const WORK_UNIT_NS: u64 = 50; // Declared synthetic timebase, NOT measured CPU/WCET.
+/// Time reserved for feedback transit before tail retransmissions arrive.
+pub const TAIL_TRANSIT_RESERVE_NS: u64 = 52_000_000;
 pub const AUTH_PAIR_ATTEMPTS: u8 = 2;
 pub const MAX_GROUP_MEMBERS: usize = 21;
 pub const QUANTUM: u64 = 512;
@@ -169,6 +171,10 @@ pub struct SenderWindow {
     charged: u64,
 }
 impl SenderWindow {
+    pub(crate) fn has_unserved(&self, requested: u8) -> bool {
+        !self.served && requested & !self.sent_mask & 15 != 0
+    }
+
     pub fn new(
         config: SessionConfig,
         window: u64,
@@ -251,7 +257,7 @@ impl SenderWindow {
         }
         let latest = view
             .group_ns
-            .saturating_add(52_000_000 + cost * WORK_UNIT_NS);
+            .saturating_add(TAIL_TRANSIT_RESERVE_NS + cost * WORK_UNIT_NS);
         let mut allowed = 0_u8;
         for i in 0..K {
             let p = self.config.presentation_origin_ns
@@ -361,6 +367,24 @@ fn tag(key: &StreamKey, body: &[u8]) -> [u8; 16] {
     out.copy_from_slice(&full[..16]);
     out
 }
+
+/// Authenticate a fixed feedback message before a carrier retains it while
+/// waiting for its group clock. The sender window still performs its own
+/// quota, timeline, cutoff and duplicate checks before generating replies.
+pub(crate) fn verify_feedback(config: &SessionConfig, wire: &[u8]) -> bool {
+    if wire.len() != FEEDBACK_BYTES || &wire[..4] != b"FFWA" {
+        return false;
+    }
+    let Ok(metadata) = config.metadata(read64(wire, 28)) else {
+        return false;
+    };
+    wire[4..64] == metadata[4..]
+        && wire[64] != 0
+        && wire[64] & !15 == 0
+        && wire[65] == 1
+        && wire[66..72] == [0; 6]
+        && tags_equal(&wire[80..], &tag(&config.key, &wire[..80]))
+}
 pub fn content_digest(metadata: &[u8; 64], source: &[[u8; BYTES]; K]) -> [u8; 32] {
     let mut digest = Sha256::new();
     digest.update(DIGEST_DOMAIN);
@@ -450,6 +474,10 @@ pub struct Receiver {
     rebase_start: Option<u64>,
     auth_attempt_ids: [Option<u64>; WINDOWS],
     auth_attempts: [[u8; N]; WINDOWS],
+    // One held old alias and one current/future alias may share a slot.
+    // Neither untrusted hint can erase the other's per-pair quota.
+    auth_alias_ids: [Option<u64>; WINDOWS],
+    auth_alias_attempts: [[u8; N]; WINDOWS],
     charged: u64,
     reserved: u64,
     stopped: bool,
@@ -478,6 +506,8 @@ impl Receiver {
             rebase_start: None,
             auth_attempt_ids: [None; WINDOWS],
             auth_attempts: [[0; N]; WINDOWS],
+            auth_alias_ids: [None; WINDOWS],
+            auth_alias_attempts: [[0; N]; WINDOWS],
             charged: 0,
             reserved: 0,
             stopped: false,
@@ -537,6 +567,8 @@ impl Receiver {
             if current > self.interval {
                 self.auth_attempt_ids = [None; WINDOWS];
                 self.auth_attempts = [[0; N]; WINDOWS];
+                self.auth_alias_ids = [None; WINDOWS];
+                self.auth_alias_attempts = [[0; N]; WINDOWS];
                 self.charged = 0;
             }
             self.interval = current;
@@ -546,6 +578,8 @@ impl Receiver {
             self.interval = current;
             self.auth_attempt_ids = [None; WINDOWS];
             self.auth_attempts = [[0; N]; WINDOWS];
+            self.auth_alias_ids = [None; WINDOWS];
+            self.auth_alias_attempts = [[0; N]; WINDOWS];
             self.charged = 0;
         }
     }
@@ -618,6 +652,8 @@ impl Receiver {
         if changed {
             self.auth_attempt_ids = [None; WINDOWS];
             self.auth_attempts = [[0; N]; WINDOWS];
+            self.auth_alias_ids = [None; WINDOWS];
+            self.auth_alias_attempts = [[0; N]; WINDOWS];
         }
         Ok(())
     }
@@ -796,11 +832,23 @@ impl Receiver {
         if hinted_window > u64::from(u32::MAX) || hinted_esi >= N {
             return Err(Refusal::Shape);
         }
-        if hinted_window > current + 1 || hinted_window + WINDOWS as u64 - 1 <= current {
+        let hint_index = hinted_window as usize % WINDOWS;
+        // A held window can outlive the source-clock replay horizon because
+        // playout is delayed by 500 ms. Only its existing slot may use that
+        // exception, and only while an undecided block remains before cutoff.
+        // An old alias may never create or evict a newer window.
+        let held_live = self.windows[hint_index].id == Some(hinted_window)
+            && (0..K).any(|i| {
+                let block = hinted_window * K as u64 + i as u64;
+                block >= engine.snapshot().cursor
+                    && view.group_ns < self.cutoff(block, view.uncertainty_ns)
+            });
+        if hinted_window > current + 1
+            || (hinted_window + WINDOWS as u64 - 1 <= current && !held_live)
+        {
             self.counters.future += 1;
             return Err(Refusal::Future);
         }
-        let hint_index = hinted_window as usize % WINDOWS;
         if self.windows[hint_index].id == Some(hinted_window)
             && self.windows[hint_index].mask & (1 << hinted_esi) != 0
             && (hinted_esi >= K || self.windows[hint_index].published & (1 << hinted_esi) != 0)
@@ -814,16 +862,35 @@ impl Receiver {
         {
             return Err(Refusal::Future);
         }
-        if self.auth_attempt_ids[hint_index] != Some(hinted_window) {
+        let alternate = if self.auth_attempt_ids[hint_index] == Some(hinted_window) {
+            false
+        } else if self.auth_alias_ids[hint_index] == Some(hinted_window) {
+            true
+        } else if self.auth_attempt_ids[hint_index].is_none() {
             self.auth_attempt_ids[hint_index] = Some(hinted_window);
-            self.auth_attempts[hint_index] = [0; N];
-        }
-        if self.auth_attempts[hint_index][hinted_esi] >= AUTH_PAIR_ATTEMPTS {
+            false
+        } else if self.auth_alias_ids[hint_index].is_none() {
+            self.auth_alias_ids[hint_index] = Some(hinted_window);
+            true
+        } else {
+            self.counters.storm += 1;
+            return Err(Refusal::Storm);
+        };
+        let attempts = if alternate {
+            self.auth_alias_attempts[hint_index][hinted_esi]
+        } else {
+            self.auth_attempts[hint_index][hinted_esi]
+        };
+        if attempts >= AUTH_PAIR_ATTEMPTS {
             self.counters.storm += 1;
             return Err(Refusal::Storm);
         }
         self.charge(AUTH_WORK)?;
-        self.auth_attempts[hint_index][hinted_esi] += 1;
+        if alternate {
+            self.auth_alias_attempts[hint_index][hinted_esi] += 1;
+        } else {
+            self.auth_attempts[hint_index][hinted_esi] += 1;
+        }
         self.counters.auth_work += AUTH_WORK;
         if !tags_equal(
             &wire[HEADER + BYTES..],
@@ -852,7 +919,7 @@ impl Receiver {
             return Err(Refusal::Shape);
         }
         let current = self.source_window(view.group_ns);
-        if window > current + 1 || window + WINDOWS as u64 - 1 <= current {
+        if window > current + 1 || (window + WINDOWS as u64 - 1 <= current && !held_live) {
             self.counters.future += 1;
             return Err(Refusal::Future);
         }
@@ -1275,6 +1342,8 @@ impl Receiver {
         // work interval. Only update_interval may refill the shared ledger.
         self.auth_attempt_ids = [None; WINDOWS];
         self.auth_attempts = [[0; N]; WINDOWS];
+        self.auth_alias_ids = [None; WINDOWS];
+        self.auth_alias_attempts = [[0; N]; WINDOWS];
         self.reserved = 0;
         self.stopped = false;
         self.next_collection = 0;

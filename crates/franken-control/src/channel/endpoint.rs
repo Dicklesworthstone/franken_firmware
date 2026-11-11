@@ -55,6 +55,13 @@ pub enum Handled {
     Malformed(WireError),
 }
 
+/// Result of dispatching either ordinary N02 traffic or an N06 capability message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FecHandled {
+    Control(Handled),
+    Fec(Result<super::fec_negotiation::Ingress, super::fec_negotiation::FecError>),
+}
+
 /// How many datagrams of each kind the endpoint has seen. Saturating.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EndpointStats {
@@ -91,6 +98,23 @@ impl Endpoint {
     #[must_use]
     pub const fn stats(&self) -> EndpointStats {
         self.stats
+    }
+
+    /// Dispatch an N06 proposal or acknowledgment through the same peer authority as N02.
+    /// Ordinary N02 traffic retains the original endpoint behavior.
+    pub fn handle_with_fec<A: PeerAuthority + ReplySigner>(
+        &mut self,
+        channel: &mut ControlChannel<A>,
+        fec: &mut super::fec_negotiation::FecCoordinator,
+        now_ns: u64,
+        session: &UnifiedGroupSession,
+        datagram: &[u8],
+    ) -> FecHandled {
+        if datagram.starts_with(&super::fec_negotiation::MAGIC) {
+            FecHandled::Fec(fec.ingest(datagram, channel.authority(), session))
+        } else {
+            FecHandled::Control(self.handle(channel, now_ns, session, datagram))
+        }
     }
 
     /// Handle one received datagram. `now_ns` is when it was received, on the timebase of `submit` and `step`; `session`

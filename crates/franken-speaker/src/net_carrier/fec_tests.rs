@@ -34,6 +34,8 @@ fn stream() -> StreamId {
 struct ClockKernel {
     time: Rc<Cell<u64>>,
     reads: Rc<Cell<u64>>,
+    fail_once: Rc<Cell<bool>>,
+    after_read: Rc<Cell<Option<u64>>>,
 }
 
 impl KernelOps for ClockKernel {
@@ -45,7 +47,13 @@ impl KernelOps for ClockKernel {
     }
     fn clock_gettime_monotonic(&mut self, out: &mut Timespec) -> isize {
         self.reads.set(self.reads.get() + 1);
+        if self.fail_once.take() {
+            return -5; // One real ABI-style EIO; the next read would succeed.
+        }
         let now = self.time.get();
+        if let Some(after) = self.after_read.take() {
+            self.time.set(after);
+        }
         out.secs = i64::try_from(now / 1_000_000_000).unwrap_or(i64::MAX);
         out.nanos = i64::try_from(now % 1_000_000_000).unwrap_or(0);
         0
@@ -83,11 +91,19 @@ struct ScriptPort {
     time: Rc<Cell<u64>>,
     after_read: Rc<Cell<Option<u64>>>,
     sent: Sent,
+    fail_control_send: Cell<bool>,
+    last_control_to: Cell<Option<SocketAddr>>,
     address: SocketAddr,
 }
 
 impl DatagramPort for ScriptPort {
-    fn send_to(&mut self, lane: Lane, bytes: &[u8], _to: SocketAddr) -> Result<(), PortFault> {
+    fn send_to(&mut self, lane: Lane, bytes: &[u8], to: SocketAddr) -> Result<(), PortFault> {
+        if lane == Lane::Control {
+            self.last_control_to.set(Some(to));
+        }
+        if lane == Lane::Control && self.fail_control_send.get() {
+            return Err(PortFault::WouldBlock);
+        }
         self.sent.borrow_mut().push((lane, bytes.to_vec()));
         Ok(())
     }
@@ -133,10 +149,15 @@ fn script_port(time: &Rc<Cell<u64>>) -> (ScriptPort, Queue, Hook, Sent) {
         time: Rc::clone(time),
         after_read: Rc::clone(&after_read),
         sent: Rc::clone(&sent),
+        fail_control_send: Cell::new(false),
+        last_control_to: Cell::new(None),
         address: address(),
     };
     (port, queue, after_read, sent)
 }
+
+mod feedback;
+mod selection;
 
 /// The four source blocks of coding window `window`: never silent, different per window and per block.
 fn source(window: u64) -> [[u8; fec::BYTES]; fec::K] {
@@ -150,6 +171,8 @@ fn source(window: u64) -> [[u8; fec::BYTES]; fec::K] {
 struct Rig {
     time: Rc<Cell<u64>>,
     reads: Rc<Cell<u64>>,
+    clock_fail_once: Rc<Cell<bool>>,
+    clock_after_read: Rc<Cell<Option<u64>>>,
     queue: Rc<RefCell<VecDeque<Vec<u8>>>>,
     after_read: Rc<Cell<Option<u64>>>,
     sent: Sent,
@@ -189,11 +212,15 @@ impl Rig {
             0,
         )
         .expect("media path");
+        let clock_fail_once = Rc::new(Cell::new(false));
+        let clock_after_read = Rc::new(Cell::new(None));
         let platform = crate::platform_start::admit_test_layer(
             &guest_evidence::for_abi(ABI).matrix(),
             ClockKernel {
                 time: Rc::clone(&time),
                 reads: Rc::clone(&reads),
+                fail_once: Rc::clone(&clock_fail_once),
+                after_read: Rc::clone(&clock_after_read),
             },
         )
         .expect("admitted platform layer");
@@ -202,6 +229,8 @@ impl Rig {
         let mut rig = Self {
             time,
             reads,
+            clock_fail_once,
+            clock_after_read,
             queue,
             after_read,
             sent,
