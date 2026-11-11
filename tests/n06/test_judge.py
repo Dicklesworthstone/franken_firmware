@@ -39,6 +39,15 @@ def typed_clock_names():
     return {name for _, _, name in typed_clock_rows()}
 
 
+def target_sender_rows():
+    return {(case, "franken_stream", run_cases.SENDER_CARRIER + name)
+            for case, name in run_cases.TARGET_SENDER_TESTS}
+
+
+def target_sender_names():
+    return {name for _, _, name in target_sender_rows()}
+
+
 class Controls(unittest.TestCase):
     def test_independent_pcm_and_signed_q15_hand_anchors(self):
         self.assertEqual(reference.pcm(0)[:4], bytes([181, 192, 203, 214]))
@@ -50,7 +59,7 @@ class Controls(unittest.TestCase):
     def test_owned_source_registry_and_pending_integration_are_explicit(self):
         run_cases.source_registry()
         all_names = {name for rows in run_cases.CASES.values() for _, name in rows}
-        self.assertEqual(len(all_names), 106 + 3 + 1)
+        self.assertEqual(len(all_names), 110 + 5)
         self.assertEqual(set(run_cases.PENDING), {"N06-CARRIER", "N06-PACED-SENDER"})
 
     def test_new_native_requirements_preserve_all_82_original_case_mappings(self):
@@ -67,7 +76,7 @@ class Controls(unittest.TestCase):
         rows = [(case, stem, name) for case, tests in run_cases.CASES.items() for stem, name in tests]
         self.assertEqual(len(rows), len(set(rows)))
         self.assertTrue(added.issubset(rows))
-        original = sorted(set(rows) - added - ready_rows() - typed_clock_rows())
+        original = sorted(set(rows) - added - ready_rows() - typed_clock_rows() - target_sender_rows())
         self.assertEqual(len(original), 82)
         digest = hashlib.sha256(json.dumps(original, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
         self.assertEqual(digest, '83199f12253a471e90d7b847038fc3374d4c50d882952b2e31f6cea97b3eb23f')
@@ -89,7 +98,7 @@ class Controls(unittest.TestCase):
         new = ({"channel::fec_negotiation::tests::" + name for name in run_cases.VERIFIED_PROPOSAL_TESTS}
                | {"channel::owner::tests::" + name for name in run_cases.OWNER_PROPOSAL_TESTS}
                | {run_cases.SPEAKER + name for name in run_cases.FUTURE_TESTS})
-        self.assertEqual(len(all_names - {name for _, name in required} - preflight - new - ready_names() - typed_clock_names()), 65)
+        self.assertEqual(len(all_names - {name for _, name in required} - preflight - new - ready_names() - typed_clock_names() - target_sender_names()), 65)
 
     def test_preflight_names_extend_without_displacing_existing_native_requirements(self):
         preflight = {("franken_speaker", run_cases.SPEAKER + name)
@@ -100,7 +109,7 @@ class Controls(unittest.TestCase):
         new = ({"channel::fec_negotiation::tests::" + name for name in run_cases.VERIFIED_PROPOSAL_TESTS}
                | {"channel::owner::tests::" + name for name in run_cases.OWNER_PROPOSAL_TESTS}
                | {run_cases.SPEAKER + name for name in run_cases.FUTURE_TESTS})
-        self.assertEqual(len(all_names - {name for _, name in preflight} - new - ready_names() - typed_clock_names()), 74)
+        self.assertEqual(len(all_names - {name for _, name in preflight} - new - ready_names() - typed_clock_names() - target_sender_names()), 74)
 
     def test_ready_preserves_89_existing_mappings_and_all_actual_names(self):
         rows = [(case, stem, name) for case, tests in run_cases.CASES.items() for stem, name in tests]
@@ -108,7 +117,7 @@ class Controls(unittest.TestCase):
         added = ready_rows()
         self.assertEqual(len(added), 7 + 1 + 1 + 1 + 4 + 3)
         self.assertTrue(added.issubset(rows))
-        original = sorted(set(rows) - added - typed_clock_rows())
+        original = sorted(set(rows) - added - typed_clock_rows() - target_sender_rows())
         self.assertEqual(len(original), 89)
         digest = hashlib.sha256(json.dumps(original, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
         self.assertEqual(digest, 'af41d9663f4b8cc176dd39cd98638a34ffef0de5460433568dd8c413e8d3d183')
@@ -121,7 +130,7 @@ class Controls(unittest.TestCase):
         rows = [(case, stem, name) for case, tests in run_cases.CASES.items() for stem, name in tests]
         self.assertEqual(len(rows), len(set(rows)))
         self.assertTrue(added.issubset(rows))
-        original = sorted(set(rows) - added - typed_clock_rows())
+        original = sorted(set(rows) - added - typed_clock_rows() - target_sender_rows())
         self.assertEqual(len(original), 104)
         digest = hashlib.sha256(json.dumps(original, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
         self.assertEqual(digest, 'b203ffe13b41d2ecce0dfb2c547fc8e80794933e61b88b40ea7ade9d77cb03c3')
@@ -132,10 +141,27 @@ class Controls(unittest.TestCase):
         self.assertEqual((len(run_cases.TYPED_CLOCK_OWNER_TESTS), len(run_cases.TYPED_CLOCK_FEC_TESTS)), (3, 1))
         self.assertEqual(len(rows), len(set(rows)))
         self.assertTrue(added.issubset(rows))
-        original = sorted(set(rows) - added)
+        original = sorted(set(rows) - added - target_sender_rows())
         self.assertEqual(len(original), 106)
         digest = hashlib.sha256(json.dumps(original, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
         self.assertEqual(digest, '973ce45d42167b2088ba6bd216bd624769d4b32d4542c21ad964e105a4244597')
+
+    def test_target_sender_extends_all_110_prior_case_mappings(self):
+        expected = {
+            ("N06-TAIL", "franken_stream", run_cases.SENDER_CARRIER + "n06_target_sender_delivers_two_distinct_streams_and_repairs_actual_pcm"),
+            ("N06-CONSUMER", "franken_stream", run_cases.SENDER_CARRIER + "n06_target_selection_rejects_invalid_bindings_and_keeps_n01_live"),
+            ("N06-RESTART", "franken_stream", run_cases.SENDER_CARRIER + "n06_target_sender_bounds_work_and_fences_restart_and_cancellation"),
+            ("N06-TAIL", "franken_stream", run_cases.SENDER_CARRIER + "n06_missing_feedback_window_counts_refusal_then_repairs_in_both_modes"),
+            ("N06-CONSUMER", "franken_stream", run_cases.SENDER_CARRIER + "n06_target_exact_capacity_accepts_two_and_one_byte_less_preserves_n01"),
+        }
+        rows = [(case, stem, name) for case, tests in run_cases.CASES.items() for stem, name in tests]
+        self.assertEqual(len(rows), len(set(rows)))
+        self.assertEqual(target_sender_rows(), expected)
+        self.assertTrue(expected.issubset(rows))
+        original = sorted(set(rows) - expected)
+        self.assertEqual(len(original), 110)
+        digest = hashlib.sha256(json.dumps(original, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
+        self.assertEqual(digest, '597f973bee6eb987bd849fe92159b808e0c1234f72bd6844fc9742a3fb457381')
 
     def test_ready_heap_markers_accept_only_bounded_real_sensor_shape(self):
         heap = {"schema": "n06.ready-proof-heap.v1", "iterations": 512, "verified": 512,
@@ -246,6 +272,40 @@ class Controls(unittest.TestCase):
                 self.assertEqual(summary["expected"], 13)
                 self.assertEqual(summary["failed"], int(status == "FAILED"))
                 self.assertEqual(summary["blocked"], 2 if status == "FAILED" else 3)
+                self.assertEqual(result, 1 if status == "FAILED" else 3)
+                self.assertFalse(summary["qualified"])
+
+    def test_each_target_sender_status_controls_its_existing_case(self):
+        # Synthetic test outcomes exercise the gate, not native execution.
+        class AllPassed:
+            def test_status(self, stem, name):
+                return "ok"
+
+        output = io.StringIO()
+        with patch.object(run_cases.shared, "parsed_tests", return_value=AllPassed()), \
+             patch.object(run_cases, "evidence"), contextlib.redirect_stdout(output):
+            result = run_cases.main([])
+        summary = json.loads(output.getvalue().splitlines()[-1])
+        self.assertEqual(result, 3)
+        self.assertEqual((summary["expected"], summary["passed"], summary["failed"], summary["blocked"]), (13, 11, 0, 2))
+        self.assertFalse(summary["qualified"])
+
+        for case, target_stem, target_name in target_sender_rows():
+            for status in (None, "ignored", "AMBIGUOUS", "FAILED"):
+                class SyntheticTests:
+                    def test_status(self, stem, name):
+                        return status if (stem, name) == (target_stem, target_name) else "ok"
+
+                output = io.StringIO()
+                with self.subTest(case=case, name=target_name, status=status), \
+                     patch.object(run_cases.shared, "parsed_tests", return_value=SyntheticTests()), \
+                     patch.object(run_cases, "evidence"), contextlib.redirect_stdout(output):
+                    result = run_cases.main([])
+                lines = output.getvalue().splitlines()
+                summary = json.loads(lines[-1])
+                self.assertTrue(any(line.startswith(f"{case}: {'failed' if status == 'FAILED' else 'blocked'}") for line in lines))
+                self.assertEqual((summary["expected"], summary["failed"], summary["blocked"]),
+                                 (13, int(status == "FAILED"), 2 if status == "FAILED" else 3))
                 self.assertEqual(result, 1 if status == "FAILED" else 3)
                 self.assertFalse(summary["qualified"])
 

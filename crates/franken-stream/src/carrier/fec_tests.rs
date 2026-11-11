@@ -245,7 +245,8 @@ fn n06_paced_sender_admission_clock_deadline_and_cancel_are_bounded() {
         ring.group_view(PRIMARY_GROUP).unwrap().fec_retained_windows,
         fec::WINDOWS
     );
-    assert!(!ring.feedback_relevant(PRIMARY_GROUP, &{
+    let peer_index = ring.index_of(7).expect("current carrier peer 7");
+    assert!(!ring.feedback_relevant(peer_index, &{
         let mut old = [0; fec::FEEDBACK_BYTES];
         old[64] = 1;
         old
@@ -962,4 +963,573 @@ fn assert_held_live_alias_quotas() {
             assert_eq!(&out, expected);
         }
     }
+}
+
+fn two_target_bindings() -> [TargetFecBinding; 2] {
+    let a = config(2);
+    let mut b = config(2);
+    b.stream = StreamId::new(stream().get() + 1).unwrap();
+    b.key = StreamKey::from_bytes([0x77; 32]);
+    [
+        TargetFecBinding {
+            peer_id: 7,
+            config: a,
+        },
+        TargetFecBinding {
+            peer_id: 8,
+            config: b,
+        },
+    ]
+}
+
+fn two_target_sender() -> CarrierSender<Port> {
+    let mut sender = sender(generous());
+    sender.add_peer(8, addr(42100), addr(42101), 1500).unwrap();
+    sender
+}
+
+fn target_engine() -> playout::PlayoutEngine {
+    let mut engine = playout::PlayoutEngine::new(
+        playout::PlayoutProfile::MUSIC,
+        playout::PlayoutConfig {
+            work_ns: 1_000_000,
+            lead_ns: 1_000_000,
+            tolerance_ns: 0,
+        },
+    )
+    .unwrap();
+    engine.begin_stream(2, 0, 500_000_000).unwrap();
+    engine
+}
+
+#[test]
+fn n06_target_sender_delivers_two_distinct_streams_and_repairs_actual_pcm() {
+    let mut sender = two_target_sender();
+    let bindings = two_target_bindings();
+    sender
+        .select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, 2 * 1024 * 1024)
+        .unwrap();
+    assert!(matches!(
+        sender.add_group(key(), bindings[1].config.stream, 2),
+        Err(CarrierError::StreamIdInUse(_))
+    ));
+    let source = samples();
+    assert_eq!(
+        sender
+            .submit_group_fec_window(PRIMARY_GROUP, 2, 0, source, 0)
+            .unwrap()
+            .queued,
+        16
+    );
+    assert!(
+        sender.fec_retained_bytes()
+            >= 2 * fec::WINDOWS * std::mem::size_of::<(u64, fec::SenderWindow)>()
+    );
+    let cancel = AtomicBool::new(false);
+    assert_eq!(
+        sender
+            .pump_fec(1, &[(PRIMARY_GROUP, view(20_000_000))], &cancel)
+            .media_sent,
+        16
+    );
+    let initial = sender.port.sent.clone();
+    assert_eq!(
+        initial
+            .iter()
+            .filter(|(_, _, dest)| *dest == addr(42000))
+            .count(),
+        8
+    );
+    assert_eq!(
+        initial
+            .iter()
+            .filter(|(_, _, dest)| *dest == addr(42100))
+            .count(),
+        8
+    );
+    let mut receiver_a = fec::Receiver::new(bindings[0].config.clone()).unwrap();
+    let mut receiver_b = fec::Receiver::new(bindings[1].config.clone()).unwrap();
+    let mut engine_a = target_engine();
+    let mut engine_b = target_engine();
+    let a_wire = &initial
+        .iter()
+        .find(|(_, wire, dest)| *dest == addr(42000) && wire[72] == 0)
+        .unwrap()
+        .1;
+    let mut probe_a = fec::Receiver::new(bindings[0].config.clone()).unwrap();
+    let mut probe_b = fec::Receiver::new(bindings[1].config.clone()).unwrap();
+    let mut probe_engine_a = target_engine();
+    let mut probe_engine_b = target_engine();
+    assert!(matches!(
+        probe_b.ingest(&mut probe_engine_b, view(20_000_000), a_wire),
+        Err(fec::Refusal::Authentication)
+    ));
+    let mut wrong_key = bindings[0].config.clone();
+    wrong_key.key = bindings[1].config.key.clone();
+    let digest = fec::content_digest(&wrong_key.metadata(0).unwrap(), &source);
+    let bad = fec::sign_symbol(&wrong_key, 0, 0, 0, digest, &source[0]).unwrap();
+    assert!(matches!(
+        probe_a.ingest(&mut probe_engine_a, view(20_000_000), &bad),
+        Err(fec::Refusal::Authentication)
+    ));
+    let mut wrong_stream = bindings[0].config.clone();
+    wrong_stream.stream = bindings[1].config.stream;
+    let digest = fec::content_digest(&wrong_stream.metadata(0).unwrap(), &source);
+    let bad_stream = fec::sign_symbol(&wrong_stream, 0, 0, 0, digest, &source[0]).unwrap();
+    assert!(matches!(
+        probe_a.ingest(&mut probe_engine_a, view(20_000_000), &bad_stream),
+        Err(fec::Refusal::Identity)
+    ));
+    for (_, wire, dest) in &initial {
+        if wire[72] < 3 && *dest == addr(42000) {
+            receiver_a
+                .ingest(&mut engine_a, view(20_000_000), wire)
+                .unwrap();
+        } else if wire[72] < 3 && *dest == addr(42100) {
+            receiver_b
+                .ingest(&mut engine_b, view(20_000_000), wire)
+                .unwrap();
+        }
+    }
+    assert_eq!(
+        receiver_a
+            .poll(&mut engine_a, view(80_000_000), &cancel)
+            .unwrap(),
+        fec::DecodeState::Idle
+    );
+    assert_eq!(
+        receiver_b
+            .poll(&mut engine_b, view(80_000_000), &cancel)
+            .unwrap(),
+        fec::DecodeState::Idle
+    );
+    let feedback_a = receiver_a
+        .feedback(&engine_a, view(80_000_000))
+        .unwrap()
+        .unwrap();
+    let feedback_b = receiver_b
+        .feedback(&engine_b, view(80_000_000))
+        .unwrap()
+        .unwrap();
+    // A correctly signed report from the wrong peer/stream cannot be re-routed.
+    sender
+        .port
+        .control
+        .push_back((feedback_a.0.to_vec(), Some(addr(42101))));
+    sender
+        .port
+        .control
+        .push_back((feedback_b.0.to_vec(), Some(addr(42001))));
+    let mut wrong_key = feedback_a.0;
+    wrong_key[95] ^= 1;
+    sender
+        .port
+        .control
+        .push_back((wrong_key.to_vec(), Some(addr(42001))));
+    sender
+        .port
+        .control
+        .push_back((feedback_a.0.to_vec(), Some(addr(42001))));
+    sender
+        .port
+        .control
+        .push_back((feedback_b.0.to_vec(), Some(addr(42101))));
+    let initial_len = sender.port.sent.len();
+    let result = sender.pump_fec(21_333_334, &[(PRIMARY_GROUP, view(100_000_000))], &cancel);
+    assert_eq!(result.media_sent, 2);
+    let repairs = &sender.port.sent[initial_len..];
+    assert_eq!(repairs.len(), 2);
+    for (_, wire, dest) in repairs {
+        assert_eq!((wire[72], wire[73]), (3, 1));
+        if *dest == addr(42000) {
+            receiver_a
+                .ingest(&mut engine_a, view(105_000_000), wire)
+                .unwrap();
+        } else {
+            assert_eq!(*dest, addr(42100));
+            receiver_b
+                .ingest(&mut engine_b, view(105_000_000), wire)
+                .unwrap();
+        }
+    }
+    assert_eq!(
+        sender.peer_view(7).unwrap().counters.fec_feedback_accepted,
+        1
+    );
+    assert_eq!(
+        sender.peer_view(8).unwrap().counters.fec_feedback_accepted,
+        1
+    );
+    assert!(sender.stats().fec_feedback_refused >= 3);
+    let before_refused = sender.stats().fec_feedback_refused;
+    let before_peer = sender.peer_view(7).unwrap().counters.fec_feedback_refused;
+    sender
+        .port
+        .control
+        .push_back((feedback_a.0.to_vec(), Some(addr(42001))));
+    let mut stale_epoch = feedback_b.0;
+    stale_epoch[27] = 3;
+    sender
+        .port
+        .control
+        .push_back((stale_epoch.to_vec(), Some(addr(42101))));
+    assert_eq!(
+        sender
+            .pump_fec(21_333_335, &[(PRIMARY_GROUP, view(110_000_000))], &cancel)
+            .media_sent,
+        0
+    );
+    assert_eq!(sender.stats().fec_feedback_refused, before_refused + 2);
+    assert_eq!(
+        sender.peer_view(7).unwrap().counters.fec_feedback_refused,
+        before_peer + 1
+    );
+    for (receiver, engine) in [
+        (&mut receiver_a, &mut engine_a),
+        (&mut receiver_b, &mut engine_b),
+    ] {
+        for (i, expected) in source.iter().enumerate() {
+            let presentation = 500_000_000 + playout::frames_to_ns(i as u64 * 256);
+            let cutoff = playout::consume_by(presentation, 1_000_000, 1_000_000, 500_000);
+            let mut out = [0; fec::BYTES];
+            let playout::Poll::Decision(decision) = receiver.decide(engine, view(cutoff), &mut out)
+            else {
+                panic!("missing target PCM decision");
+            };
+            assert_eq!(decision.outcome, playout::Outcome::Real);
+            assert_eq!(&out, expected);
+        }
+    }
+}
+
+#[test]
+fn n06_target_selection_rejects_invalid_bindings_and_keeps_n01_live() {
+    let mut sender = two_target_sender();
+    let valid = two_target_bindings();
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    let mut wrong = valid.clone();
+    wrong[1].peer_id = wrong[0].peer_id;
+    assert!(
+        sender
+            .select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &wrong, usize::MAX)
+            .is_err()
+    );
+    wrong = valid.clone();
+    wrong[1].config.stream = wrong[0].config.stream;
+    assert!(
+        sender
+            .select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &wrong, usize::MAX)
+            .is_err()
+    );
+    wrong = valid.clone();
+    wrong[1].config.epoch = 3;
+    assert!(
+        sender
+            .select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &wrong, usize::MAX)
+            .is_err()
+    );
+    wrong = valid.clone();
+    wrong[1].config.presentation_origin_ns += 1;
+    assert!(
+        sender
+            .select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &wrong, usize::MAX)
+            .is_err()
+    );
+    assert!(
+        sender
+            .select_group_target_fec(PRIMARY_GROUP, 3, 500_000_000, &valid, usize::MAX)
+            .is_err()
+    );
+    assert!(
+        sender
+            .select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &valid, 1)
+            .is_err()
+    );
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert_eq!(sender.fec_retained_bytes(), 0);
+    let target_work = std::hint::black_box(FEC_TARGET_WORK);
+    assert!(target_work * 2 <= fec::WINDOW_ALLOWANCE_NS / fec::WORK_UNIT_NS);
+    assert!(target_work * 3 > fec::WINDOW_ALLOWANCE_NS / fec::WORK_UNIT_NS);
+    let mut excess = two_target_sender();
+    excess.add_peer(9, addr(42200), addr(42201), 1500).unwrap();
+    let mut third = valid[0].clone();
+    third.peer_id = 9;
+    third.config.stream = StreamId::new(stream().get() + 2).unwrap();
+    let three = [valid[0].clone(), valid[1].clone(), third];
+    assert!(matches!(
+        excess.select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &three, usize::MAX),
+        Err(CarrierError::InvalidLimits("per-target FEC work cap"))
+    ));
+    assert_eq!(excess.epoch(), 1);
+    let frame = OutboundFrame::media(0, 500_000_000, 497_500_000, vec![0x37; 1024]);
+    assert_eq!(sender.submit_media(1, &frame, 0).unwrap().queued, 2);
+    assert_eq!(sender.pump(1).media_sent, 2);
+    for (_, wire, _) in &sender.port.sent {
+        let mut receiver = crate::StreamReceiver::new(key(), stream(), 1);
+        assert_eq!(receiver.accept(wire).unwrap().payload, vec![0x37; 1024]);
+    }
+    sender
+        .select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &valid, 2 * 1024 * 1024)
+        .unwrap();
+    assert_eq!(
+        sender.group_view(PRIMARY_GROUP).unwrap().selected_strategy,
+        fec::PROFILE
+    );
+}
+
+#[test]
+fn n06_target_sender_bounds_work_and_fences_restart_and_cancellation() {
+    let mut sender = two_target_sender();
+    let bindings = two_target_bindings();
+    sender
+        .select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, 2 * 1024 * 1024)
+        .unwrap();
+    assert_eq!(
+        sender
+            .submit_group_fec_window(PRIMARY_GROUP, 2, 0, samples(), 0)
+            .unwrap()
+            .queued,
+        16
+    );
+    let queued = sender.group_view(PRIMARY_GROUP).unwrap();
+    assert!(
+        sender
+            .submit_group_fec_window(PRIMARY_GROUP, 2, 0, samples(), 0)
+            .is_err()
+    );
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), queued);
+    assert!(
+        sender
+            .submit_group_fec_window(PRIMARY_GROUP, 2, 1, samples(), 0)
+            .is_err()
+    );
+    assert!(sender.fec_work_charged() <= fec::WINDOW_ALLOWANCE_NS / fec::WORK_UNIT_NS);
+    let cancel = AtomicBool::new(true);
+    assert_eq!(
+        sender
+            .pump_fec(1, &[(PRIMARY_GROUP, view(20_000_000))], &cancel)
+            .media_sent,
+        0
+    );
+    assert_eq!(sender.fec_retained_bytes(), 0);
+    assert_eq!(
+        sender.group_view(PRIMARY_GROUP).unwrap().selected_strategy,
+        "transition-required"
+    );
+    assert!(
+        sender
+            .submit_group_fec_window(PRIMARY_GROUP, 2, 1, samples(), 0)
+            .is_err()
+    );
+    sender
+        .restart_group(
+            PRIMARY_GROUP,
+            StreamId::new(stream().get() + 10).unwrap(),
+            3,
+        )
+        .unwrap();
+    assert_eq!(
+        sender.group_view(PRIMARY_GROUP).unwrap().selected_strategy,
+        "n01"
+    );
+    assert!(
+        sender
+            .submit_group_fec_window(PRIMARY_GROUP, 2, 0, samples(), 0)
+            .is_err()
+    );
+    let frame = OutboundFrame::media(0, 500_000_000, 497_500_000, vec![0x37; 1024]);
+    assert_eq!(sender.submit_media(3, &frame, 0).unwrap().queued, 2);
+
+    let mut stale = two_target_sender();
+    stale
+        .select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, 2 * 1024 * 1024)
+        .unwrap();
+    stale
+        .submit_group_fec_window(PRIMARY_GROUP, 2, 0, samples(), 0)
+        .unwrap();
+    assert_eq!(
+        stale
+            .pump_fec(
+                1,
+                &[(PRIMARY_GROUP, view(100_000_000))],
+                &AtomicBool::new(false)
+            )
+            .media_sent,
+        16
+    );
+    stale
+        .submit_group_fec_window(PRIMARY_GROUP, 2, 1, samples(), 21_333_334)
+        .unwrap();
+    assert_eq!(
+        stale
+            .pump_fec(
+                21_333_335,
+                &[(PRIMARY_GROUP, view(90_000_000))],
+                &AtomicBool::new(false)
+            )
+            .media_sent,
+        0
+    );
+    assert_eq!(
+        stale.group_view(PRIMARY_GROUP).unwrap().selected_strategy,
+        "transition-required"
+    );
+    assert_eq!(
+        stale
+            .pump_fec(
+                21_333_336,
+                &[(PRIMARY_GROUP, view(110_000_000))],
+                &AtomicBool::new(false)
+            )
+            .media_sent,
+        0
+    );
+}
+
+#[test]
+fn n06_missing_feedback_window_counts_refusal_then_repairs_in_both_modes() {
+    for targeted in [false, true] {
+        let mut sender = sender(generous());
+        let bindings = two_target_bindings();
+        if targeted {
+            sender
+                .select_group_target_fec(
+                    PRIMARY_GROUP,
+                    2,
+                    500_000_000,
+                    &bindings[..1],
+                    2 * 1024 * 1024,
+                )
+                .unwrap();
+        } else {
+            sender
+                .select_group_fec(PRIMARY_GROUP, 2, 500_000_000, &[7])
+                .unwrap();
+        }
+        let source = samples();
+        assert_eq!(
+            sender
+                .submit_group_fec_window(PRIMARY_GROUP, 2, 0, source, 0)
+                .unwrap()
+                .queued,
+            8
+        );
+        let cancel = AtomicBool::new(false);
+        assert_eq!(
+            sender
+                .pump_fec(1, &[(PRIMARY_GROUP, view(20_000_000))], &cancel)
+                .media_sent,
+            8
+        );
+        let mut receiver = fec::Receiver::new(config(2)).unwrap();
+        let mut engine = target_engine();
+        for (_, wire, _) in &sender.port.sent {
+            if wire[72] < 3 {
+                receiver
+                    .ingest(&mut engine, view(20_000_000), wire)
+                    .unwrap();
+            }
+        }
+        assert_eq!(
+            receiver
+                .poll(&mut engine, view(80_000_000), &cancel)
+                .unwrap(),
+            fec::DecodeState::Idle
+        );
+        let feedback = receiver
+            .feedback(&engine, view(80_000_000))
+            .unwrap()
+            .unwrap();
+        let mut absent = feedback.0;
+        absent[28..36].copy_from_slice(&5_u64.to_be_bytes());
+        let before_group = sender.stats().fec_feedback_refused;
+        let before_peer = sender.peer_view(7).unwrap().counters.fec_feedback_refused;
+        sender
+            .port
+            .control
+            .push_back((absent.to_vec(), Some(addr(42001))));
+        sender
+            .port
+            .control
+            .push_back((feedback.0.to_vec(), Some(addr(42001))));
+        let before_sent = sender.port.sent.len();
+        assert_eq!(
+            sender
+                .pump_fec(21_333_334, &[(PRIMARY_GROUP, view(100_000_000))], &cancel)
+                .media_sent,
+            1
+        );
+        assert_eq!(sender.stats().fec_feedback_refused, before_group + 1);
+        assert_eq!(
+            sender.peer_view(7).unwrap().counters.fec_feedback_refused,
+            before_peer + 1
+        );
+        assert_eq!(
+            sender.peer_view(7).unwrap().counters.fec_feedback_accepted,
+            1
+        );
+        let repair = &sender.port.sent[before_sent].1;
+        assert_eq!((repair[72], repair[73]), (3, 1));
+        receiver
+            .ingest(&mut engine, view(105_000_000), repair)
+            .unwrap();
+        for (i, expected) in source.iter().enumerate() {
+            let presentation = 500_000_000 + playout::frames_to_ns(i as u64 * 256);
+            let cutoff = playout::consume_by(presentation, 1_000_000, 1_000_000, 500_000);
+            let mut out = [0; fec::BYTES];
+            let playout::Poll::Decision(decision) =
+                receiver.decide(&mut engine, view(cutoff), &mut out)
+            else {
+                panic!("missing repaired PCM");
+            };
+            assert_eq!(decision.outcome, playout::Outcome::Real);
+            assert_eq!(&out, expected);
+        }
+    }
+}
+
+#[test]
+fn n06_target_exact_capacity_accepts_two_and_one_byte_less_preserves_n01() {
+    let bindings = two_target_bindings();
+    let mut probe = two_target_sender();
+    probe
+        .select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, usize::MAX)
+        .unwrap();
+    let exact = probe
+        .fec_retained_bytes()
+        .checked_add(FEC_TARGET_SCRATCH_BYTES)
+        .unwrap();
+    assert!(exact > FEC_TARGET_SCRATCH_BYTES);
+    let mut sender = two_target_sender();
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    assert!(matches!(
+        sender.select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, exact - 1),
+        Err(CarrierError::InvalidLimits("target FEC memory cap"))
+    ));
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert_eq!(sender.fec_retained_bytes(), 0);
+    sender
+        .select_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, exact)
+        .unwrap();
+    assert_eq!(
+        sender.fec_retained_bytes() + FEC_TARGET_SCRATCH_BYTES,
+        exact
+    );
+    assert_eq!(
+        sender
+            .submit_group_fec_window(PRIMARY_GROUP, 2, 0, samples(), 0)
+            .unwrap()
+            .queued,
+        16
+    );
+    assert_eq!(
+        sender
+            .pump_fec(
+                1,
+                &[(PRIMARY_GROUP, view(20_000_000))],
+                &AtomicBool::new(false)
+            )
+            .media_sent,
+        16
+    );
 }

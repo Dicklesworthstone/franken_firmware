@@ -188,6 +188,17 @@ CASES["N06-CONSUMER"].extend(
 CASES["N06-CONSUMER"].extend(
     ("franken_control", "channel::fec_negotiation::tests::" + name) for name in TYPED_CLOCK_FEC_TESTS
 )
+# Actual per-target carrier sender tests. These exercise components; the
+# independent full carrier and paced-sender acceptance blockers still apply.
+TARGET_SENDER_TESTS = (
+    ("N06-TAIL", "n06_target_sender_delivers_two_distinct_streams_and_repairs_actual_pcm"),
+    ("N06-CONSUMER", "n06_target_selection_rejects_invalid_bindings_and_keeps_n01_live"),
+    ("N06-RESTART", "n06_target_sender_bounds_work_and_fences_restart_and_cancellation"),
+    ("N06-TAIL", "n06_missing_feedback_window_counts_refusal_then_repairs_in_both_modes"),
+    ("N06-CONSUMER", "n06_target_exact_capacity_accepts_two_and_one_byte_less_preserves_n01"),
+)
+for case, name in TARGET_SENDER_TESTS:
+    CASES[case].append(("franken_stream", SENDER_CARRIER + name))
 # Concrete integration gaps named by root: these remain full acceptance blockers.
 # No invented Rust test, disabled requirement, or refusal-only qualification.
 PENDING = {

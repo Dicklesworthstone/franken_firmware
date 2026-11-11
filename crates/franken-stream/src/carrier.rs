@@ -730,12 +730,71 @@ struct GroupState {
     fec_fenced: bool,
 }
 
+/// Trusted transport provision for one already-enrolled carrier peer.
+/// This does not authenticate a control member or authorize distributed activation.
+#[derive(Clone)]
+pub struct TargetFecBinding {
+    /// Existing carrier peer receiving this target's datagrams and feedback replies.
+    pub peer_id: u32,
+    /// Trusted provisioned stream, epoch, origin and authentication key for that peer.
+    pub config: crate::fec::SessionConfig,
+}
+
+// Two independently authenticated targets fit the existing per-window work bound.
+const MAX_TARGET_FEC_PEERS: usize = 2;
+const FEC_SOURCE_WORK: u64 = 2
+    * (66 * crate::fec::solver::HASH_WORK + (crate::fec::K * crate::fec::BYTES) as u64)
+    + crate::fec::N as u64 * (crate::fec::AUTH_WORK + (crate::fec::K * crate::fec::BYTES) as u64);
+// Include the target-specific wire copies charged to the existing queues.
+const FEC_TARGET_WORK: u64 = FEC_SOURCE_WORK + (crate::fec::N * crate::fec::DATAGRAM) as u64;
+
+// Explicit live arrays in target submission; this is not a compiler stack/RSS bound.
+const FEC_TARGET_SCRATCH_BYTES: usize =
+    std::mem::size_of::<[[[u8; crate::fec::DATAGRAM]; crate::fec::N]; MAX_TARGET_FEC_PEERS]>()
+        + std::mem::size_of::<[Option<crate::fec::SenderWindow>; MAX_TARGET_FEC_PEERS]>()
+        + std::mem::size_of::<[[u8; crate::fec::BYTES]; crate::fec::K]>()
+        + std::mem::size_of::<[u8; crate::fec::BYTES]>()
+        + std::mem::size_of::<[u8; 64]>()
+        + std::mem::size_of::<[u8; 32]>()
+        + std::mem::size_of::<[u64; MAX_TARGET_FEC_PEERS]>()
+        + std::mem::size_of::<[u32; MAX_TARGET_FEC_PEERS]>();
+
+struct FecTarget {
+    peer_id: u32,
+    config: crate::fec::SessionConfig,
+    windows: VecDeque<(u64, crate::fec::SenderWindow)>,
+}
+
 struct FecGroup {
     config: crate::fec::SessionConfig,
     windows: VecDeque<(u64, crate::fec::SenderWindow)>,
+    targets: Vec<FecTarget>,
     next_window: u64,
     last_group_ns: Option<u64>,
     clock_failed: bool,
+}
+
+impl FecGroup {
+    fn config_for_peer(&self, peer: u32) -> Option<&crate::fec::SessionConfig> {
+        if self.targets.is_empty() {
+            Some(&self.config)
+        } else {
+            self.targets
+                .iter()
+                .find(|target| target.peer_id == peer)
+                .map(|target| &target.config)
+        }
+    }
+    fn windows_for_peer(&self, peer: u32) -> Option<&VecDeque<(u64, crate::fec::SenderWindow)>> {
+        if self.targets.is_empty() {
+            Some(&self.windows)
+        } else {
+            self.targets
+                .iter()
+                .find(|target| target.peer_id == peer)
+                .map(|target| &target.windows)
+        }
+    }
 }
 
 struct FecDatagram {
@@ -1257,7 +1316,14 @@ impl<P: DatagramPort> CarrierSender<P> {
             } else {
                 "n01"
             },
-            fec_retained_windows: state.fec.as_ref().map_or(0, |fec| fec.windows.len()),
+            fec_retained_windows: state.fec.as_ref().map_or(0, |fec| {
+                fec.windows.len()
+                    + fec
+                        .targets
+                        .iter()
+                        .map(|target| target.windows.len())
+                        .sum::<usize>()
+            }),
             peers: members().count(),
             queued_packets: members().map(PeerState::queued_packets).sum(),
             queued_bytes: members().map(PeerState::queued_bytes).sum(),
@@ -1596,7 +1662,14 @@ impl<P: DatagramPort> CarrierSender<P> {
         stream_id: StreamId,
         epoch: u64,
     ) -> Result<GroupId, CarrierError> {
-        if self.groups.iter().any(|g| g.stream_id == stream_id) {
+        if self.groups.iter().any(|g| {
+            g.stream_id == stream_id
+                || g.fec.as_ref().is_some_and(|fec| {
+                    fec.targets
+                        .iter()
+                        .any(|target| target.config.stream == stream_id)
+                })
+        }) {
             return Err(CarrierError::StreamIdInUse(stream_id.get()));
         }
         if self.groups.len() >= self.limits.max_peers {
@@ -1659,7 +1732,14 @@ impl<P: DatagramPort> CarrierSender<P> {
         new_epoch: u64,
     ) -> Result<(), CarrierError> {
         let gi = self.group_index(group)?;
-        if self.groups.iter().any(|g| g.stream_id == new_stream_id) {
+        if self.groups.iter().any(|g| {
+            g.stream_id == new_stream_id
+                || g.fec.as_ref().is_some_and(|fec| {
+                    fec.targets
+                        .iter()
+                        .any(|target| target.config.stream == new_stream_id)
+                })
+        }) {
             return Err(CarrierError::StreamIdInUse(new_stream_id.get()));
         }
         let current = self.groups[gi].epoch;
@@ -1716,6 +1796,25 @@ impl<P: DatagramPort> CarrierSender<P> {
                 f.windows
                     .capacity()
                     .saturating_mul(std::mem::size_of::<(u64, crate::fec::SenderWindow)>())
+                    .saturating_add(
+                        f.targets
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<FecTarget>()),
+                    )
+                    .saturating_add(
+                        f.targets
+                            .iter()
+                            .map(|target| {
+                                target
+                                    .windows
+                                    .capacity()
+                                    .saturating_mul(std::mem::size_of::<(
+                                        u64,
+                                        crate::fec::SenderWindow,
+                                    )>())
+                            })
+                            .sum::<usize>(),
+                    )
             })
             .sum()
     }
@@ -1786,20 +1885,180 @@ impl<P: DatagramPort> CarrierSender<P> {
         origin_ns: u64,
         validated_peer_ids: &[u32],
     ) -> Result<(), CarrierError> {
+        let (gi, config) = self.preflight_group_fec(group, epoch, origin_ns, validated_peer_ids)?;
+        self.advance_group_epoch(group, epoch)?;
+        self.groups[gi].fec = Some(FecGroup {
+            config,
+            windows: VecDeque::with_capacity(crate::fec::WINDOWS),
+            targets: Vec::new(),
+            next_window: 0,
+            last_group_ns: None,
+            clock_failed: false,
+        });
+        Ok(())
+    }
+
+    /// Select separately keyed future-epoch targets supplied by a trusted transport provisioner.
+    /// A raw peer/config pair is not proof of control-member identity or distributed readiness.
+    /// `retained_budget_bytes` is the caller's allowance for all currently retained FEC state
+    /// plus this selection's measured capacities and explicitly held submission arrays. The caller
+    /// must continue reserving that allowance while this selection lives.
+    pub fn select_group_target_fec(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        origin_ns: u64,
+        bindings: &[TargetFecBinding],
+        retained_budget_bytes: usize,
+    ) -> Result<(), CarrierError> {
+        if bindings.is_empty() || bindings.len() > MAX_TARGET_FEC_PEERS {
+            return Err(CarrierError::InvalidLimits("per-target FEC work cap"));
+        }
         let gi = self.group_index(group)?;
-        let members: Vec<_> = self.peers.iter().filter(|p| p.group == group).collect();
-        if members.is_empty()
-            || members.len() > crate::fec::MAX_GROUP_MEMBERS
-            || validated_peer_ids.len() != members.len()
-            || members
-                .iter()
-                .any(|p| validated_peer_ids.iter().filter(|id| **id == p.id).count() != 1)
-            || members.iter().enumerate().any(|(i, p)| {
-                members
-                    .iter()
-                    .skip(i + 1)
-                    .any(|q| p.control_addr == q.control_addr)
+        if self.groups[gi].epoch.checked_add(1) != Some(epoch) {
+            return Err(CarrierError::StaleEpoch {
+                submitted: epoch,
+                current: self.groups[gi].epoch,
+            });
+        }
+        for (i, binding) in bindings.iter().enumerate() {
+            if binding.config.epoch != epoch
+                || binding.config.presentation_origin_ns != origin_ns
+                || bindings.iter().skip(i + 1).any(|other| {
+                    other.peer_id == binding.peer_id || other.config.stream == binding.config.stream
+                })
+                || self.groups.iter().any(|other| {
+                    other.id != group
+                        && (other.stream_id == binding.config.stream
+                            || other.fec.as_ref().is_some_and(|fec| {
+                                fec.targets
+                                    .iter()
+                                    .any(|target| target.config.stream == binding.config.stream)
+                            }))
+                })
+            {
+                return Err(CarrierError::InvalidLimits(
+                    "inconsistent target FEC binding",
+                ));
+            }
+            binding
+                .config
+                .metadata(0)
+                .map_err(|_| CarrierError::InvalidLimits("invalid target timeline"))?;
+        }
+        let mut ids = [0_u32; MAX_TARGET_FEC_PEERS];
+        for (i, binding) in bindings.iter().enumerate() {
+            ids[i] = binding.peer_id;
+        }
+        let (_, common_config) =
+            self.preflight_group_fec(group, epoch, origin_ns, &ids[..bindings.len()])?;
+        let work = FEC_TARGET_WORK
+            .checked_mul(bindings.len() as u64)
+            .ok_or(CarrierError::InvalidLimits("target FEC work overflow"))?;
+        if work > crate::fec::WINDOW_ALLOWANCE_NS / crate::fec::WORK_UNIT_NS {
+            return Err(CarrierError::InvalidLimits("per-target FEC work cap"));
+        }
+        // Charge each explicitly held submission array, not a whole-stack/RSS estimate.
+        let scratch = FEC_TARGET_SCRATCH_BYTES;
+        let minimum = self
+            .fec_retained_bytes()
+            .checked_add(scratch)
+            .and_then(|v| v.checked_add(bindings.len() * std::mem::size_of::<FecTarget>()))
+            .and_then(|v| {
+                v.checked_add(
+                    bindings.len()
+                        * crate::fec::WINDOWS
+                        * std::mem::size_of::<(u64, crate::fec::SenderWindow)>(),
+                )
             })
+            .ok_or(CarrierError::InvalidLimits("target FEC memory overflow"))?;
+        if minimum > retained_budget_bytes {
+            return Err(CarrierError::InvalidLimits("target FEC memory cap"));
+        }
+        let mut targets = Vec::new();
+        targets
+            .try_reserve_exact(bindings.len())
+            .map_err(|_| CarrierError::InvalidLimits("target FEC allocation"))?;
+        let mut actual = self
+            .fec_retained_bytes()
+            .checked_add(scratch)
+            .and_then(|v| {
+                targets
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<FecTarget>())
+                    .and_then(|bytes| v.checked_add(bytes))
+            })
+            .ok_or(CarrierError::InvalidLimits("target FEC memory overflow"))?;
+        if actual > retained_budget_bytes {
+            return Err(CarrierError::InvalidLimits("target FEC memory cap"));
+        }
+        for binding in bindings {
+            let mut windows = VecDeque::new();
+            windows
+                .try_reserve_exact(crate::fec::WINDOWS)
+                .map_err(|_| CarrierError::InvalidLimits("target FEC allocation"))?;
+            actual = actual
+                .checked_add(
+                    windows
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<(u64, crate::fec::SenderWindow)>())
+                        .ok_or(CarrierError::InvalidLimits("target FEC memory overflow"))?,
+                )
+                .ok_or(CarrierError::InvalidLimits("target FEC memory overflow"))?;
+            if actual > retained_budget_bytes {
+                return Err(CarrierError::InvalidLimits("target FEC memory cap"));
+            }
+            targets.push(FecTarget {
+                peer_id: binding.peer_id,
+                config: binding.config.clone(),
+                windows,
+            });
+        }
+        self.advance_group_epoch(group, epoch)?;
+        self.groups[gi].fec = Some(FecGroup {
+            config: common_config,
+            windows: VecDeque::new(),
+            targets,
+            next_window: 0,
+            last_group_ns: None,
+            clock_failed: false,
+        });
+        Ok(())
+    }
+
+    fn preflight_group_fec(
+        &self,
+        group: GroupId,
+        epoch: u64,
+        origin_ns: u64,
+        validated_peer_ids: &[u32],
+    ) -> Result<(usize, crate::fec::SessionConfig), CarrierError> {
+        let gi = self.group_index(group)?;
+        let member_count = self.peers.iter().filter(|peer| peer.group == group).count();
+        if member_count == 0
+            || member_count > crate::fec::MAX_GROUP_MEMBERS
+            || validated_peer_ids.len() != member_count
+            || self
+                .peers
+                .iter()
+                .filter(|peer| peer.group == group)
+                .any(|peer| {
+                    validated_peer_ids
+                        .iter()
+                        .filter(|id| **id == peer.id)
+                        .count()
+                        != 1
+                })
+            || self
+                .peers
+                .iter()
+                .enumerate()
+                .filter(|(_, peer)| peer.group == group)
+                .any(|(i, peer)| {
+                    self.peers.iter().skip(i + 1).any(|other| {
+                        other.group == group && peer.control_addr == other.control_addr
+                    })
+                })
         {
             return Err(CarrierError::InvalidLimits(
                 "FEC requires the exact unique acknowledged members",
@@ -1852,8 +2111,10 @@ impl<P: DatagramPort> CarrierSender<P> {
                 budget: self.limits.pace_bytes_per_sec,
             });
         }
-        let max_overhead = members
+        let max_overhead = self
+            .peers
             .iter()
+            .filter(|peer| peer.group == group)
             .map(|peer| peer.overhead())
             .max()
             .unwrap_or(0);
@@ -1865,15 +2126,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 "FEC datagram does not fit carrier bounds",
             ));
         }
-        self.advance_group_epoch(group, epoch)?;
-        self.groups[gi].fec = Some(FecGroup {
-            config,
-            windows: VecDeque::with_capacity(crate::fec::WINDOWS),
-            next_window: 0,
-            last_group_ns: None,
-            clock_failed: false,
-        });
-        Ok(())
+        Ok((gi, config))
     }
 
     /// Queue a complete host FEC window for the registered group, on the
@@ -1900,6 +2153,9 @@ impl<P: DatagramPort> CarrierSender<P> {
             .ok_or(CarrierError::InvalidLimits("FEC not selected"))?;
         if fec.clock_failed || window != fec.next_window {
             return Err(CarrierError::InvalidLimits("FEC window unavailable"));
+        }
+        if !fec.targets.is_empty() {
+            return self.submit_target_fec_window(gi, group, window, source, now_ns);
         }
         let config = fec.config.clone();
         let metadata = config
@@ -1956,6 +2212,102 @@ impl<P: DatagramPort> CarrierSender<P> {
                     wire,
                     now_ns,
                     deadline.saturating_add(offset),
+                    &mut report,
+                );
+            }
+        }
+        Ok(report)
+    }
+
+    fn submit_target_fec_window(
+        &mut self,
+        gi: usize,
+        group: GroupId,
+        window: u64,
+        source: [[u8; crate::fec::BYTES]; crate::fec::K],
+        now_ns: u64,
+    ) -> Result<SubmitReport, CarrierError> {
+        let next = window
+            .checked_add(1)
+            .ok_or(CarrierError::InvalidLimits("FEC window exhausted"))?;
+        let count = self.groups[gi]
+            .fec
+            .as_ref()
+            .expect("selected")
+            .targets
+            .len();
+        let work = FEC_TARGET_WORK
+            .checked_mul(count as u64)
+            .ok_or(CarrierError::InvalidLimits("target FEC work overflow"))?;
+        if !self.reserve_fec_work(now_ns, work) {
+            return Err(CarrierError::InvalidLimits("aggregate FEC work exhausted"));
+        }
+        // A bounded fixed scratch is admitted at selection. Finish every target's
+        // encoding before any queue or retained-window state is modified.
+        let mut wires = [[[0_u8; crate::fec::DATAGRAM]; crate::fec::N]; MAX_TARGET_FEC_PEERS];
+        let mut windows: [Option<crate::fec::SenderWindow>; MAX_TARGET_FEC_PEERS] = [None, None];
+        let mut deadlines = [0_u64; MAX_TARGET_FEC_PEERS];
+        {
+            let fec = self.groups[gi].fec.as_ref().expect("selected");
+            for (i, target) in fec.targets.iter().enumerate() {
+                let metadata = target
+                    .config
+                    .metadata(window)
+                    .map_err(|_| CarrierError::InvalidLimits("invalid target FEC window"))?;
+                deadlines[i] = be_u64(&metadata, 52);
+                let digest = crate::fec::content_digest(&metadata, &source);
+                windows[i] = Some(
+                    crate::fec::SenderWindow::new(target.config.clone(), window, source, 1)
+                        .map_err(|_| CarrierError::InvalidLimits("invalid target FEC window"))?,
+                );
+                for (esi, wire) in wires[i].iter_mut().enumerate() {
+                    let symbol = crate::fec::encode_symbol(&source, esi)
+                        .map_err(|_| CarrierError::InvalidLimits("FEC symbol encoding failed"))?;
+                    let kind = if esi < crate::fec::K { 0 } else { 2 };
+                    *wire =
+                        crate::fec::sign_symbol(&target.config, window, esi, kind, digest, &symbol)
+                            .map_err(|_| {
+                                CarrierError::InvalidLimits("FEC symbol signing failed")
+                            })?;
+                }
+            }
+        }
+        let mut peer_ids = [0_u32; MAX_TARGET_FEC_PEERS];
+        {
+            let fec = self.groups[gi].fec.as_mut().expect("selected");
+            for (i, target) in fec.targets.iter_mut().enumerate() {
+                peer_ids[i] = target.peer_id;
+                if target.windows.len() == crate::fec::WINDOWS {
+                    target.windows.pop_front();
+                }
+                target
+                    .windows
+                    .push_back((window, windows[i].take().expect("built")));
+            }
+            fec.next_window = next;
+        }
+        let mut report = SubmitReport::default();
+        for ((&peer_id, target_wires), &deadline) in peer_ids[..count]
+            .iter()
+            .zip(&wires[..count])
+            .zip(&deadlines[..count])
+        {
+            let idx = self
+                .peers
+                .iter()
+                .position(|peer| peer.group == group && peer.id == peer_id)
+                .expect("membership cannot change while FEC selected");
+            for (esi, wire) in target_wires.iter().enumerate() {
+                let block = if esi < crate::fec::K {
+                    esi
+                } else {
+                    crate::fec::K - 1
+                };
+                self.enqueue_fec(
+                    idx,
+                    wire,
+                    now_ns,
+                    deadline.saturating_add(crate::playout::frames_to_ns(block as u64 * 256)),
                     &mut report,
                 );
             }
@@ -2186,6 +2538,19 @@ impl<P: DatagramPort> CarrierSender<P> {
                             }
                             fec.windows.pop_front();
                         }
+                        for target in &mut fec.targets {
+                            while let Some((window, _)) = target.windows.front() {
+                                let Ok(metadata) = target.config.metadata(*window) else {
+                                    break;
+                                };
+                                let last = be_u64(&metadata, 52)
+                                    .saturating_add(crate::playout::frames_to_ns(3 * 256));
+                                if view.group_ns <= last {
+                                    break;
+                                }
+                                target.windows.pop_front();
+                            }
+                        }
                     }
                 }
             }
@@ -2235,7 +2600,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             let group = self.peers[idx].group;
             if self.peers[idx].pending_fec_feedback.is_some() && self.fec_has_clock(group, clocks) {
                 let wire = self.peers[idx].pending_fec_feedback.expect("checked");
-                if !self.feedback_relevant(group, &wire) {
+                if !self.feedback_relevant(idx, &wire) {
                     self.peers[idx].pending_fec_feedback = None;
                     self.peers[idx].counters.fec_feedback_refused += 1;
                     self.stats.fec_feedback_refused += 1;
@@ -2283,16 +2648,15 @@ impl<P: DatagramPort> CarrierSender<P> {
                                             * (crate::fec::AUTH_WORK + 1024 + 1000),
                                 ))
                         {
-                            let group = self.peers[idx].group;
                             if self.peers[idx]
                                 .pending_fec_feedback
-                                .is_some_and(|wire| !self.feedback_relevant(group, &wire))
+                                .is_some_and(|wire| !self.feedback_relevant(idx, &wire))
                             {
                                 self.peers[idx].pending_fec_feedback = None;
                                 self.stats.fec_feedback_refused += 1;
                                 self.peers[idx].counters.fec_feedback_refused += 1;
                             }
-                            if !self.feedback_relevant(group, &buf[..len]) {
+                            if !self.feedback_relevant(idx, &buf[..len]) {
                                 self.peers[idx].counters.fec_feedback_refused += 1;
                                 self.stats.fec_feedback_refused += 1;
                             } else if self.peers[idx].pending_fec_feedback.is_some() {
@@ -2306,7 +2670,11 @@ impl<P: DatagramPort> CarrierSender<P> {
                                     .find(|g| g.id == self.peers[idx].group)
                                     .and_then(|g| g.fec.as_ref())
                                     .is_some_and(|fec| {
-                                        crate::fec::verify_feedback(&fec.config, &buf[..len])
+                                        fec.config_for_peer(self.peers[idx].id).is_some_and(
+                                            |config| {
+                                                crate::fec::verify_feedback(config, &buf[..len])
+                                            },
+                                        )
                                     })
                             {
                                 let mut wire = [0; crate::fec::FEEDBACK_BYTES];
@@ -2361,16 +2729,20 @@ impl<P: DatagramPort> CarrierSender<P> {
             && matches!((views.next(), views.next()), (Some((_, view)), None) if view.usable)
     }
 
-    fn feedback_relevant(&self, group: GroupId, wire: &[u8]) -> bool {
+    fn feedback_relevant(&self, peer: usize, wire: &[u8]) -> bool {
         if wire.len() != crate::fec::FEEDBACK_BYTES {
             return false;
         }
+        let Some(peer) = self.peers.get(peer) else {
+            return false;
+        };
         let window = be_u64(wire, 28);
         self.groups
             .iter()
-            .find(|g| g.id == group)
+            .find(|g| g.id == peer.group)
             .and_then(|g| g.fec.as_ref())
-            .and_then(|fec| fec.windows.iter().find(|(id, _)| *id == window))
+            .and_then(|fec| fec.windows_for_peer(peer.id))
+            .and_then(|windows| windows.iter().find(|(id, _)| *id == window))
             .is_some_and(|(_, retained)| retained.has_unserved(wire[64]))
     }
 
@@ -2379,18 +2751,18 @@ impl<P: DatagramPort> CarrierSender<P> {
             return None;
         }
         let addr = from?;
-        let group = self
-            .groups
-            .iter()
-            .find(|g| {
-                g.fec.is_some()
-                    && g.stream_id.get() == be_u64(wire, 12)
-                    && g.epoch == be_u64(wire, 20)
-            })?
-            .id;
-        self.peers
-            .iter()
-            .position(|p| p.group == group && p.control_addr == addr)
+        let stream = be_u64(wire, 12);
+        let epoch = be_u64(wire, 20);
+        self.peers.iter().position(|peer| {
+            peer.control_addr == addr
+                && self
+                    .groups
+                    .iter()
+                    .find(|group| group.id == peer.group && group.epoch == epoch)
+                    .and_then(|group| group.fec.as_ref())
+                    .and_then(|fec| fec.config_for_peer(peer.id))
+                    .is_some_and(|config| config.stream.get() == stream && config.epoch == epoch)
+        })
     }
 
     fn on_fec_feedback(
@@ -2421,24 +2793,15 @@ impl<P: DatagramPort> CarrierSender<P> {
         if wire.len() != crate::fec::FEEDBACK_BYTES {
             return false;
         }
-        let stream = be_u64(wire, 12);
-        let epoch = be_u64(wire, 20);
         let window = be_u64(wire, 28);
+        let Some(peer) = self.feedback_source(wire, from) else {
+            return false;
+        };
+        let group = self.peers[peer].group;
         let Some(gi) = self
             .groups
             .iter()
-            .position(|g| g.stream_id.get() == stream && g.epoch == epoch && g.fec.is_some())
-        else {
-            return false;
-        };
-        let group = self.groups[gi].id;
-        let Some(addr) = from else {
-            return false;
-        };
-        let Some(peer) = self
-            .peers
-            .iter()
-            .position(|p| p.group == group && p.control_addr == addr)
+            .position(|state| state.id == group && state.fec.is_some())
         else {
             return false;
         };
@@ -2458,12 +2821,26 @@ impl<P: DatagramPort> CarrierSender<P> {
                 return false;
             }
         };
+        let peer_id = self.peers[peer].id;
         let fec = self.groups[gi].fec.as_mut().expect("selected");
         if fec.clock_failed {
             self.peers[peer].counters.fec_feedback_refused += 1;
             return false;
         }
-        let Some((_, retained)) = fec.windows.iter_mut().find(|(id, _)| *id == window) else {
+        let targeted = !fec.targets.is_empty();
+        let (config, windows) = if targeted {
+            let Some(target) = fec
+                .targets
+                .iter_mut()
+                .find(|target| target.peer_id == peer_id)
+            else {
+                return false;
+            };
+            (&target.config, &mut target.windows)
+        } else {
+            (&fec.config, &mut fec.windows)
+        };
+        let Some((_, retained)) = windows.iter_mut().find(|(id, _)| *id == window) else {
             self.peers[peer].counters.fec_feedback_refused += 1;
             return false;
         };
@@ -2474,7 +2851,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 return false;
             }
         };
-        let metadata = match fec.config.metadata(window) {
+        let metadata = match config.metadata(window) {
             Ok(meta) => meta,
             Err(_) => return false,
         };
@@ -2482,7 +2859,7 @@ impl<P: DatagramPort> CarrierSender<P> {
         self.peers[peer].counters.fec_feedback_accepted += 1;
         let mut report = SubmitReport::default();
         for idx in 0..self.peers.len() {
-            if self.peers[idx].group != group {
+            if self.peers[idx].group != group || (targeted && idx != peer) {
                 continue;
             }
             for (esi, packet) in replies.packets.iter().enumerate() {
