@@ -50,10 +50,14 @@ use franken_clock::group::{
     GroupClock, GroupClockError, MuteReason, Output, StartPlan, StartReject as ClockStartReject,
     StartSchedule,
 };
-use franken_control::channel::fec_negotiation::{FecCoordinator, FecError, VerifiedFecProposal};
+use franken_control::channel::fec_negotiation::{
+    FecCoordinator, FecError, VerifiedFecPrepare, VerifiedFecProposal,
+};
 use franken_control::channel::owner::{AgreementError, FleetControlOwner};
-use franken_control::channel::peer::{PeerAuthority, PeerDirectory};
-use franken_control::contracts::secret_store::SecretStore;
+use franken_control::channel::peer::{MAX_PEER_ID_LEN, PeerAuthority, PeerDirectory, PeerId};
+use franken_control::contracts::secret_store::{
+    MAX_SLOT_LEN, SecretHandle, SecretKind, SecretStore,
+};
 use franken_platform::clock::ClockError;
 use franken_platform::layer::PlatformLayer;
 use franken_platform::ops::KernelOps;
@@ -64,7 +68,7 @@ use franken_stream::playout::{
     Outcome, PlayoutConfig, PlayoutEngine, PlayoutProfile, PlayoutStats, Poll,
     StartReject as EngineStartReject,
 };
-use franken_stream::{ReceiverCounters, StreamError, StreamId, StreamReceiver};
+use franken_stream::{ReceiverCounters, StreamError, StreamId, StreamKey, StreamReceiver};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -160,9 +164,35 @@ impl<A: PeerAuthority> FutureFecAuthority<'_, A> {
     pub(crate) fn revalidate(&self, proposal: &VerifiedFecProposal) -> Result<(), FecError> {
         proposal.revalidate(self.coordinator, self.authority, self.session)
     }
+
+    pub(crate) fn revalidate_prepare(
+        &self,
+        prepare: &VerifiedFecPrepare,
+        group_ns: u64,
+    ) -> Result<(), FecError> {
+        prepare.revalidate(self.coordinator, self.authority, self.session, group_ns)
+    }
 }
 
 impl<'a, K: SecretStore> FutureFecAuthority<'a, PeerDirectory<K>> {
+    pub(crate) fn verify_ready_fixed(
+        &self,
+        peer: &PeerId,
+        handle: &SecretHandle,
+        bytes: &[u8],
+        tag: &[u8; franken_control::channel::peer::PROOF_LEN],
+        expected: franken_control::channel::peer::PeerAdmission,
+    ) -> Result<(), FecError> {
+        let auth = self
+            .authority
+            .authenticate_fixed(peer, handle, bytes, tag)
+            .map_err(|_| FecError::Unauthorized)?;
+        if auth != expected {
+            return Err(FecError::Stale);
+        }
+        Ok(())
+    }
+
     /// Borrow the currently installed, authenticated proposal round from its real owner.
     pub fn from_owner<S: franken_control::channel::pipeline::Storage>(
         owner: &'a FleetControlOwner<K, S>,
@@ -192,6 +222,8 @@ pub enum FutureFecError {
     Stale,
     Resources(HostFecAdmitError),
     Engine(MediaAdmitError),
+    /// The owner has no matching installed media key or the key was revoked.
+    Key,
     Profile(franken_stream::fec::Refusal),
     Clock(ClockError),
     ClockNotAdmitted,
@@ -217,11 +249,24 @@ pub struct PreparedFutureFec {
     schedule: StartSchedule,
     anchor_frame: u64,
     binding_generation: u64,
+    target_stream: StreamId,
     // Kept last so proposal, engine, receiver and their owned allocations drop before uncharging.
     reservation: FutureReservation,
 }
 
 impl PreparedFutureFec {
+    pub(crate) fn member_role(
+        &self,
+        member: &str,
+        peer: &PeerId,
+    ) -> Option<franken_control::channel::peer::PeerRole> {
+        self.proposal
+            .members()
+            .iter()
+            .find(|binding| binding.member() == member && binding.peer() == peer.as_str())
+            .map(|binding| binding.role())
+    }
+
     pub(crate) fn cancel_pending(&mut self) {
         if let Some(fec) = self.fec.first_mut() {
             fec.cancel();
@@ -254,7 +299,7 @@ impl PreparedFutureFec {
         if !Arc::ptr_eq(&self.reservation.0, &owner.fec_reservation)
             || owner.future_binding_generation == u64::MAX
             || owner.future_binding_generation != self.binding_generation
-            || owner.receiver.stream_id().get() != self.proposal.proposal().stream()
+            || owner.receiver.stream_id() != self.target_stream
             || owner.receiver.active_epoch() != self.proposal.proposal().current_epoch()
         {
             return Err(FutureFecError::Stale);
@@ -266,6 +311,15 @@ impl PreparedFutureFec {
         &mut self,
         clock: &GroupClock,
         platform: &mut PlatformLayer<O>,
+    ) -> Result<franken_stream::playout::ClockView, FutureFecError> {
+        self.future_view_inner(clock, platform, false)
+    }
+
+    fn future_view_inner<O: KernelOps>(
+        &mut self,
+        clock: &GroupClock,
+        platform: &mut PlatformLayer<O>,
+        strict: bool,
     ) -> Result<franken_stream::playout::ClockView, FutureFecError> {
         if clock.epoch() != self.schedule.epoch {
             return Err(FutureFecError::ClockNotAdmitted);
@@ -293,13 +347,29 @@ impl PreparedFutureFec {
             _ => return Err(FutureFecError::ClockNotAdmitted),
         }
         let view = self.bridge.at_local(clock, local);
-        if !view.usable {
+        if !view.usable || (strict && view.group_ns != group) {
             return Err(FutureFecError::ClockNotAdmitted);
         }
         Ok(view)
     }
 
-    fn checked_future_view<A: PeerAuthority, O: KernelOps>(
+    pub(crate) fn checked_ready_view<A: PeerAuthority, O: KernelOps>(
+        &mut self,
+        owner: &MediaPlayout,
+        context: &FutureFecAuthority<'_, A>,
+        clock: &GroupClock,
+        platform: &mut PlatformLayer<O>,
+    ) -> Result<franken_stream::playout::ClockView, FutureFecError> {
+        let result = self
+            .check(owner, context)
+            .and_then(|()| self.future_view_inner(clock, platform, true));
+        if result.is_err() {
+            self.cancel_pending();
+        }
+        result
+    }
+
+    pub(crate) fn checked_future_view<A: PeerAuthority, O: KernelOps>(
         &mut self,
         owner: &MediaPlayout,
         context: &FutureFecAuthority<'_, A>,
@@ -548,7 +618,7 @@ impl MediaAdmitError {
 }
 
 /// The room the ledger's `stream_and_jitter_bytes` line leaves after `resident_elsewhere_bytes`, once the whole ledger passes its floor.
-fn stream_room(
+pub(crate) fn stream_room(
     ledger: &MemoryBudgetLedger,
     resident_elsewhere_bytes: u64,
 ) -> Result<usize, MediaAdmitError> {
@@ -600,6 +670,20 @@ pub(crate) fn synthetic_ledger(stream_and_jitter_bytes: u64) -> MemoryBudgetLedg
     }
 }
 
+/// A bounded, owner-controlled copy of the provisioned future media key.
+/// External writes to the source store do not mutate this slot: provisioning must use this owner.
+#[derive(Debug)]
+struct PendingFutureKey {
+    key: StreamKey,
+    slot: [u8; MAX_SLOT_LEN],
+    slot_len: usize,
+    store_generation: u64,
+    member: [u8; 64],
+    member_len: usize,
+    peer: [u8; MAX_PEER_ID_LEN],
+    peer_len: usize,
+}
+
 /// One speaker's media path for one stream: the receiver, the playout engine and the clock view that joins them.
 #[derive(Debug)]
 pub struct MediaPlayout {
@@ -610,6 +694,7 @@ pub struct MediaPlayout {
     context_generation: u64,
     /// Invalidated by rebinding/replacement, not by ordinary old-stream playback.
     future_binding_generation: u64,
+    future_key: Option<PendingFutureKey>,
     receiver: StreamReceiver,
     engine: PlayoutEngine,
     bridge: ClockViewBridge,
@@ -648,6 +733,7 @@ impl MediaPlayout {
             fec_reservation: Arc::new(AtomicUsize::new(0)),
             context_generation: 0,
             future_binding_generation: 0,
+            future_key: None,
             receiver,
             engine,
             bridge: ClockViewBridge::default(),
@@ -655,6 +741,90 @@ impl MediaPlayout {
             resolution_refusals: 0,
             resolution_refused: false,
         })
+    }
+
+    /// Install an owner-controlled future media key from the trusted secret store.
+    /// All later changes must use this owner; external source-store mutations cannot revoke a copied key.
+    pub fn install_future_key<S: SecretStore>(
+        &mut self,
+        store: &S,
+        handle: &SecretHandle,
+        member: &str,
+        peer: &PeerId,
+    ) -> Result<(), FutureFecError> {
+        if handle.kind() != SecretKind::StreamAuthKey || member.is_empty() || member.len() > 64 {
+            return Err(FutureFecError::Key);
+        }
+        let generation = self
+            .future_binding_generation
+            .checked_add(1)
+            .filter(|generation| *generation != u64::MAX)
+            .ok_or(FutureFecError::Stale)?;
+        let (store_generation, bytes) = store
+            .with_secret(handle, |version, bytes| {
+                <[u8; 32]>::try_from(bytes)
+                    .ok()
+                    .map(|key| (version.get(), key))
+            })
+            .map_err(|_| FutureFecError::Key)?
+            .ok_or(FutureFecError::Key)?;
+        let label = handle.slot().as_str().as_bytes();
+        let mut slot = [0; MAX_SLOT_LEN];
+        slot[..label.len()].copy_from_slice(label);
+        let mut member_bytes = [0; 64];
+        member_bytes[..member.len()].copy_from_slice(member.as_bytes());
+        let peer_label = peer.as_str().as_bytes();
+        let mut peer_bytes = [0; MAX_PEER_ID_LEN];
+        peer_bytes[..peer_label.len()].copy_from_slice(peer_label);
+        self.future_binding_generation = generation;
+        self.future_key = Some(PendingFutureKey {
+            key: StreamKey::from_bytes(bytes),
+            slot,
+            slot_len: label.len(),
+            store_generation,
+            member: member_bytes,
+            member_len: member.len(),
+            peer: peer_bytes,
+            peer_len: peer_label.len(),
+        });
+        Ok(())
+    }
+
+    /// Revoke the owner copy, invalidating all prior candidates even on identical reinstall.
+    pub fn revoke_future_key(&mut self) -> Result<(), FutureFecError> {
+        let generation = self.future_binding_generation.checked_add(1);
+        self.future_key = None;
+        match generation {
+            Some(generation) => {
+                self.future_binding_generation = generation;
+                Ok(())
+            }
+            None => Err(FutureFecError::Stale),
+        }
+    }
+
+    pub(crate) fn ready_key(
+        &self,
+        token: &VerifiedFecPrepare,
+    ) -> Result<StreamKey, FutureFecError> {
+        let key = self.future_key.as_ref().ok_or(FutureFecError::Key)?;
+        let binding = token.binding();
+        let desc = binding.descriptor();
+        let mut context = [0; franken_control::channel::fec_negotiation::MAX_PREPARE_CONTEXT_BYTES];
+        let len = desc
+            .write_commitment_context(&mut context)
+            .map_err(FutureFecError::Proposal)?;
+        if &key.slot[..key.slot_len] != desc.key_slot().as_bytes()
+            || &key.member[..key.member_len] != desc.member().as_bytes()
+            || &key.peer[..key.peer_len] != desc.peer().as_str().as_bytes()
+            || key.store_generation != desc.store_generation()
+            || !key
+                .key
+                .matches_prepare_commitment(&context[..len], binding.key_commitment())
+        {
+            return Err(FutureFecError::Key);
+        }
+        Ok(key.key.clone())
     }
 
     /// Non-engine bytes, including the shared permit allocation and space for one live preparation.
@@ -704,6 +874,28 @@ impl MediaPlayout {
         ledger: &MemoryBudgetLedger,
         resident_elsewhere_bytes: u64,
     ) -> Result<PreparedFutureFec, FutureFecError> {
+        let target =
+            StreamId::new(proposal.proposal().stream()).map_err(|_| FutureFecError::Binding)?;
+        self.prepare_future_target_fec(
+            proposal,
+            context,
+            spec,
+            target,
+            ledger,
+            resident_elsewhere_bytes,
+        )
+    }
+
+    /// Internal seam: the caller must already authenticate the target-specific v2 binding.
+    pub(crate) fn prepare_future_target_fec<A: PeerAuthority>(
+        &mut self,
+        proposal: VerifiedFecProposal,
+        context: &FutureFecAuthority<'_, A>,
+        spec: FutureFecSpec,
+        target_stream: StreamId,
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<PreparedFutureFec, FutureFecError> {
         // Token validation precedes all allocations performed by this method.
         context
             .revalidate(&proposal)
@@ -715,7 +907,7 @@ impl MediaPlayout {
         if self.future_binding_generation == u64::MAX
             || !spec.anchor_frame.is_multiple_of(1024)
             || spec.config.stream != self.receiver.stream_id()
-            || spec.config.stream.get() != expected.stream()
+            || spec.config.stream != target_stream
             || self.receiver.active_epoch() != expected.current_epoch()
             || self.engine.snapshot().epoch != Some(expected.current_epoch())
             || spec.config.epoch != expected.next_epoch()
@@ -773,6 +965,7 @@ impl MediaPlayout {
             schedule: spec.schedule,
             anchor_frame: spec.anchor_frame,
             binding_generation: self.future_binding_generation,
+            target_stream,
             reservation: FutureReservation(Arc::clone(&self.fec_reservation)),
         };
         // The candidate inline allocation already includes the engine struct; `admit_engine`
@@ -1479,6 +1672,7 @@ mod tests {
         errno: Rc<Cell<isize>>,
         reads: Rc<Cell<u64>>,
         fail_read: Rc<Cell<Option<u64>>>,
+        jump_on_read: Rc<Cell<Option<(u64, u64)>>>,
     }
 
     impl KernelOps for TestKernel {
@@ -1491,6 +1685,11 @@ mod tests {
         fn clock_gettime_monotonic(&mut self, out: &mut Timespec) -> isize {
             let read = self.reads.get() + 1;
             self.reads.set(read);
+            if let Some((at, now)) = self.jump_on_read.get()
+                && at == read
+            {
+                self.now_ns.set(now);
+            }
             if self.fail_read.get() == Some(read) {
                 return -ENOSYS_PPC;
             }
@@ -1541,6 +1740,7 @@ mod tests {
         errno: Rc<Cell<isize>>,
         reads: Rc<Cell<u64>>,
         fail_read: Rc<Cell<Option<u64>>>,
+        jump_on_read: Rc<Cell<Option<(u64, u64)>>>,
         platform: PlatformLayer<TestKernel>,
         clock: GroupClock,
         media: MediaPlayout,
@@ -1559,11 +1759,13 @@ mod tests {
             let errno = Rc::new(Cell::new(0));
             let reads = Rc::new(Cell::new(0));
             let fail_read = Rc::new(Cell::new(None));
+            let jump_on_read = Rc::new(Cell::new(None));
             let kernel = TestKernel {
                 now_ns: Rc::clone(&time),
                 errno: Rc::clone(&errno),
                 reads: Rc::clone(&reads),
                 fail_read: Rc::clone(&fail_read),
+                jump_on_read: Rc::clone(&jump_on_read),
             };
             let mut matrix = guest_evidence::for_abi(Abi::PowerPc32).matrix();
             if let Some(resolution_ns) = resolution_ns {
@@ -1594,6 +1796,7 @@ mod tests {
                 errno,
                 reads,
                 fail_read,
+                jump_on_read,
                 platform,
                 clock,
                 media,
@@ -2800,6 +3003,114 @@ mod tests {
         }
     }
 
+    fn submit_capability_ack(control: &mut FutureControl, peer_name: &str, local_ns: u64) {
+        let peer = PeerId::parse(peer_name).unwrap();
+        let proposal = control.verified().proposal().clone();
+        let bytes = signing_bytes(MessageKind::Ack, &peer, 1, &proposal);
+        let wire = encode(
+            MessageKind::Ack,
+            &peer,
+            1,
+            &proposal,
+            &compute_proof(&[0x51; 32], &bytes),
+        )
+        .unwrap();
+        assert_eq!(
+            control
+                .owner
+                .receive(local_ns, &control.session, &wire)
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Acknowledged))
+        );
+    }
+
+    fn submit_member_prepare(
+        control: &mut FutureControl,
+        identity: (&str, &str),
+        target: StreamId,
+        key: &StreamKey,
+        slot: &str,
+        times: (u64, u64),
+        start: u64,
+    ) {
+        let (local_now, group_now) = times;
+        use franken_control::channel::fec_negotiation::{
+            PrepareBinding, PrepareDescriptor, encode_prepare, prepare_signing_bytes,
+        };
+        let proposal = control.verified().proposal().clone();
+        let (member, peer_name) = identity;
+        let member_peer = PeerId::parse(peer_name).unwrap();
+        let descriptor = PrepareDescriptor::new(
+            proposal,
+            member,
+            member_peer,
+            target.get(),
+            0,
+            start,
+            start - 1_000_000,
+            slot,
+            1,
+        )
+        .unwrap();
+        let commitment = key.prepare_commitment(&descriptor.commitment_context());
+        let binding = PrepareBinding::new(descriptor, commitment);
+        let proposer = PeerId::parse("proposer").unwrap();
+        let bytes = prepare_signing_bytes(&binding, &proposer, 1);
+        let wire =
+            encode_prepare(&binding, &proposer, 1, &compute_proof(&[0x51; 32], &bytes)).unwrap();
+        assert_eq!(
+            control
+                .owner
+                .receive_with_group_time(local_now, group_now, &control.session, &wire)
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+    }
+
+    fn verified_member_prepare(
+        control: &FutureControl,
+        member: &str,
+        group_now: u64,
+    ) -> VerifiedFecPrepare {
+        let (coordinator, authority) = control.owner.proposal_context(&control.session).unwrap();
+        coordinator
+            .validated_prepare(authority, &control.session, member, group_now)
+            .unwrap()
+    }
+
+    fn distinct_stream_rig(
+        stream: StreamId,
+        stream_key: StreamKey,
+    ) -> (Rig, franken_stream::fec::SessionConfig) {
+        let mut rig = Rig::new();
+        rig.media = MediaPlayout::new(
+            StreamReceiver::new(stream_key.clone(), stream, 1),
+            PlayoutProfile::MUSIC,
+            PlayoutConfig {
+                work_ns: 1_000_000,
+                lead_ns: 1_000_000,
+                tolerance_ns: 0,
+            },
+            &synthetic_ledger(2 * 1024 * 1024),
+            0,
+        )
+        .unwrap();
+        rig.sender = StreamSender::new(stream_key.clone(), stream, 1);
+        rig.lock(0, OLD_TIMELINE_NS);
+        rig.at(50_000_000);
+        let start = rig.group_at(50_000_000) + 500_000_000;
+        rig.admit(start, 0).unwrap();
+        (
+            rig,
+            franken_stream::fec::SessionConfig {
+                stream,
+                epoch: 1,
+                presentation_origin_ns: start,
+                key: stream_key,
+            },
+        )
+    }
+
     fn future_spec(current: &franken_stream::fec::SessionConfig) -> FutureFecSpec {
         let mut config = current.clone();
         config.epoch += 1;
@@ -2842,6 +3153,921 @@ mod tests {
             )
             .unwrap();
         clock
+    }
+
+    #[test]
+    fn n06_future_owner_key_revoke_and_identical_reinstall_stales_candidate_preserves_audio() {
+        let (mut rig, current) = unselected_fec_rig();
+        let control = FutureControl::new(current.presentation_origin_ns);
+        let ledger = synthetic_ledger(2 * 1024 * 1024);
+        let mut keys = FutureFixtureKeys::default();
+        let media = SecretHandle::new(SecretKind::StreamAuthKey, "future-media").unwrap();
+        let wrong_kind = SecretHandle::new(SecretKind::ControlPeerKey, "future-media").unwrap();
+        keys.insert(&media, SecretValue::new(vec![0x42; 32]).unwrap())
+            .unwrap();
+        let generation = rig.media.future_binding_generation;
+        assert!(matches!(
+            rig.media.install_future_key(
+                &keys,
+                &wrong_kind,
+                "kitchen",
+                &PeerId::parse("member-kitchen").unwrap()
+            ),
+            Err(FutureFecError::Key)
+        ));
+        assert_eq!(rig.media.future_binding_generation, generation);
+        rig.media
+            .install_future_key(
+                &keys,
+                &media,
+                "kitchen",
+                &PeerId::parse("member-kitchen").unwrap(),
+            )
+            .unwrap();
+        let candidate = rig
+            .media
+            .prepare_future_host_fec(
+                control.verified(),
+                &control.context(),
+                future_spec(&current),
+                &ledger,
+                0,
+            )
+            .unwrap();
+        rig.media.revoke_future_key().unwrap();
+        rig.media
+            .install_future_key(
+                &keys,
+                &media,
+                "kitchen",
+                &PeerId::parse("member-kitchen").unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            candidate.check(&rig.media, &control.context()),
+            Err(FutureFecError::Stale)
+        ));
+        drop(candidate);
+        rig.at(70_000_000);
+        let old = rig.packet(0, 0, current.presentation_origin_ns, 31);
+        assert_eq!(rig.ingest(&old), Ok(Admission::Admitted));
+        let (outcome, audio) = fec_prepare_block(&mut rig, &current, 0);
+        assert_eq!(outcome, Outcome::Real);
+        assert_eq!(audio.as_slice(), pcm(0, 31).as_slice());
+        rig.media.future_binding_generation = u64::MAX;
+        assert!(matches!(
+            rig.media.install_future_key(
+                &keys,
+                &media,
+                "kitchen",
+                &PeerId::parse("member-kitchen").unwrap()
+            ),
+            Err(FutureFecError::Stale)
+        ));
+        assert!(matches!(
+            rig.media.revoke_future_key(),
+            Err(FutureFecError::Stale)
+        ));
+    }
+
+    #[test]
+    fn n06_ready_two_authenticated_targets_keep_old_pcm_and_reject_cross_binding() {
+        use crate::net_carrier::{FutureReadyInputs, MediaEndpoint};
+        use franken_stream::carrier::{CarrierReceiver, ReceiverLimits};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+        let a = stream_id();
+        let b = StreamId::new(a.get() + 1).unwrap();
+        let key_a = StreamKey::from_bytes([0x42; 32]);
+        let key_b = StreamKey::from_bytes([0x43; 32]);
+        let (mut rig_a, current_a) = distinct_stream_rig(a, key_a.clone());
+        let (mut rig_b, current_b) = distinct_stream_rig(b, key_b.clone());
+        assert_eq!(
+            current_a.presentation_origin_ns,
+            current_b.presentation_origin_ns
+        );
+        let start = current_a.presentation_origin_ns;
+        let packet_a = rig_a.packet(0, 0, start, 11);
+        let packet_b = rig_b.packet(0, 0, start, 23);
+        let future_a = admitted_future_clock(start);
+        let future_b = admitted_future_clock(start);
+        let group = future_a.group_ns(90_000_000).unwrap();
+        rig_a.at(90_000_000);
+        rig_b.at(90_000_000);
+        let mut control = FutureControl::new(start);
+        submit_capability_ack(&mut control, "member-kitchen", 10_000_000);
+        submit_capability_ack(&mut control, "member-den", 20_000_000);
+        submit_member_prepare(
+            &mut control,
+            ("kitchen", "member-kitchen"),
+            a,
+            &key_a,
+            "media-kitchen",
+            (70_000_000, future_a.group_ns(70_000_000).unwrap()),
+            start,
+        );
+        submit_member_prepare(
+            &mut control,
+            ("den", "member-den"),
+            b,
+            &key_b,
+            "media-den",
+            (80_000_000, future_b.group_ns(80_000_000).unwrap()),
+            start,
+        );
+        let mut wrong_stream_round = FutureControl::new(start);
+        submit_capability_ack(&mut wrong_stream_round, "member-kitchen", 10_000_000);
+        submit_capability_ack(&mut wrong_stream_round, "member-den", 20_000_000);
+        submit_member_prepare(
+            &mut wrong_stream_round,
+            ("kitchen", "member-kitchen"),
+            b,
+            &key_a,
+            "media-kitchen",
+            (70_000_000, future_a.group_ns(70_000_000).unwrap()),
+            start,
+        );
+        let mut keys = FutureFixtureKeys::default();
+        let media_a = SecretHandle::new(SecretKind::StreamAuthKey, "media-kitchen").unwrap();
+        let media_b = SecretHandle::new(SecretKind::StreamAuthKey, "media-den").unwrap();
+        let peer_a = SecretHandle::new(SecretKind::ControlPeerKey, "member-kitchen").unwrap();
+        let peer_b = SecretHandle::new(SecretKind::ControlPeerKey, "member-den").unwrap();
+        for (handle, bytes) in [
+            (&media_a, 0x42),
+            (&media_b, 0x43),
+            (&peer_a, 0x51),
+            (&peer_b, 0x51),
+        ] {
+            keys.insert(handle, SecretValue::new(vec![bytes; 32]).unwrap())
+                .unwrap();
+        }
+        let carrier = |key: StreamKey, stream: StreamId| {
+            CarrierReceiver::bind(
+                key,
+                stream,
+                1,
+                ReceiverLimits::baseline(),
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                SocketAddr::from((Ipv4Addr::LOCALHOST, 9)),
+            )
+            .unwrap()
+        };
+        let mut endpoint_a = MediaEndpoint::new(carrier(key_a, a), rig_a.media);
+        let mut endpoint_b = MediaEndpoint::new(carrier(key_b, b), rig_b.media);
+        endpoint_a
+            .media_mut()
+            .install_future_key(
+                &keys,
+                &media_a,
+                "kitchen",
+                &PeerId::parse("member-kitchen").unwrap(),
+            )
+            .unwrap();
+        let ledger = synthetic_ledger(2 * 1024 * 1024);
+        {
+            let context = control.context();
+            assert!(matches!(
+                endpoint_b.prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "den", group),
+                    peer_b.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_b,
+                        platform: &mut rig_b.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0
+                    }
+                ),
+                Err(FutureFecError::Key)
+            ));
+        }
+        let mut wrong_keys = FutureFixtureKeys::default();
+        wrong_keys
+            .insert(&media_b, SecretValue::new(vec![0x42; 32]).unwrap())
+            .unwrap();
+        endpoint_b
+            .media_mut()
+            .install_future_key(
+                &wrong_keys,
+                &media_b,
+                "den",
+                &PeerId::parse("member-den").unwrap(),
+            )
+            .unwrap();
+        let held_a = endpoint_a.media().resident_bytes();
+        let held_b = endpoint_b.media().resident_bytes();
+        {
+            let wrong_context = wrong_stream_round.context();
+            assert!(matches!(
+                endpoint_a.prepare_authenticated_future(
+                    wrong_stream_round.verified(),
+                    verified_member_prepare(&wrong_stream_round, "kitchen", group),
+                    peer_a.clone(),
+                    FutureReadyInputs {
+                        context: &wrong_context,
+                        clock: &future_a,
+                        platform: &mut rig_a.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0
+                    }
+                ),
+                Err(FutureFecError::Binding)
+            ));
+            assert_eq!(endpoint_a.media().resident_bytes(), held_a);
+        }
+        let (mut ready_a, ready_b, wire_a, wire_b, mut output_a, pending) = {
+            let context = control.context();
+            assert!(matches!(
+                endpoint_a.prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "den", group),
+                    peer_b.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_a,
+                        platform: &mut rig_a.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0
+                    }
+                ),
+                Err(FutureFecError::Key)
+            ));
+            assert!(matches!(
+                endpoint_b.prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "den", group),
+                    peer_b.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_b,
+                        platform: &mut rig_b.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0
+                    }
+                ),
+                Err(FutureFecError::Key)
+            ));
+            assert_eq!(endpoint_b.media().resident_bytes(), held_b);
+            endpoint_b
+                .media_mut()
+                .install_future_key(
+                    &keys,
+                    &media_b,
+                    "den",
+                    &PeerId::parse("member-den").unwrap(),
+                )
+                .unwrap();
+            let wrong_epoch =
+                GroupClock::new(GroupClockConfig::standard().unwrap(), 1, 7, 100).unwrap();
+            assert!(matches!(
+                endpoint_a.prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "kitchen", group),
+                    peer_a.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &wrong_epoch,
+                        platform: &mut rig_a.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0
+                    }
+                ),
+                Err(FutureFecError::Binding)
+            ));
+            let unadmitted =
+                GroupClock::new(GroupClockConfig::standard().unwrap(), 2, 7, 100).unwrap();
+            assert!(matches!(
+                endpoint_a.prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "kitchen", group),
+                    peer_a.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &unadmitted,
+                        platform: &mut rig_a.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0
+                    }
+                ),
+                Err(FutureFecError::ClockNotAdmitted)
+            ));
+            assert!(matches!(
+                endpoint_a.prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "kitchen", group),
+                    peer_b.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_a,
+                        platform: &mut rig_a.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0
+                    }
+                ),
+                Err(FutureFecError::Key)
+            ));
+            assert!(matches!(
+                endpoint_a.prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "kitchen", group),
+                    peer_a.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_a,
+                        platform: &mut rig_a.platform,
+                        ledger: &synthetic_ledger(held_a),
+                        resident_elsewhere_bytes: 0
+                    }
+                ),
+                Err(FutureFecError::Resources(
+                    HostFecAdmitError::Capacity { .. }
+                ))
+            ));
+            assert_eq!(endpoint_a.media().resident_bytes(), held_a);
+            let mut stale_version = endpoint_a
+                .prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "kitchen", group),
+                    peer_a.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_a,
+                        platform: &mut rig_a.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0,
+                    },
+                )
+                .unwrap();
+            let mut rejected =
+                [0xAA; franken_control::channel::fec_negotiation::MAX_PREPARE_WIRE_BYTES];
+            assert!(matches!(
+                stale_version.emit_ready(
+                    &endpoint_a,
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_a,
+                        platform: &mut rig_a.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0
+                    },
+                    &keys,
+                    2,
+                    &mut rejected
+                ),
+                Err(FutureFecError::Proposal(_))
+            ));
+            assert!(rejected.iter().all(|byte| *byte == 0));
+            drop(stale_version);
+            assert_eq!(endpoint_a.media().resident_bytes(), held_a);
+            let mut tight_budget = endpoint_a
+                .prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "kitchen", group),
+                    peer_a.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_a,
+                        platform: &mut rig_a.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0,
+                    },
+                )
+                .unwrap();
+            let reduced = synthetic_ledger(endpoint_a.media().resident_bytes() - 1);
+            rejected.fill(0xAA);
+            assert!(matches!(
+                tight_budget.emit_ready(
+                    &endpoint_a,
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_a,
+                        platform: &mut rig_a.platform,
+                        ledger: &reduced,
+                        resident_elsewhere_bytes: 0
+                    },
+                    &keys,
+                    1,
+                    &mut rejected
+                ),
+                Err(FutureFecError::Resources(
+                    HostFecAdmitError::Capacity { .. }
+                ))
+            ));
+            assert!(rejected.iter().all(|byte| *byte == 0));
+            drop(tight_budget);
+            assert_eq!(endpoint_a.media().resident_bytes(), held_a);
+            let mut ready_a = endpoint_a
+                .prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "kitchen", group),
+                    peer_a.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_a,
+                        platform: &mut rig_a.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0,
+                    },
+                )
+                .unwrap();
+            let mut ready_b = endpoint_b
+                .prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "den", group),
+                    peer_b.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_b,
+                        platform: &mut rig_b.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0,
+                    },
+                )
+                .unwrap();
+            assert!(endpoint_a.media().resident_bytes() > held_a);
+            assert!(endpoint_b.media().resident_bytes() > held_b);
+            let mut future_config = current_b.clone();
+            future_config.epoch = 2;
+            let source = [[7_u8; franken_stream::fec::BYTES]; franken_stream::fec::K];
+            let digest =
+                franken_stream::fec::content_digest(&future_config.metadata(0).unwrap(), &source);
+            let symbol =
+                franken_stream::fec::sign_symbol(&future_config, 0, 0, 0, digest, &source[0])
+                    .unwrap();
+            let prefetched = ready_b
+                .prefetch_datagram(
+                    &endpoint_b,
+                    &context,
+                    &future_b,
+                    &mut rig_b.platform,
+                    &symbol,
+                )
+                .unwrap();
+            assert_eq!(prefetched.epoch, 2);
+            assert_eq!(prefetched.stream, b.get());
+            let pending = [
+                endpoint_a.media().resident_bytes(),
+                endpoint_b.media().resident_bytes(),
+            ];
+            let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            socket
+                .send_to(&packet_a, endpoint_a.carrier().media_addr().unwrap())
+                .unwrap();
+            socket
+                .send_to(&packet_b, endpoint_b.carrier().media_addr().unwrap())
+                .unwrap();
+            assert_eq!(
+                endpoint_a
+                    .poll(&mut rig_a.platform, &mut rig_a.clock)
+                    .media_accepted,
+                1
+            );
+            assert_eq!(
+                endpoint_b
+                    .poll(&mut rig_b.platform, &mut rig_b.clock)
+                    .media_accepted,
+                1
+            );
+            let mut output_a =
+                [0; franken_control::channel::fec_negotiation::MAX_PREPARE_WIRE_BYTES];
+            let mut output_b =
+                [0; franken_control::channel::fec_negotiation::MAX_PREPARE_WIRE_BYTES];
+            let len_a = ready_a
+                .emit_ready(
+                    &endpoint_a,
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_a,
+                        platform: &mut rig_a.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0,
+                    },
+                    &keys,
+                    1,
+                    &mut output_a,
+                )
+                .unwrap();
+            let len_b = ready_b
+                .emit_ready(
+                    &endpoint_b,
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future_b,
+                        platform: &mut rig_b.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0,
+                    },
+                    &keys,
+                    1,
+                    &mut output_b,
+                )
+                .unwrap();
+            let wire_a = output_a[..len_a].to_vec();
+            let wire_b = output_b[..len_b].to_vec();
+            (ready_a, ready_b, wire_a, wire_b, output_a, pending)
+        };
+        // Both assertions arrive at the real endpoint while unexpired, with the original
+        // local token bucket spacing and the next-epoch admitted group-clock domain.
+        assert_eq!(
+            control
+                .owner
+                .receive_with_group_time(
+                    100_000_000,
+                    future_a.group_ns(100_000_000).unwrap(),
+                    &control.session,
+                    &wire_a
+                )
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Ready))
+        );
+        assert_eq!(
+            control
+                .owner
+                .receive_with_group_time(
+                    110_000_000,
+                    future_a.group_ns(110_000_000).unwrap(),
+                    &control.session,
+                    &wire_a
+                )
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Duplicate))
+        );
+        assert_eq!(
+            control
+                .owner
+                .receive_with_group_time(
+                    120_000_000,
+                    future_b.group_ns(120_000_000).unwrap(),
+                    &control.session,
+                    &wire_b
+                )
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Ready))
+        );
+        assert_eq!(
+            control
+                .owner
+                .receive_with_group_time(
+                    130_000_000,
+                    future_b.group_ns(130_000_000).unwrap(),
+                    &control.session,
+                    &wire_b
+                )
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Duplicate))
+        );
+        let ready_assertions = {
+            let (coordinator, authority) =
+                control.owner.proposal_context(&control.session).unwrap();
+            coordinator
+                .ready_assertions(
+                    authority,
+                    &control.session,
+                    future_b.group_ns(130_000_000).unwrap(),
+                )
+                .unwrap()
+                .len()
+        };
+        assert_eq!(ready_assertions, 2);
+        let mut old_pcm_probe_sha256 = Vec::new();
+        // Advance each actual old N01 engine to its unmodified uncertainty-adjusted cutoff.
+        for (endpoint, rig_clock, platform, time, seed) in [
+            (
+                &mut endpoint_a,
+                &mut rig_a.clock,
+                &mut rig_a.platform,
+                &rig_a.time,
+                11_u8,
+            ),
+            (
+                &mut endpoint_b,
+                &mut rig_b.clock,
+                &mut rig_b.platform,
+                &rig_b.time,
+                23_u8,
+            ),
+        ] {
+            let mut local = rig_clock
+                .local_for_group(start - 2_500_000, 70_000_000)
+                .unwrap();
+            for _ in 0..8 {
+                let group = rig_clock.group_ns(local).unwrap();
+                let uncertainty = rig_clock.report(local).uncertainty_ns.unwrap();
+                let cutoff =
+                    franken_stream::playout::consume_by(start, 1_000_000, 1_000_000, uncertainty);
+                if group >= cutoff {
+                    break;
+                }
+                local += cutoff - group;
+            }
+            time.set(local);
+            let mut pcm_out = [0; 1024];
+            let result = endpoint
+                .media_mut()
+                .prepare(platform, rig_clock, &mut pcm_out)
+                .unwrap();
+            assert!(
+                matches!(result, Preparation::Prepared(ref block) if block.decision.outcome == Outcome::Real)
+            );
+            assert_eq!(pcm_out.as_slice(), pcm(0, seed).as_slice());
+            old_pcm_probe_sha256.push(
+                franken_stream::fec::content_digest(&[0; 64], &[pcm_out; franken_stream::fec::K])
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>(),
+            );
+        }
+        let context = control.context();
+        assert!(matches!(
+            ready_a.emit_ready(
+                &endpoint_a,
+                FutureReadyInputs {
+                    context: &context,
+                    clock: &future_a,
+                    platform: &mut rig_a.platform,
+                    ledger: &ledger,
+                    resident_elsewhere_bytes: 0
+                },
+                &keys,
+                2,
+                &mut output_a
+            ),
+            Err(FutureFecError::Proposal(_))
+        ));
+        assert!(output_a.iter().all(|byte| *byte == 0));
+        drop(ready_a);
+        drop(ready_b);
+        assert_eq!(endpoint_a.media().resident_bytes(), held_a);
+        assert_eq!(endpoint_b.media().resident_bytes(), held_b);
+        println!(
+            "N06-READY {}",
+            serde_json::json!({
+                "schema": "n06.ready-resource.v1",
+                "profile": franken_stream::fec::PROFILE,
+                "current_epoch": endpoint_a.carrier().epoch(),
+                "future_epoch": future_a.epoch(),
+                "target_streams": [endpoint_a.carrier().stream_id().get(), endpoint_b.carrier().stream_id().get()],
+                "ready_lengths": [wire_a.len(), wire_b.len()],
+                "ready_assertions": ready_assertions,
+                "before_bytes": [held_a, held_b],
+                "pending_bytes": pending,
+                "after_drop_bytes": [endpoint_a.media().resident_bytes(), endpoint_b.media().resident_bytes()],
+                "old_pcm_probe_sha256": old_pcm_probe_sha256,
+                "active_fec_selected": [endpoint_a.media().host_fec_selected(), endpoint_b.media().host_fec_selected()],
+            })
+        );
+    }
+
+    #[test]
+    fn n06_ready_reinstall_and_target_role_change_refuse_emission() {
+        use crate::net_carrier::{FutureReadyInputs, MediaEndpoint};
+        use franken_stream::carrier::{CarrierReceiver, ReceiverLimits};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        let (mut rig, current) = unselected_fec_rig();
+        let start = current.presentation_origin_ns;
+        rig.at(70_000_000);
+        let group = admitted_future_clock(start).group_ns(70_000_000).unwrap();
+        let mut control = FutureControl::new(start);
+        submit_capability_ack(&mut control, "member-kitchen", 10_000_000);
+        submit_capability_ack(&mut control, "member-den", 20_000_000);
+        submit_member_prepare(
+            &mut control,
+            ("kitchen", "member-kitchen"),
+            stream_id(),
+            &key(),
+            "media-kitchen",
+            (70_000_000, group),
+            start,
+        );
+        let media_handle = SecretHandle::new(SecretKind::StreamAuthKey, "media-kitchen").unwrap();
+        let peer_handle = SecretHandle::new(SecretKind::ControlPeerKey, "member-kitchen").unwrap();
+        let peer = PeerId::parse("member-kitchen").unwrap();
+        let mut keys = FutureFixtureKeys::default();
+        keys.insert(&media_handle, SecretValue::new(vec![0x42; 32]).unwrap())
+            .unwrap();
+        keys.insert(&peer_handle, SecretValue::new(vec![0x51; 32]).unwrap())
+            .unwrap();
+        let carrier = CarrierReceiver::bind(
+            key(),
+            stream_id(),
+            1,
+            ReceiverLimits::baseline(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 9)),
+        )
+        .unwrap();
+        let mut endpoint = MediaEndpoint::new(carrier, rig.media);
+        endpoint
+            .media_mut()
+            .install_future_key(&keys, &media_handle, "kitchen", &peer)
+            .unwrap();
+        let future = admitted_future_clock(start);
+        let ledger = synthetic_ledger(2 * 1024 * 1024);
+        let mut ready = {
+            let context = control.context();
+            endpoint
+                .prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "kitchen", group),
+                    peer_handle.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future,
+                        platform: &mut rig.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0,
+                    },
+                )
+                .unwrap()
+        };
+        endpoint.media_mut().revoke_future_key().unwrap();
+        endpoint
+            .media_mut()
+            .install_future_key(&keys, &media_handle, "kitchen", &peer)
+            .unwrap();
+        let mut output = [0xAA; franken_control::channel::fec_negotiation::MAX_PREPARE_WIRE_BYTES];
+        assert!(matches!(
+            ready.emit_ready(
+                &endpoint,
+                FutureReadyInputs {
+                    context: &control.context(),
+                    clock: &future,
+                    platform: &mut rig.platform,
+                    ledger: &ledger,
+                    resident_elsewhere_bytes: 0
+                },
+                &keys,
+                1,
+                &mut output
+            ),
+            Err(FutureFecError::Stale)
+        ));
+        assert!(output.iter().all(|byte| *byte == 0));
+        drop(ready);
+        let mut ready = {
+            let context = control.context();
+            endpoint
+                .prepare_authenticated_future(
+                    control.verified(),
+                    verified_member_prepare(&control, "kitchen", group),
+                    peer_handle.clone(),
+                    FutureReadyInputs {
+                        context: &context,
+                        clock: &future,
+                        platform: &mut rig.platform,
+                        ledger: &ledger,
+                        resident_elsewhere_bytes: 0,
+                    },
+                )
+                .unwrap()
+        };
+        control.owner.revoke(&peer).unwrap();
+        control
+            .owner
+            .admit(&peer, PeerRole::LocalUser, &[0x51; 32], Some(1), 2)
+            .unwrap();
+        output.fill(0xAA);
+        assert!(matches!(
+            ready.emit_ready(
+                &endpoint,
+                FutureReadyInputs {
+                    context: &control.context(),
+                    clock: &future,
+                    platform: &mut rig.platform,
+                    ledger: &ledger,
+                    resident_elsewhere_bytes: 0
+                },
+                &keys,
+                2,
+                &mut output
+            ),
+            Err(FutureFecError::Proposal(_))
+        ));
+        assert!(output.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn n06_ready_second_clock_read_expiry_clears_output_after_old_real_pcm() {
+        use crate::net_carrier::{FutureReadyInputs, MediaEndpoint};
+        use franken_stream::carrier::{CarrierReceiver, ReceiverLimits};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        let (mut rig, current) = unselected_fec_rig();
+        let start = current.presentation_origin_ns;
+        rig.at(70_000_000);
+        let old = rig.packet(0, 0, start, 29);
+        assert_eq!(rig.ingest(&old), Ok(Admission::Admitted));
+        let group = admitted_future_clock(start).group_ns(70_000_000).unwrap();
+        let mut control = FutureControl::new(start);
+        submit_capability_ack(&mut control, "member-kitchen", 10_000_000);
+        submit_capability_ack(&mut control, "member-den", 20_000_000);
+        submit_member_prepare(
+            &mut control,
+            ("kitchen", "member-kitchen"),
+            stream_id(),
+            &key(),
+            "media-kitchen",
+            (70_000_000, group),
+            start,
+        );
+        let media_handle = SecretHandle::new(SecretKind::StreamAuthKey, "media-kitchen").unwrap();
+        let peer_handle = SecretHandle::new(SecretKind::ControlPeerKey, "member-kitchen").unwrap();
+        let peer = PeerId::parse("member-kitchen").unwrap();
+        let mut keys = FutureFixtureKeys::default();
+        keys.insert(&media_handle, SecretValue::new(vec![0x42; 32]).unwrap())
+            .unwrap();
+        keys.insert(&peer_handle, SecretValue::new(vec![0x51; 32]).unwrap())
+            .unwrap();
+        let carrier = CarrierReceiver::bind(
+            key(),
+            stream_id(),
+            1,
+            ReceiverLimits::baseline(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 9)),
+        )
+        .unwrap();
+        let mut endpoint = MediaEndpoint::new(carrier, rig.media);
+        endpoint
+            .media_mut()
+            .install_future_key(&keys, &media_handle, "kitchen", &peer)
+            .unwrap();
+        let future = admitted_future_clock(start);
+        let ledger = synthetic_ledger(2 * 1024 * 1024);
+        let context = control.context();
+        let mut ready = endpoint
+            .prepare_authenticated_future(
+                control.verified(),
+                verified_member_prepare(&control, "kitchen", group),
+                peer_handle,
+                FutureReadyInputs {
+                    context: &context,
+                    clock: &future,
+                    platform: &mut rig.platform,
+                    ledger: &ledger,
+                    resident_elsewhere_bytes: 0,
+                },
+            )
+            .unwrap();
+        let mut local = rig
+            .clock
+            .local_for_group(start - 2_500_000, 70_000_000)
+            .unwrap();
+        for _ in 0..8 {
+            let group = rig.clock.group_ns(local).unwrap();
+            let uncertainty = rig.clock.report(local).uncertainty_ns.unwrap();
+            let cutoff =
+                franken_stream::playout::consume_by(start, 1_000_000, 1_000_000, uncertainty);
+            if group >= cutoff {
+                break;
+            }
+            local += cutoff - group;
+        }
+        rig.time.set(local);
+        let mut audio = [0; 1024];
+        assert!(
+            matches!(endpoint.media_mut().prepare(&mut rig.platform, &mut rig.clock, &mut audio).unwrap(),
+            Preparation::Prepared(ref block) if block.decision.outcome == Outcome::Real)
+        );
+        assert_eq!(audio.as_slice(), pcm(0, 29).as_slice());
+        let expiry_local = future.local_for_group(start - 1_000_000, local).unwrap() + 1_000;
+        rig.jump_on_read
+            .set(Some((rig.reads.get() + 2, expiry_local)));
+        let mut output = [0xAA; franken_control::channel::fec_negotiation::MAX_PREPARE_WIRE_BYTES];
+        assert!(matches!(
+            ready.emit_ready(
+                &endpoint,
+                FutureReadyInputs {
+                    context: &context,
+                    clock: &future,
+                    platform: &mut rig.platform,
+                    ledger: &ledger,
+                    resident_elsewhere_bytes: 0
+                },
+                &keys,
+                1,
+                &mut output
+            ),
+            Err(FutureFecError::Proposal(_))
+        ));
+        assert!(output.iter().all(|byte| *byte == 0));
+        // Even a later rollback cannot revive this already-expired local guard.
+        rig.time.set(local);
+        assert!(matches!(
+            ready.emit_ready(
+                &endpoint,
+                FutureReadyInputs {
+                    context: &context,
+                    clock: &future,
+                    platform: &mut rig.platform,
+                    ledger: &ledger,
+                    resident_elsewhere_bytes: 0
+                },
+                &keys,
+                1,
+                &mut output
+            ),
+            Err(FutureFecError::Stale)
+        ));
     }
 
     #[test]
@@ -3058,7 +4284,7 @@ mod tests {
             Err(FutureFecError::Binding)
         ));
         let mut wrong = future_spec(&current);
-        wrong.anchor_frame = u64::MAX & !1023;
+        wrong.anchor_frame = !1023_u64;
         assert!(matches!(
             rig.media.prepare_future_host_fec(
                 control.verified(),

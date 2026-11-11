@@ -154,6 +154,36 @@ impl Endpoint {
         session: &UnifiedGroupSession,
         datagram: &[u8],
     ) -> FecHandled {
+        self.handle_fec_inner(channel, fec, now_ns, None, session, datagram)
+    }
+
+    /// V2 requires trusted time from the independently admitted next-epoch group
+    /// clock in the bound presentation domain, distinct from local bucket time.
+    /// The numeric argument alone is not proof of clock admission.
+    pub fn handle_with_fec_at_group<A: PeerAuthority + ReplySigner>(
+        &mut self,
+        channel: &mut ControlChannel<A>,
+        fec: &mut super::fec_negotiation::FecCoordinator,
+        now_ns: u64,
+        group_now_ns: u64,
+        session: &UnifiedGroupSession,
+        datagram: &[u8],
+    ) -> FecHandled {
+        // The group time is caller-trusted and independent of the bytes. Fence an
+        // existing round even when the packet is malformed or rate limited.
+        fec.observe_existing_group_time(group_now_ns);
+        self.handle_fec_inner(channel, fec, now_ns, Some(group_now_ns), session, datagram)
+    }
+
+    fn handle_fec_inner<A: PeerAuthority + ReplySigner>(
+        &mut self,
+        channel: &mut ControlChannel<A>,
+        fec: &mut super::fec_negotiation::FecCoordinator,
+        now_ns: u64,
+        group_now_ns: Option<u64>,
+        session: &UnifiedGroupSession,
+        datagram: &[u8],
+    ) -> FecHandled {
         if datagram.starts_with(&super::fec_negotiation::MAGIC) {
             bump(&mut self.fec_stats.received);
             if let Err(retry_after_ns) = self.fec_ingress.try_take(now_ns) {
@@ -161,7 +191,16 @@ impl Endpoint {
                 return FecHandled::RateLimited { retry_after_ns };
             }
             bump(&mut self.fec_stats.admitted);
-            FecHandled::Fec(fec.ingest(datagram, channel.authority(), session))
+            if datagram.get(4) == Some(&super::fec_negotiation::PREPARE_VERSION) {
+                FecHandled::Fec(match group_now_ns {
+                    Some(group_now_ns) => {
+                        fec.ingest_prepare(datagram, channel.authority(), session, group_now_ns)
+                    }
+                    None => Err(super::fec_negotiation::FecError::Stale),
+                })
+            } else {
+                FecHandled::Fec(fec.ingest(datagram, channel.authority(), session))
+            }
         } else {
             FecHandled::Control(self.handle(channel, now_ns, session, datagram))
         }

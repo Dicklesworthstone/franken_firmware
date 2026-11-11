@@ -6,6 +6,7 @@
 //! The caller must use a fresh proposal ID for each attempt, including restarts.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Mutex;
 
 use franken_session::UnifiedGroupSession;
 use sha2::{Digest, Sha256};
@@ -165,6 +166,8 @@ pub enum Ingress {
     Proposed,
     Acknowledged,
     Duplicate,
+    Prepared,
+    Ready,
 }
 
 /// An immutable member binding in an authenticated proposal.
@@ -264,6 +267,429 @@ impl VerifiedFecProposal {
     }
 }
 
+/// One targeted preparation. The slot and store generation belong to this member.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrepareDescriptor {
+    proposal: FecProposal,
+    member: String,
+    peer: PeerId,
+    target_stream: u64,
+    anchor_frame: u64,
+    start_group_ns: u64,
+    expires_group_ns: u64,
+    key_slot: String,
+    key_generation: u64,
+}
+
+impl PrepareDescriptor {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        proposal: FecProposal,
+        member: &str,
+        peer: PeerId,
+        target_stream: u64,
+        anchor_frame: u64,
+        start_group_ns: u64,
+        expires_group_ns: u64,
+        key_slot: &str,
+        key_generation: u64,
+    ) -> Result<Self, FecError> {
+        use crate::contracts::secret_store::SlotName;
+        if member.is_empty()
+            || member.len() > 64
+            || key_generation == 0
+            || target_stream == 0
+            || SlotName::parse(key_slot).is_err()
+        {
+            return Err(FecError::Malformed);
+        }
+        let offset = u64::try_from(u128::from(anchor_frame) * 62_500 / 3)
+            .map_err(|_| FecError::Malformed)?;
+        if !anchor_frame.is_multiple_of(1024)
+            || start_group_ns.checked_sub(offset) != Some(proposal.origin_ns)
+            || expires_group_ns > start_group_ns
+        {
+            return Err(FecError::Conflict);
+        }
+        Ok(Self {
+            proposal,
+            member: member.to_owned(),
+            peer,
+            target_stream,
+            anchor_frame,
+            start_group_ns,
+            expires_group_ns,
+            key_slot: key_slot.to_owned(),
+            key_generation,
+        })
+    }
+
+    /// Canonical bounded context for the stream key's fixed-domain commitment.
+    #[must_use]
+    fn key_context_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"FFCN-v2-key-context");
+        put_label(&mut out, &self.proposal.group);
+        for n in [
+            self.proposal.stream,
+            self.proposal.current_epoch,
+            self.proposal.next_epoch,
+            self.proposal.origin_ns,
+            self.proposal.proposal_id,
+            self.proposal.membership_revision,
+        ] {
+            out.extend_from_slice(&n.to_be_bytes());
+        }
+        out.extend_from_slice(&self.proposal.membership_digest);
+        put_label(&mut out, &self.member);
+        put_label(&mut out, self.peer.as_str());
+        out.extend_from_slice(&self.target_stream.to_be_bytes());
+        for n in [
+            self.anchor_frame,
+            self.start_group_ns,
+            self.expires_group_ns,
+        ] {
+            out.extend_from_slice(&n.to_be_bytes());
+        }
+        put_label(&mut out, &self.key_slot);
+        out.extend_from_slice(&self.key_generation.to_be_bytes());
+        out
+    }
+    #[must_use]
+    pub fn commitment_context(&self) -> Vec<u8> {
+        self.key_context_bytes()
+    }
+    /// Write without heap allocation so callers can include transient work in peak accounting.
+    pub fn write_commitment_context(
+        &self,
+        out: &mut [u8; MAX_PREPARE_CONTEXT_BYTES],
+    ) -> Result<usize, FecError> {
+        let mut w = BoundedWriter::new(out);
+        w.bytes(b"FFCN-v2-key-context")?;
+        write_proposal(&mut w, &self.proposal)?;
+        w.label(&self.member)?;
+        w.label(self.peer.as_str())?;
+        for value in [
+            self.target_stream,
+            self.anchor_frame,
+            self.start_group_ns,
+            self.expires_group_ns,
+        ] {
+            w.number(value)?;
+        }
+        w.label(&self.key_slot)?;
+        w.number(self.key_generation)?;
+        Ok(w.pos)
+    }
+    #[must_use]
+    pub const fn proposal(&self) -> &FecProposal {
+        &self.proposal
+    }
+    #[must_use]
+    pub fn member(&self) -> &str {
+        &self.member
+    }
+    #[must_use]
+    pub const fn peer(&self) -> &PeerId {
+        &self.peer
+    }
+    #[must_use]
+    pub const fn target_stream(&self) -> u64 {
+        self.target_stream
+    }
+    #[must_use]
+    pub const fn anchor_frame(&self) -> u64 {
+        self.anchor_frame
+    }
+    #[must_use]
+    pub const fn start_group_ns(&self) -> u64 {
+        self.start_group_ns
+    }
+    #[must_use]
+    pub const fn expires_group_ns(&self) -> u64 {
+        self.expires_group_ns
+    }
+    #[must_use]
+    pub fn key_slot(&self) -> &str {
+        &self.key_slot
+    }
+    #[must_use]
+    pub const fn store_generation(&self) -> u64 {
+        self.key_generation
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrepareBinding {
+    descriptor: PrepareDescriptor,
+    key_commitment: [u8; 32],
+}
+impl PrepareBinding {
+    #[must_use]
+    pub const fn new(descriptor: PrepareDescriptor, key_commitment: [u8; 32]) -> Self {
+        Self {
+            descriptor,
+            key_commitment,
+        }
+    }
+    #[must_use]
+    pub const fn descriptor(&self) -> &PrepareDescriptor {
+        &self.descriptor
+    }
+    fn proposal(&self) -> &FecProposal {
+        &self.descriptor.proposal
+    }
+    fn member(&self) -> &str {
+        &self.descriptor.member
+    }
+    fn peer(&self) -> &PeerId {
+        &self.descriptor.peer
+    }
+    fn anchor_frame(&self) -> u64 {
+        self.descriptor.anchor_frame
+    }
+    fn start_group_ns(&self) -> u64 {
+        self.descriptor.start_group_ns
+    }
+    fn expires_group_ns(&self) -> u64 {
+        self.descriptor.expires_group_ns
+    }
+    fn key_slot(&self) -> &str {
+        &self.descriptor.key_slot
+    }
+    fn key_generation(&self) -> u64 {
+        self.descriptor.key_generation
+    }
+    #[must_use]
+    pub const fn key_commitment(&self) -> &[u8; 32] {
+        &self.key_commitment
+    }
+    fn owned_heap_bytes(&self) -> usize {
+        self.descriptor.proposal.group.capacity()
+            + self.descriptor.member.capacity()
+            + self.descriptor.peer.owned_heap_bytes()
+            + self.descriptor.key_slot.capacity()
+    }
+}
+
+pub(super) const PREPARE_VERSION: u8 = 2;
+pub const MAX_PREPARE_WIRE_BYTES: usize = 512;
+pub const MAX_PREPARE_CONTEXT_BYTES: usize = 384;
+const MAX_PREPARE_LEASE_NS: u64 = 5_000_000_000;
+
+struct BoundedWriter<'a> {
+    bytes: &'a mut [u8],
+    pos: usize,
+}
+impl<'a> BoundedWriter<'a> {
+    fn new(bytes: &'a mut [u8]) -> Self {
+        Self { bytes, pos: 0 }
+    }
+    fn bytes(&mut self, value: &[u8]) -> Result<(), FecError> {
+        let end = self
+            .pos
+            .checked_add(value.len())
+            .ok_or(FecError::Malformed)?;
+        self.bytes
+            .get_mut(self.pos..end)
+            .ok_or(FecError::Malformed)?
+            .copy_from_slice(value);
+        self.pos = end;
+        Ok(())
+    }
+    fn number(&mut self, value: u64) -> Result<(), FecError> {
+        self.bytes(&value.to_be_bytes())
+    }
+    fn label(&mut self, value: &str) -> Result<(), FecError> {
+        self.bytes(&[u8::try_from(value.len()).map_err(|_| FecError::Malformed)?])?;
+        self.bytes(value.as_bytes())
+    }
+}
+fn write_proposal(w: &mut BoundedWriter<'_>, proposal: &FecProposal) -> Result<(), FecError> {
+    w.label(&proposal.group)?;
+    for value in [
+        proposal.stream,
+        proposal.current_epoch,
+        proposal.next_epoch,
+        proposal.origin_ns,
+        proposal.proposal_id,
+        proposal.membership_revision,
+    ] {
+        w.number(value)?;
+    }
+    w.bytes(&proposal.membership_digest)
+}
+
+/// Write canonical READY signing bytes directly into bounded caller-owned storage.
+pub fn write_ready_signing_bytes(
+    binding: &PrepareBinding,
+    peer: &PeerId,
+    version: u64,
+    out: &mut [u8; MAX_PREPARE_WIRE_BYTES],
+) -> Result<usize, FecError> {
+    let mut w = BoundedWriter::new(out);
+    w.bytes(&MAGIC)?;
+    w.bytes(&[PREPARE_VERSION, 2])?;
+    w.label(peer.as_str())?;
+    w.number(version)?;
+    write_proposal(&mut w, binding.proposal())?;
+    w.label(PROFILE)?;
+    w.label(CODING_REVISION)?;
+    w.bytes(&[K, N])?;
+    w.bytes(&DATAGRAM_BYTES.to_be_bytes())?;
+    w.label(binding.member())?;
+    w.label(binding.peer().as_str())?;
+    for value in [
+        binding.descriptor.target_stream,
+        binding.anchor_frame(),
+        binding.start_group_ns(),
+        binding.expires_group_ns(),
+    ] {
+        w.number(value)?;
+    }
+    w.label(binding.key_slot())?;
+    w.number(binding.key_generation())?;
+    w.bytes(binding.key_commitment())?;
+    Ok(w.pos)
+}
+
+/// Append a request-domain proof to already written signing bytes without allocation.
+pub fn append_ready_proof(
+    out: &mut [u8; MAX_PREPARE_WIRE_BYTES],
+    signed_len: usize,
+    proof: &[u8; PROOF_LEN],
+) -> Result<usize, FecError> {
+    let end = signed_len
+        .checked_add(PROOF_LEN)
+        .ok_or(FecError::Malformed)?;
+    out.get_mut(signed_len..end)
+        .ok_or(FecError::Malformed)?
+        .copy_from_slice(proof);
+    Ok(end)
+}
+
+fn v2_signing_bytes(binding: &PrepareBinding, peer: &PeerId, version: u64, kind: u8) -> Vec<u8> {
+    let mut out = signing_bytes(MessageKind::Proposal, peer, version, binding.proposal());
+    out[4] = PREPARE_VERSION;
+    out[5] = kind;
+    put_label(&mut out, binding.member());
+    put_label(&mut out, binding.peer().as_str());
+    out.extend_from_slice(&binding.descriptor.target_stream.to_be_bytes());
+    for n in [
+        binding.anchor_frame(),
+        binding.start_group_ns(),
+        binding.expires_group_ns(),
+    ] {
+        out.extend_from_slice(&n.to_be_bytes());
+    }
+    put_label(&mut out, binding.key_slot());
+    out.extend_from_slice(&binding.key_generation().to_be_bytes());
+    out.extend_from_slice(binding.key_commitment());
+    out
+}
+#[must_use]
+pub fn prepare_signing_bytes(binding: &PrepareBinding, peer: &PeerId, version: u64) -> Vec<u8> {
+    v2_signing_bytes(binding, peer, version, 1)
+}
+#[must_use]
+pub fn ready_signing_bytes(binding: &PrepareBinding, peer: &PeerId, version: u64) -> Vec<u8> {
+    v2_signing_bytes(binding, peer, version, 2)
+}
+fn encode_v2(
+    binding: &PrepareBinding,
+    peer: &PeerId,
+    version: u64,
+    proof: &AuthProof,
+    kind: u8,
+) -> Result<Vec<u8>, FecError> {
+    if proof.as_bytes().len() != PROOF_LEN {
+        return Err(FecError::Malformed);
+    }
+    let mut wire = v2_signing_bytes(binding, peer, version, kind);
+    wire.extend_from_slice(proof.as_bytes());
+    if wire.len() > MAX_PREPARE_WIRE_BYTES {
+        return Err(FecError::Malformed);
+    }
+    Ok(wire)
+}
+pub fn encode_prepare(
+    binding: &PrepareBinding,
+    peer: &PeerId,
+    version: u64,
+    proof: &AuthProof,
+) -> Result<Vec<u8>, FecError> {
+    encode_v2(binding, peer, version, proof, 1)
+}
+pub fn encode_ready(
+    binding: &PrepareBinding,
+    peer: &PeerId,
+    version: u64,
+    proof: &AuthProof,
+) -> Result<Vec<u8>, FecError> {
+    encode_v2(binding, peer, version, proof, 2)
+}
+
+struct PrepareRound {
+    binding: PrepareBinding,
+    proposer: Authenticated,
+    ready: Option<Authenticated>,
+}
+
+/// One round's trusted group-time observations. An observed rollback or expiry
+/// permanently invalidates the round, including previously issued tokens.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PrepareClock {
+    floor: Option<u64>,
+    invalid: bool,
+}
+
+/// Authenticated per-member PREPARE, not a resource or activation witness.
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedFecPrepare {
+    proposal: VerifiedFecProposal,
+    binding: PrepareBinding,
+}
+impl VerifiedFecPrepare {
+    #[must_use]
+    pub const fn binding(&self) -> &PrepareBinding {
+        &self.binding
+    }
+    #[must_use]
+    pub fn owned_heap_bytes(&self) -> usize {
+        self.proposal
+            .owned_heap_bytes()
+            .saturating_add(self.binding.owned_heap_bytes())
+    }
+    #[must_use]
+    pub fn resident_bytes(&self) -> usize {
+        std::mem::size_of::<Self>().saturating_add(self.owned_heap_bytes())
+    }
+    pub fn revalidate<A: PeerAuthority>(
+        &self,
+        coordinator: &FecCoordinator,
+        authority: &A,
+        session: &UnifiedGroupSession,
+        group_now_ns: u64,
+    ) -> Result<(), FecError> {
+        self.proposal.revalidate(coordinator, authority, session)?;
+        let round = coordinator
+            .preparations
+            .get(self.binding.member())
+            .ok_or(FecError::Stale)?;
+        let target = coordinator
+            .acknowledgments
+            .get(self.binding.peer())
+            .ok_or(FecError::Stale)?;
+        if round.binding != self.binding
+            || !authority.is_current(&round.proposer)
+            || !authority.is_current(target)
+        {
+            return Err(FecError::Stale);
+        }
+        coordinator.observe_group_time(group_now_ns)
+    }
+}
+
 /// A selected profile backed by a verified proposal and every required peer ack.
 /// Its fields cannot be fabricated by a control-path caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -311,9 +737,50 @@ pub struct FecCoordinator {
     members: BTreeMap<String, MemberBinding>,
     proposal_auth: Option<Authenticated>,
     acknowledgments: BTreeMap<PeerId, Authenticated>,
+    preparations: BTreeMap<String, PrepareRound>,
+    prepare_clock: Mutex<PrepareClock>,
+    prepare_timing: Option<(u64, u64, u64)>,
 }
 
 impl FecCoordinator {
+    /// Independently supplied trusted time fences only an already-installed round.
+    /// Packet contents cannot create a round or select this observation.
+    pub(super) fn observe_existing_group_time(&self, now: u64) {
+        if self.prepare_timing.is_some() {
+            let _ = self.observe_group_time(now);
+        }
+    }
+
+    /// Observe caller-supplied trusted group time at a local read/use boundary.
+    /// A poisoned lock fails closed, as do rollback and the common deadline.
+    fn observe_group_time(&self, now: u64) -> Result<(), FecError> {
+        let mut clock = self.prepare_clock.lock().map_err(|_| FecError::Stale)?;
+        if clock.invalid {
+            return Err(FecError::Stale);
+        }
+        if clock.floor.is_some_and(|floor| now < floor)
+            || self
+                .prepare_timing
+                .is_some_and(|(_, _, expiry)| now >= expiry)
+        {
+            clock.invalid = true;
+            return Err(FecError::Stale);
+        }
+        clock.floor = Some(now);
+        Ok(())
+    }
+
+    /// Charge a successful authenticated ingress observation. Rejected wire does
+    /// not modify the clock: only a valid insert or identical retry reaches here.
+    fn accept_wire_time(&self, now: u64) -> Result<(), FecError> {
+        let mut clock = self.prepare_clock.lock().map_err(|_| FecError::Stale)?;
+        if clock.invalid || clock.floor.is_some_and(|floor| now < floor) {
+            return Err(FecError::Stale);
+        }
+        clock.floor = Some(now);
+        Ok(())
+    }
+
     /// Bind the trusted caller's expected proposal and complete group mapping.
     /// A fresh, nonzero proposal ID is required even after a process restart.
     pub fn new(
@@ -407,6 +874,9 @@ impl FecCoordinator {
             members,
             proposal_auth: None,
             acknowledgments: BTreeMap::new(),
+            preparations: BTreeMap::new(),
+            prepare_clock: Mutex::new(PrepareClock::default()),
+            prepare_timing: None,
         })
     }
 
@@ -561,6 +1031,166 @@ impl FecCoordinator {
         }
     }
 
+    /// Retrieve the actual target's authenticated PREPARE, before resource admission.
+    pub fn validated_prepare<A: PeerAuthority>(
+        &self,
+        authority: &A,
+        session: &UnifiedGroupSession,
+        member: &str,
+        group_now_ns: u64,
+    ) -> Result<VerifiedFecPrepare, FecError> {
+        let proposal = self.validated_proposal(authority, session)?;
+        let binding = self
+            .preparations
+            .get(member)
+            .ok_or(FecError::MissingAcknowledgments)?
+            .binding
+            .clone();
+        let token = VerifiedFecPrepare { proposal, binding };
+        token.revalidate(self, authority, session, group_now_ns)?;
+        Ok(token)
+    }
+
+    /// Current unexpired peer assertions. These do not guarantee retained resources or activation.
+    pub fn ready_assertions<A: PeerAuthority>(
+        &self,
+        authority: &A,
+        session: &UnifiedGroupSession,
+        group_now_ns: u64,
+    ) -> Result<Vec<PeerId>, FecError> {
+        self.current_proposal_authority(authority, session)?;
+        self.observe_group_time(group_now_ns)?;
+        let mut ready = Vec::new();
+        for round in self.preparations.values() {
+            if let Some(auth) = &round.ready {
+                if group_now_ns >= round.binding.expires_group_ns()
+                    || !authority.is_current(auth)
+                    || !authority.is_current(&round.proposer)
+                {
+                    return Err(FecError::Stale);
+                }
+                ready.push(auth.peer.clone());
+            }
+        }
+        Ok(ready)
+    }
+
+    pub(super) fn ingest_prepare<A: PeerAuthority>(
+        &mut self,
+        wire: &[u8],
+        authority: &A,
+        session: &UnifiedGroupSession,
+        group_now_ns: u64,
+    ) -> Result<Ingress, FecError> {
+        let message = decode_v2(wire)?;
+        let auth = authority
+            .authenticate(&message.sender, &wire[..message.signed_len], &message.proof)
+            .map_err(|_| FecError::Authentication)?;
+        if auth.peer != message.sender || !authority.is_current(&auth) {
+            return Err(FecError::Authentication);
+        }
+        if auth.version != message.version || auth.bound_epoch != Some(self.expected.current_epoch)
+        {
+            return Err(FecError::Stale);
+        }
+        if !message.supported {
+            return Err(FecError::Unsupported);
+        }
+        let current = self.current_proposal_authority(authority, session)?;
+        let binding = message.binding;
+        if group_now_ns >= binding.expires_group_ns()
+            || binding.expires_group_ns().saturating_sub(group_now_ns) > MAX_PREPARE_LEASE_NS
+        {
+            return Err(FecError::Stale);
+        }
+        if binding.proposal() != &self.expected {
+            return Err(FecError::Conflict);
+        }
+        let timing = (
+            binding.anchor_frame(),
+            binding.start_group_ns(),
+            binding.expires_group_ns(),
+        );
+        if self
+            .prepare_timing
+            .is_some_and(|existing| existing != timing)
+        {
+            return Err(FecError::Conflict);
+        }
+        let target = self
+            .members
+            .get(binding.member())
+            .ok_or(FecError::Unauthorized)?;
+        if target.peer != *binding.peer() {
+            return Err(FecError::Unauthorized);
+        }
+        let capability = self
+            .acknowledgments
+            .get(&target.peer)
+            .ok_or(FecError::MissingAcknowledgments)?;
+        if capability.role != target.role || !authority.is_current(capability) {
+            return Err(FecError::Authentication);
+        }
+        match message.kind {
+            1 => {
+                if message.sender != self.proposer
+                    || auth.role != self.proposer_role
+                    || auth != *current
+                {
+                    return Err(FecError::Unauthorized);
+                }
+                if let Some(round) = self.preparations.get(binding.member()) {
+                    if round.binding != binding || round.proposer != auth {
+                        return Err(FecError::Conflict);
+                    }
+                    self.accept_wire_time(group_now_ns)?;
+                    return Ok(Ingress::Duplicate);
+                }
+                self.accept_wire_time(group_now_ns)?;
+                self.prepare_timing = Some(timing);
+                self.preparations.insert(
+                    binding.member().to_owned(),
+                    PrepareRound {
+                        binding,
+                        proposer: auth,
+                        ready: None,
+                    },
+                );
+                Ok(Ingress::Prepared)
+            }
+            2 => {
+                if message.sender != target.peer || auth.role != target.role {
+                    return Err(FecError::Unauthorized);
+                }
+                let round = self
+                    .preparations
+                    .get(binding.member())
+                    .ok_or(FecError::MissingAcknowledgments)?;
+                if round.binding != binding {
+                    return Err(FecError::Conflict);
+                }
+                if !authority.is_current(&round.proposer) {
+                    return Err(FecError::Authentication);
+                }
+                if let Some(previous) = &round.ready {
+                    if *previous != auth {
+                        return Err(FecError::Conflict);
+                    }
+                    self.accept_wire_time(group_now_ns)?;
+                    return Ok(Ingress::Duplicate);
+                }
+                self.accept_wire_time(group_now_ns)?;
+                let round = self
+                    .preparations
+                    .get_mut(binding.member())
+                    .expect("checked above");
+                round.ready = Some(auth);
+                Ok(Ingress::Ready)
+            }
+            _ => Err(FecError::Malformed),
+        }
+    }
+
     /// Recheck group and all peer admissions at the selection boundary. The
     /// caller must repeat this check immediately before its own cutover preflight.
     pub fn validated_selection<A: PeerAuthority>(
@@ -693,6 +1323,93 @@ fn decode(wire: &[u8]) -> Result<DecodedMessage, FecError> {
     })
 }
 
+struct DecodedPrepare {
+    kind: u8,
+    sender: PeerId,
+    version: u64,
+    binding: PrepareBinding,
+    signed_len: usize,
+    proof: AuthProof,
+    supported: bool,
+}
+
+fn decode_v2(wire: &[u8]) -> Result<DecodedPrepare, FecError> {
+    if wire.len() > MAX_PREPARE_WIRE_BYTES {
+        return Err(FecError::Malformed);
+    }
+    let mut c = Cursor {
+        bytes: wire,
+        pos: 0,
+    };
+    if c.take(4)? != MAGIC || c.byte()? != PREPARE_VERSION {
+        return Err(FecError::Malformed);
+    }
+    let kind = c.byte()?;
+    if kind != 1 && kind != 2 {
+        return Err(FecError::Malformed);
+    }
+    let sender = PeerId::parse(c.label()?).map_err(|_| FecError::Malformed)?;
+    let version = c.number()?;
+    let group = c.label()?;
+    if group.is_empty() || group.len() > MAX_GROUP_BYTES {
+        return Err(FecError::Malformed);
+    }
+    let proposal = FecProposal {
+        group: group.to_owned(),
+        stream: c.number()?,
+        current_epoch: c.number()?,
+        next_epoch: c.number()?,
+        origin_ns: c.number()?,
+        proposal_id: c.number()?,
+        membership_revision: c.number()?,
+        membership_digest: c.take(32)?.try_into().map_err(|_| FecError::Malformed)?,
+    };
+    let profile = c.label()?;
+    let revision = c.label()?;
+    let k = c.byte()?;
+    let n = c.byte()?;
+    let packet_size = c.take(2)?;
+    let supported = profile == PROFILE
+        && revision == CODING_REVISION
+        && k == K
+        && n == N
+        && packet_size == DATAGRAM_BYTES.to_be_bytes();
+    let member = c.label()?;
+    let peer = PeerId::parse(c.label()?).map_err(|_| FecError::Malformed)?;
+    let target_stream = c.number()?;
+    let anchor = c.number()?;
+    let start = c.number()?;
+    let expires = c.number()?;
+    let slot = c.label()?;
+    let generation = c.number()?;
+    let commitment = c.take(32)?.try_into().map_err(|_| FecError::Malformed)?;
+    let signed_len = c.pos;
+    let proof = AuthProof::new(c.take(PROOF_LEN)?.to_vec()).map_err(|_| FecError::Malformed)?;
+    if c.pos != wire.len() {
+        return Err(FecError::Malformed);
+    }
+    let descriptor = PrepareDescriptor::new(
+        proposal,
+        member,
+        peer,
+        target_stream,
+        anchor,
+        start,
+        expires,
+        slot,
+        generation,
+    )?;
+    Ok(DecodedPrepare {
+        kind,
+        sender,
+        version,
+        binding: PrepareBinding::new(descriptor, commitment),
+        signed_len,
+        proof,
+        supported,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -797,6 +1514,675 @@ mod tests {
             self.fec
                 .validated_selection(self.channel.authority(), &self.session)
         }
+    }
+
+    fn targeted_binding(rig: &Rig) -> PrepareBinding {
+        PrepareBinding::new(
+            PrepareDescriptor::new(
+                rig.fec.proposal().clone(),
+                "kitchen",
+                id("member-s1"),
+                42,
+                0,
+                900_000_000,
+                800_000_000,
+                "media-key",
+                1,
+            )
+            .unwrap(),
+            [7; 32],
+        )
+    }
+
+    fn targeted_wire(binding: &PrepareBinding, name: &str, ready: bool) -> Vec<u8> {
+        let peer = id(name);
+        let bytes = if ready {
+            ready_signing_bytes(binding, &peer, 1)
+        } else {
+            prepare_signing_bytes(binding, &peer, 1)
+        };
+        let proof = compute_proof(&test_key(name), &bytes);
+        if ready {
+            encode_ready(binding, &peer, 1, &proof).unwrap()
+        } else {
+            encode_prepare(binding, &peer, 1, &proof).unwrap()
+        }
+    }
+
+    fn send_targeted(rig: &mut Rig, wire: &[u8], group_now_ns: u64) -> FecHandled {
+        let now = rig.now_ns;
+        rig.now_ns += 10_000_000;
+        rig.endpoint.handle_with_fec_at_group(
+            &mut rig.channel,
+            &mut rig.fec,
+            now,
+            group_now_ns,
+            &rig.session,
+            wire,
+        )
+    }
+
+    #[test]
+    fn n06_prepare_ready_uses_authenticated_endpoint_and_rejects_stale() {
+        let mut rig = Rig::new();
+        assert_eq!(
+            rig.signed(MessageKind::Proposal, "leader"),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        let no_capability = targeted_wire(&targeted_binding(&rig), "leader", false);
+        assert_eq!(
+            send_targeted(&mut rig, &no_capability, 700_000_000),
+            FecHandled::Fec(Err(FecError::MissingAcknowledgments))
+        );
+        assert_eq!(
+            rig.signed(MessageKind::Ack, "member-s1"),
+            FecHandled::Fec(Ok(Ingress::Acknowledged))
+        );
+        let before = rig.session.clone();
+        let binding = targeted_binding(&rig);
+        let mut context_buf = [0; MAX_PREPARE_CONTEXT_BYTES];
+        let context_len = binding
+            .descriptor()
+            .write_commitment_context(&mut context_buf)
+            .unwrap();
+        assert_eq!(
+            &context_buf[..context_len],
+            binding.descriptor().commitment_context()
+        );
+        let mut ready_buf = [0; MAX_PREPARE_WIRE_BYTES];
+        let ready_len =
+            write_ready_signing_bytes(&binding, &id("member-s1"), 1, &mut ready_buf).unwrap();
+        assert_eq!(
+            &ready_buf[..ready_len],
+            ready_signing_bytes(&binding, &id("member-s1"), 1)
+        );
+        let prepare = targeted_wire(&binding, "leader", false);
+        let ready = targeted_wire(&binding, "member-s1", true);
+        let mut bad = prepare.clone();
+        *bad.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            send_targeted(&mut rig, &bad, 700_000_000),
+            FecHandled::Fec(Err(FecError::Authentication))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 700_000_000),
+            FecHandled::Fec(Err(FecError::MissingAcknowledgments))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &prepare, 700_000_000),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+        let token = rig
+            .fec
+            .validated_prepare(
+                rig.channel.authority(),
+                &rig.session,
+                "kitchen",
+                700_000_000,
+            )
+            .unwrap();
+        assert_eq!(token.binding(), &binding);
+        assert!(token.owned_heap_bytes() > 0);
+        assert_eq!(
+            send_targeted(&mut rig, &prepare, 700_000_000),
+            FecHandled::Fec(Ok(Ingress::Duplicate))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 700_000_001),
+            FecHandled::Fec(Ok(Ingress::Ready))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 700_000_001),
+            FecHandled::Fec(Ok(Ingress::Duplicate))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 699_999_999),
+            FecHandled::Fec(Err(FecError::Stale))
+        );
+        assert_eq!(
+            token.revalidate(&rig.fec, rig.channel.authority(), &rig.session, 800_000_000),
+            Err(FecError::Stale)
+        );
+        assert_eq!(
+            token.revalidate(&rig.fec, rig.channel.authority(), &rig.session, 700_000_001),
+            Err(FecError::Stale)
+        );
+        assert!(rig.channel.authority_mut().revoke(&id("leader")));
+        assert_eq!(
+            token.revalidate(&rig.fec, rig.channel.authority(), &rig.session, 700_000_001),
+            Err(FecError::Authentication)
+        );
+        assert_eq!(rig.session.group_id, before.group_id);
+        assert_eq!(rig.session.current_epoch, before.current_epoch);
+        assert_eq!(rig.session.state_revision, before.state_revision);
+        assert_eq!(rig.session.members, before.members);
+    }
+
+    #[test]
+    fn n06_prepare_rejects_wrong_target_timeline_key_and_rate_limit() {
+        let mut rig = Rig::new();
+        assert_eq!(
+            rig.signed(MessageKind::Proposal, "leader"),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        assert_eq!(
+            rig.signed(MessageKind::Ack, "member-s1"),
+            FecHandled::Fec(Ok(Ingress::Acknowledged))
+        );
+        let binding = targeted_binding(&rig);
+        assert!(
+            PrepareDescriptor::new(
+                rig.fec.proposal().clone(),
+                "kitchen",
+                id("member-s1"),
+                42,
+                1,
+                900_000_000,
+                800_000_000,
+                "media-key",
+                1
+            )
+            .is_err()
+        );
+        assert!(
+            PrepareDescriptor::new(
+                rig.fec.proposal().clone(),
+                "kitchen",
+                id("member-s1"),
+                42,
+                0,
+                900_000_001,
+                800_000_000,
+                "media-key",
+                1
+            )
+            .is_err()
+        );
+        let mut wrong = binding.clone();
+        wrong.descriptor.peer = id("member-s2");
+        let wire = targeted_wire(&wrong, "leader", false);
+        assert_eq!(
+            send_targeted(&mut rig, &wire, 700_000_000),
+            FecHandled::Fec(Err(FecError::Unauthorized))
+        );
+        let wire = targeted_wire(&binding, "stranger", false);
+        assert_eq!(
+            send_targeted(&mut rig, &wire, 700_000_000),
+            FecHandled::Fec(Err(FecError::Unauthorized))
+        );
+        let wire = targeted_wire(&binding, "leader", false);
+        assert_eq!(
+            send_targeted(&mut rig, &wire, 700_000_000),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+        wrong = binding.clone();
+        wrong.key_commitment[0] ^= 1;
+        let wire = targeted_wire(&wrong, "member-s1", true);
+        assert_eq!(
+            send_targeted(&mut rig, &wire, 700_000_000),
+            FecHandled::Fec(Err(FecError::Conflict))
+        );
+        wrong = binding.clone();
+        wrong.descriptor.key_generation += 1;
+        let wire = targeted_wire(&wrong, "member-s1", true);
+        assert_eq!(
+            send_targeted(&mut rig, &wire, 700_000_000),
+            FecHandled::Fec(Err(FecError::Conflict))
+        );
+        wrong = binding.clone();
+        wrong.descriptor.target_stream += 1;
+        let wire = targeted_wire(&wrong, "member-s1", true);
+        assert_eq!(
+            send_targeted(&mut rig, &wire, 700_000_000),
+            FecHandled::Fec(Err(FecError::Conflict))
+        );
+        wrong = binding.clone();
+        wrong.descriptor.proposal.next_epoch += 1;
+        let wire = targeted_wire(&wrong, "member-s1", true);
+        assert_eq!(
+            send_targeted(&mut rig, &wire, 700_000_000),
+            FecHandled::Fec(Err(FecError::Conflict))
+        );
+        let ready = targeted_wire(&binding, "member-s1", true);
+        rig.endpoint = Endpoint::with_fec_rate_limit(
+            crate::channel::limiter::RateLimit::new(1, 1_000_000_000).unwrap(),
+            rig.now_ns,
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 700_000_000),
+            FecHandled::Fec(Ok(Ingress::Ready))
+        );
+        assert!(matches!(
+            send_targeted(&mut rig, &ready, 700_000_000),
+            FecHandled::RateLimited { .. }
+        ));
+    }
+
+    #[test]
+    fn n06_two_members_prepare_distinct_streams_and_keys_in_one_round() {
+        let mut rig = Rig::new();
+        assert_eq!(
+            rig.signed(MessageKind::Proposal, "leader"),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        assert_eq!(
+            rig.signed(MessageKind::Ack, "member-s1"),
+            FecHandled::Fec(Ok(Ingress::Acknowledged))
+        );
+        assert_eq!(
+            rig.signed(MessageKind::Ack, "member-s2"),
+            FecHandled::Fec(Ok(Ingress::Acknowledged))
+        );
+        let first = targeted_binding(&rig);
+        let second = PrepareBinding::new(
+            PrepareDescriptor::new(
+                rig.fec.proposal().clone(),
+                "den",
+                id("member-s2"),
+                43,
+                0,
+                900_000_000,
+                800_000_000,
+                "key-den",
+                2,
+            )
+            .unwrap(),
+            [9; 32],
+        );
+        let first_prepare = targeted_wire(&first, "leader", false);
+        let second_prepare = targeted_wire(&second, "leader", false);
+        assert_eq!(
+            send_targeted(&mut rig, &first_prepare, 700_000_000),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+        let mut incompatible = second.clone();
+        incompatible.descriptor.expires_group_ns -= 1;
+        let incompatible_wire = targeted_wire(&incompatible, "leader", false);
+        assert_eq!(
+            send_targeted(&mut rig, &incompatible_wire, 700_000_000),
+            FecHandled::Fec(Err(FecError::Conflict))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &second_prepare, 700_000_000),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+        let first_ready = targeted_wire(&first, "member-s1", true);
+        let second_ready = targeted_wire(&second, "member-s2", true);
+        assert_eq!(
+            send_targeted(&mut rig, &first_ready, 700_000_000),
+            FecHandled::Fec(Ok(Ingress::Ready))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &second_ready, 700_000_000),
+            FecHandled::Fec(Ok(Ingress::Ready))
+        );
+        assert_eq!(
+            rig.fec
+                .ready_assertions(rig.channel.authority(), &rig.session, 700_000_000)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(rig.channel.authority_mut().revoke(&id("member-s2")));
+        assert_eq!(
+            rig.fec
+                .ready_assertions(rig.channel.authority(), &rig.session, 700_000_000),
+            Err(FecError::Stale)
+        );
+    }
+
+    #[test]
+    fn n06_authenticated_retries_preserve_binding_deadline_and_admit_other_member() {
+        let mut rig = Rig::new();
+        assert_eq!(
+            rig.signed(MessageKind::Proposal, "leader"),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        for member in ["member-s1", "member-s2"] {
+            assert_eq!(
+                rig.signed(MessageKind::Ack, member),
+                FecHandled::Fec(Ok(Ingress::Acknowledged))
+            );
+        }
+        let first = targeted_binding(&rig);
+        let prepare = targeted_wire(&first, "leader", false);
+        let ready = targeted_wire(&first, "member-s1", true);
+        assert_eq!(
+            send_targeted(&mut rig, &prepare, 700_000_000),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+        let before = rig.endpoint.fec_ingress_stats();
+        assert_eq!(
+            send_targeted(&mut rig, &prepare, 710_000_000),
+            FecHandled::Fec(Ok(Ingress::Duplicate))
+        );
+        let after = rig.endpoint.fec_ingress_stats();
+        assert_eq!(after.received, before.received + 1);
+        assert_eq!(after.admitted, before.admitted + 1);
+        assert_eq!(rig.fec.preparations.len(), 1);
+        assert_eq!(rig.fec.preparations["kitchen"].binding, first);
+        assert_eq!(rig.fec.prepare_timing.unwrap().2, 800_000_000);
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 720_000_000),
+            FecHandled::Fec(Ok(Ingress::Ready))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 730_000_000),
+            FecHandled::Fec(Ok(Ingress::Duplicate))
+        );
+        assert_eq!(
+            rig.fec
+                .ready_assertions(rig.channel.authority(), &rig.session, 730_000_000)
+                .unwrap(),
+            vec![id("member-s1")]
+        );
+        assert_eq!(rig.fec.preparations.len(), 1);
+        assert_eq!(rig.fec.prepare_timing.unwrap().2, 800_000_000);
+        let before_clock = *rig.fec.prepare_clock.lock().unwrap();
+        assert_eq!(before_clock.floor, Some(730_000_000));
+        assert!(!before_clock.invalid);
+        let mut changed = first.clone();
+        changed.key_commitment[0] ^= 1;
+        let changed_prepare = targeted_wire(&changed, "leader", false);
+        assert_eq!(
+            send_targeted(&mut rig, &changed_prepare, 740_000_000),
+            FecHandled::Fec(Err(FecError::Conflict))
+        );
+        assert_eq!(rig.fec.preparations["kitchen"].binding, first);
+        let after_conflict_clock = *rig.fec.prepare_clock.lock().unwrap();
+        assert_eq!(after_conflict_clock.floor, Some(740_000_000));
+        assert!(!after_conflict_clock.invalid);
+        let mut corrupted = ready.clone();
+        *corrupted.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            send_targeted(&mut rig, &corrupted, 740_000_000),
+            FecHandled::Fec(Err(FecError::Authentication))
+        );
+        assert_eq!(*rig.fec.prepare_clock.lock().unwrap(), after_conflict_clock);
+        assert_eq!(rig.fec.preparations["kitchen"].binding, first);
+        let second = PrepareBinding::new(
+            PrepareDescriptor::new(
+                rig.fec.proposal().clone(),
+                "den",
+                id("member-s2"),
+                43,
+                0,
+                900_000_000,
+                800_000_000,
+                "key-den",
+                2,
+            )
+            .unwrap(),
+            [9; 32],
+        );
+        let second_prepare = targeted_wire(&second, "leader", false);
+        let second_ready = targeted_wire(&second, "member-s2", true);
+        assert_eq!(
+            send_targeted(&mut rig, &second_prepare, 740_000_000),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &second_ready, 750_000_000),
+            FecHandled::Fec(Ok(Ingress::Ready))
+        );
+        assert_eq!(
+            rig.fec
+                .ready_assertions(rig.channel.authority(), &rig.session, 750_000_000)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(rig.fec.prepare_timing.unwrap().2, 800_000_000);
+    }
+
+    #[test]
+    fn n06_trusted_ingress_expiry_rollback_and_rate_limited_rollback_latch() {
+        fn rig_with_ready() -> (Rig, PrepareBinding, Vec<u8>, VerifiedFecPrepare) {
+            let mut rig = Rig::new();
+            assert_eq!(
+                rig.signed(MessageKind::Proposal, "leader"),
+                FecHandled::Fec(Ok(Ingress::Proposed))
+            );
+            assert_eq!(
+                rig.signed(MessageKind::Ack, "member-s1"),
+                FecHandled::Fec(Ok(Ingress::Acknowledged))
+            );
+            let binding = targeted_binding(&rig);
+            let prepare = targeted_wire(&binding, "leader", false);
+            let ready = targeted_wire(&binding, "member-s1", true);
+            assert_eq!(
+                send_targeted(&mut rig, &prepare, 700_000_000),
+                FecHandled::Fec(Ok(Ingress::Prepared))
+            );
+            assert_eq!(
+                send_targeted(&mut rig, &ready, 710_000_000),
+                FecHandled::Fec(Ok(Ingress::Ready))
+            );
+            assert_eq!(
+                send_targeted(&mut rig, &ready, 720_000_000),
+                FecHandled::Fec(Ok(Ingress::Duplicate))
+            );
+            let token = rig
+                .fec
+                .validated_prepare(
+                    rig.channel.authority(),
+                    &rig.session,
+                    "kitchen",
+                    720_000_000,
+                )
+                .unwrap();
+            (rig, binding, ready, token)
+        }
+
+        // An actual expired ingress is observed before rejection. A later
+        // rollback cannot revive the stored READY or previously issued token.
+        let (mut rig, binding, ready, token) = rig_with_ready();
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 800_000_000),
+            FecHandled::Fec(Err(FecError::Stale))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 750_000_000),
+            FecHandled::Fec(Err(FecError::Stale))
+        );
+        assert_eq!(
+            token.revalidate(&rig.fec, rig.channel.authority(), &rig.session, 750_000_000),
+            Err(FecError::Stale)
+        );
+        assert_eq!(
+            rig.fec
+                .ready_assertions(rig.channel.authority(), &rig.session, 750_000_000),
+            Err(FecError::Stale)
+        );
+        assert_eq!(rig.fec.preparations["kitchen"].binding, binding);
+        assert_eq!(rig.fec.prepare_timing.unwrap().2, 800_000_000);
+
+        // Malformed v2 bytes retain their parser result; the independent
+        // trusted deadline observation is not lost with the rejected packet.
+        let (mut rig, binding, ready, token) = rig_with_ready();
+        assert_eq!(
+            send_targeted(&mut rig, b"FFCN\x02", 800_000_000),
+            FecHandled::Fec(Err(FecError::Malformed))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 750_000_000),
+            FecHandled::Fec(Err(FecError::Stale))
+        );
+        assert_eq!(
+            token.revalidate(&rig.fec, rig.channel.authority(), &rig.session, 750_000_000),
+            Err(FecError::Stale)
+        );
+        assert_eq!(rig.fec.preparations["kitchen"].binding, binding);
+
+        // Time is independently observed even on an unparseable v1 FFCN
+        // packet refused before decode by the original aggregate limiter.
+        let (mut rig, binding, ready, token) = rig_with_ready();
+        rig.endpoint = Endpoint::with_fec_rate_limit(
+            crate::channel::limiter::RateLimit::new(1, 1_000_000_000).unwrap(),
+            rig.now_ns,
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 750_000_000),
+            FecHandled::Fec(Ok(Ingress::Duplicate))
+        );
+        assert!(matches!(
+            send_targeted(&mut rig, b"FFCN\x01", 720_000_000),
+            FecHandled::RateLimited { .. }
+        ));
+        assert_eq!(rig.endpoint.fec_ingress_stats().rate_limited, 1);
+        rig.now_ns += 1_000_000_000;
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 760_000_000),
+            FecHandled::Fec(Err(FecError::Stale))
+        );
+        assert_eq!(
+            token.revalidate(&rig.fec, rig.channel.authority(), &rig.session, 760_000_000),
+            Err(FecError::Stale)
+        );
+        assert_eq!(rig.fec.preparations["kitchen"].binding, binding);
+        assert_eq!(rig.fec.prepare_timing.unwrap().2, 800_000_000);
+
+        // Existing v1 capability ACK semantics survive trusted-time fencing.
+        let (mut rig, _, ready, token) = rig_with_ready();
+        let legacy_ack = rig.wire(MessageKind::Ack, "member-s1", rig.fec.proposal());
+        assert_eq!(
+            send_targeted(&mut rig, &legacy_ack, 800_000_000),
+            FecHandled::Fec(Ok(Ingress::Duplicate))
+        );
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 750_000_000),
+            FecHandled::Fec(Err(FecError::Stale))
+        );
+        assert_eq!(
+            token.revalidate(&rig.fec, rig.channel.authority(), &rig.session, 750_000_000),
+            Err(FecError::Stale)
+        );
+
+        // Ordinary malformed control retains its result but its trusted time
+        // still fences an existing round through the same endpoint API.
+        let (mut rig, _, ready, token) = rig_with_ready();
+        assert!(matches!(
+            send_targeted(&mut rig, b"not-control", 800_000_000),
+            FecHandled::Control(Handled::Malformed(_))
+        ));
+        assert_eq!(
+            send_targeted(&mut rig, &ready, 750_000_000),
+            FecHandled::Fec(Err(FecError::Stale))
+        );
+        assert_eq!(
+            token.revalidate(&rig.fec, rig.channel.authority(), &rig.session, 750_000_000),
+            Err(FecError::Stale)
+        );
+    }
+
+    #[test]
+    fn n06_prepare_time_observations_latch_expiry_and_in_range_rollback() {
+        fn rig_with_ready() -> (Rig, VerifiedFecPrepare) {
+            let mut rig = Rig::new();
+            assert_eq!(
+                rig.signed(MessageKind::Proposal, "leader"),
+                FecHandled::Fec(Ok(Ingress::Proposed))
+            );
+            assert_eq!(
+                rig.signed(MessageKind::Ack, "member-s1"),
+                FecHandled::Fec(Ok(Ingress::Acknowledged))
+            );
+            let binding = targeted_binding(&rig);
+            let prepare = targeted_wire(&binding, "leader", false);
+            let ready = targeted_wire(&binding, "member-s1", true);
+            assert_eq!(
+                send_targeted(&mut rig, &prepare, 700_000_000),
+                FecHandled::Fec(Ok(Ingress::Prepared))
+            );
+            assert_eq!(
+                send_targeted(&mut rig, &ready, 700_000_000),
+                FecHandled::Fec(Ok(Ingress::Ready))
+            );
+            let token = rig
+                .fec
+                .validated_prepare(
+                    rig.channel.authority(),
+                    &rig.session,
+                    "kitchen",
+                    700_000_000,
+                )
+                .unwrap();
+            (rig, token)
+        }
+        let (rig, token) = rig_with_ready();
+        assert_eq!(
+            token.revalidate(&rig.fec, rig.channel.authority(), &rig.session, 750_000_000),
+            Ok(())
+        );
+        assert_eq!(
+            rig.fec
+                .ready_assertions(rig.channel.authority(), &rig.session, 720_000_000),
+            Err(FecError::Stale)
+        );
+        assert_eq!(
+            token.revalidate(&rig.fec, rig.channel.authority(), &rig.session, 760_000_000),
+            Err(FecError::Stale)
+        );
+        let (rig, token) = rig_with_ready();
+        assert_eq!(
+            rig.fec
+                .ready_assertions(rig.channel.authority(), &rig.session, 750_000_000)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            token.revalidate(&rig.fec, rig.channel.authority(), &rig.session, 800_000_000),
+            Err(FecError::Stale)
+        );
+        assert_eq!(
+            rig.fec
+                .ready_assertions(rig.channel.authority(), &rig.session, 750_000_001),
+            Err(FecError::Stale)
+        );
+        assert!(matches!(
+            rig.fec.validated_prepare(
+                rig.channel.authority(),
+                &rig.session,
+                "kitchen",
+                750_000_001
+            ),
+            Err(FecError::Stale)
+        ));
+    }
+
+    #[test]
+    fn n06_prepare_maximum_labels_fit_bounded_nonallocating_encoders() {
+        let rig = Rig::new();
+        let mut proposal = rig.fec.proposal().clone();
+        proposal.group = "g".repeat(64);
+        let peer = id(&"p".repeat(32));
+        let descriptor = PrepareDescriptor::new(
+            proposal,
+            &"m".repeat(64),
+            peer.clone(),
+            42,
+            0,
+            900_000_000,
+            800_000_000,
+            &"k".repeat(32),
+            1,
+        )
+        .unwrap();
+        let mut context = [0; MAX_PREPARE_CONTEXT_BYTES];
+        let length = descriptor.write_commitment_context(&mut context).unwrap();
+        assert_eq!(&context[..length], descriptor.commitment_context());
+        let binding = PrepareBinding::new(descriptor, [3; 32]);
+        let mut wire = [0; MAX_PREPARE_WIRE_BYTES];
+        let signed = write_ready_signing_bytes(&binding, &peer, 1, &mut wire).unwrap();
+        assert_eq!(&wire[..signed], ready_signing_bytes(&binding, &peer, 1));
+        let proof = compute_proof(&test_key("member-s1"), &wire[..signed]);
+        let fixed: [u8; PROOF_LEN] = proof.as_bytes().try_into().unwrap();
+        let end = append_ready_proof(&mut wire, signed, &fixed).unwrap();
+        assert_eq!(
+            &wire[..end],
+            encode_ready(&binding, &peer, 1, &proof).unwrap()
+        );
     }
 
     #[test]

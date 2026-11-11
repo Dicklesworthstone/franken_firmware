@@ -119,3 +119,37 @@ def check_future(row):
     for name, data in (("old_pcm_probe_sha256", old_pcm),
                        ("future_pcm_probe_sha256", bytes([9]) * 1024)):
         assert row[name] == hashlib.sha256(prefix + data * 4).hexdigest(), f"future PCM divergence: {name}"
+
+
+def check_ready(row):
+    """Check the two-target native resource fixture, not a device/activation policy."""
+    fields = {
+        "schema", "profile", "current_epoch", "future_epoch", "target_streams",
+        "ready_lengths", "ready_assertions", "before_bytes", "pending_bytes",
+        "after_drop_bytes", "old_pcm_probe_sha256", "active_fec_selected",
+    }
+    assert type(row) is dict and set(row) == fields, "ready observation schema differs"
+    assert row["schema"] == "n06.ready-resource.v1" and row["profile"] == PROFILE
+    for name in ("current_epoch", "future_epoch", "ready_assertions"):
+        assert type(row[name]) is int and 0 <= row[name] < 2**64, f"invalid ready integer: {name}"
+    assert (row["current_epoch"], row["future_epoch"], row["ready_assertions"]) == (1, 2, 2)
+    for name in ("target_streams", "ready_lengths", "before_bytes", "pending_bytes", "after_drop_bytes"):
+        values = row[name]
+        assert type(values) is list and len(values) == 2, f"invalid ready pair: {name}"
+        assert all(type(value) is int and 0 <= value < 2**64 for value in values), f"invalid ready pair value: {name}"
+    streams = row["target_streams"]
+    assert 0 < streams[0] < 2**64 - 1 and streams[1] == streams[0] + 1, "target transport streams differ from fixture"
+    assert all(32 < size <= 512 for size in row["ready_lengths"]), "ready wire exceeds admitted buffer or lacks body"
+    for index in range(2):
+        before, pending, after = (row[name][index] for name in ("before_bytes", "pending_bytes", "after_drop_bytes"))
+        assert before > 0 and pending - before > 65536, "ready candidate resources were not charged"
+        assert pending <= 2 * 1024 * 1024, "ready fixture exceeds its frozen stream budget"
+        assert after == before, "ready reservation survived guard drop"
+    active = row["active_fec_selected"]
+    assert type(active) is list and len(active) == 2 and all(value is False for value in active), "readiness selected active FEC"
+    probes = row["old_pcm_probe_sha256"]
+    assert type(probes) is list and len(probes) == 2, "old PCM observations missing"
+    prefix = b"FFWR-N06-v1-source" + bytes(64)
+    for probe, seed in zip(probes, (11, 23)):
+        pcm_bytes = bytes(17 + ((byte % 251 + seed) % 200) for byte in range(1024))
+        assert probe == hashlib.sha256(prefix + pcm_bytes * 4).hexdigest(), "old target PCM differs"

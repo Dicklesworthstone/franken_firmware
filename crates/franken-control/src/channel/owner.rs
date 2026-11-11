@@ -262,19 +262,60 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
         session: &UnifiedGroupSession,
         datagram: &[u8],
     ) -> Result<FecHandled, AgreementError> {
+        self.receive_inner(now_ns, None, session, datagram)
+    }
+
+    /// Receive through the same endpoint budget using trusted group time for V2.
+    /// The caller must derive it from an independently admitted next-epoch clock
+    /// in the bound presentation domain; this number does not prove admission.
+    pub fn receive_with_group_time(
+        &mut self,
+        now_ns: u64,
+        group_now_ns: u64,
+        session: &UnifiedGroupSession,
+        datagram: &[u8],
+    ) -> Result<FecHandled, AgreementError> {
+        self.receive_inner(now_ns, Some(group_now_ns), session, datagram)
+    }
+
+    fn receive_inner(
+        &mut self,
+        now_ns: u64,
+        group_now_ns: Option<u64>,
+        session: &UnifiedGroupSession,
+        datagram: &[u8],
+    ) -> Result<FecHandled, AgreementError> {
         self.ingress_started = true;
+        // FFCN is observed by the shared endpoint below. Ordinary control keeps
+        // its existing result while independently fencing an installed round.
+        if !datagram.starts_with(&super::fec_negotiation::MAGIC)
+            && let (Some(group_now_ns), Some(coordinator)) =
+                (group_now_ns, self.coordinator.as_ref())
+        {
+            coordinator.observe_existing_group_time(group_now_ns);
+        }
         if datagram.starts_with(&super::fec_negotiation::MAGIC) {
             if !self.healthy() {
                 return Err(AgreementError::Unavailable);
             }
             let coordinator = self.coordinator.as_mut().ok_or(AgreementError::NoAttempt)?;
-            Ok(self.endpoint.handle_with_fec(
-                &mut self.channel,
-                coordinator,
-                now_ns,
-                session,
-                datagram,
-            ))
+            Ok(match group_now_ns {
+                Some(group_now_ns) => self.endpoint.handle_with_fec_at_group(
+                    &mut self.channel,
+                    coordinator,
+                    now_ns,
+                    group_now_ns,
+                    session,
+                    datagram,
+                ),
+                None => self.endpoint.handle_with_fec(
+                    &mut self.channel,
+                    coordinator,
+                    now_ns,
+                    session,
+                    datagram,
+                ),
+            })
         } else {
             let legacy = match super::wire::decode_datagram(datagram) {
                 Ok(super::wire::Datagram::Request(request)) => {
@@ -515,6 +556,74 @@ mod tests {
             )
             .unwrap()
             .clone()
+    }
+
+    #[test]
+    fn fleet_owner_trusted_time_on_ordinary_control_fences_existing_prepare() {
+        use crate::channel::fec_negotiation::{
+            PrepareBinding, PrepareDescriptor, encode_prepare, prepare_signing_bytes,
+        };
+        let session = session();
+        let mut owner = blank();
+        let bindings = enroll(&mut owner, &session);
+        let proposal = begin(&mut owner, &session, bindings.clone());
+        let proposer = id("proposer");
+        let proposed = wire(&owner, MessageKind::Proposal, &proposer, &proposal);
+        assert_eq!(
+            owner.receive(0, &session, &proposed).unwrap(),
+            FecHandled::Fec(Ok(Ingress::Proposed))
+        );
+        let target = &bindings[0];
+        let ack = wire(&owner, MessageKind::Ack, &target.peer, &proposal);
+        assert_eq!(
+            owner.receive(10_000_000, &session, &ack).unwrap(),
+            FecHandled::Fec(Ok(Ingress::Acknowledged))
+        );
+        let descriptor = PrepareDescriptor::new(
+            proposal,
+            &target.member,
+            target.peer.clone(),
+            42,
+            0,
+            900_000_000,
+            800_000_000,
+            "media-key",
+            1,
+        )
+        .unwrap();
+        let binding = PrepareBinding::new(descriptor, [7; 32]);
+        let version = owner.authority().version_of(&proposer).unwrap();
+        let signed = prepare_signing_bytes(&binding, &proposer, version);
+        let prepared = encode_prepare(
+            &binding,
+            &proposer,
+            version,
+            &compute_proof(&key("proposer"), &signed),
+        )
+        .unwrap();
+        assert_eq!(
+            owner
+                .receive_with_group_time(20_000_000, 700_000_000, &session, &prepared)
+                .unwrap(),
+            FecHandled::Fec(Ok(Ingress::Prepared))
+        );
+        let token = {
+            let (coordinator, authority) = owner.proposal_context(&session).unwrap();
+            coordinator
+                .validated_prepare(authority, &session, &target.member, 700_000_000)
+                .unwrap()
+        };
+        assert!(matches!(
+            owner
+                .receive_with_group_time(30_000_000, 800_000_000, &session, b"not-control")
+                .unwrap(),
+            FecHandled::Control(super::super::endpoint::Handled::Malformed(_))
+        ));
+        let (coordinator, authority) = owner.proposal_context(&session).unwrap();
+        assert_eq!(
+            token.revalidate(coordinator, authority, &session, 750_000_000),
+            Err(FecError::Stale)
+        );
     }
 
     #[test]

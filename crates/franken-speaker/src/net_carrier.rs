@@ -37,9 +37,15 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
-use franken_clock::group::GroupClock;
-use franken_control::channel::fec_negotiation::VerifiedFecProposal;
-use franken_control::channel::peer::PeerAuthority;
+use franken_clock::group::{GroupClock, Output, StartSchedule};
+use franken_control::channel::fec_negotiation::{
+    MAX_PREPARE_WIRE_BYTES, VerifiedFecPrepare, VerifiedFecProposal, append_ready_proof,
+    write_ready_signing_bytes,
+};
+use franken_control::channel::peer::{
+    PeerAuthority, PeerDirectory as ControlPeerDirectory, compute_proof_fixed,
+};
+use franken_control::contracts::secret_store::{SecretHandle, SecretKind, SecretStore};
 use franken_platform::MemoryBudgetLedger;
 use franken_platform::abi::{Abi, SysError};
 use franken_platform::clock::ClockError;
@@ -532,6 +538,204 @@ pub struct PreparedFutureEndpointFec {
     current_epoch: u64,
 }
 
+/// Current authority, independently admitted clock and live resource budget for a ready operation.
+pub struct FutureReadyInputs<'a, A: PeerAuthority, O: KernelOps> {
+    pub context: &'a FutureFecAuthority<'a, A>,
+    pub clock: &'a GroupClock,
+    pub platform: &'a mut PlatformLayer<O>,
+    pub ledger: &'a MemoryBudgetLedger,
+    pub resident_elsewhere_bytes: u64,
+}
+
+/// The endpoint's actual reserved future resources and authenticated PREPARE.
+/// READY is only an expiring statement at emission; it cannot retract already sent bytes.
+pub struct PreparedFutureReady {
+    // Drop the token before its last-field candidate frees and uncharges the reservation.
+    prepare: VerifiedFecPrepare,
+    control_key: SecretHandle,
+    last_group_ns: u64,
+    invalid: bool,
+    candidate: PreparedFutureEndpointFec,
+}
+
+impl PreparedFutureReady {
+    fn validate<P: DatagramPort, A: PeerAuthority, O: KernelOps>(
+        &mut self,
+        endpoint: &MediaEndpoint<P>,
+        context: &FutureFecAuthority<'_, A>,
+        clock: &GroupClock,
+        platform: &mut PlatformLayer<O>,
+    ) -> Result<(), FutureFecError> {
+        if self.invalid {
+            return Err(FutureFecError::Stale);
+        }
+        let result = (|| {
+            self.candidate.check(endpoint)?;
+            let view = self.candidate.media.checked_ready_view(
+                &endpoint.media,
+                context,
+                clock,
+                platform,
+            )?;
+            if view.group_ns < self.last_group_ns {
+                return Err(FutureFecError::ClockNotAdmitted);
+            }
+            self.last_group_ns = view.group_ns;
+            context
+                .revalidate_prepare(&self.prepare, view.group_ns)
+                .map_err(FutureFecError::Proposal)?;
+            endpoint.media.ready_key(&self.prepare)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            self.invalid = true;
+            self.candidate.media.cancel_pending();
+        }
+        result
+    }
+
+    /// Continue authenticated future prefetch while retaining the PREPARE guard.
+    pub fn prefetch_datagram<P: DatagramPort, A: PeerAuthority, O: KernelOps>(
+        &mut self,
+        endpoint: &MediaEndpoint<P>,
+        context: &FutureFecAuthority<'_, A>,
+        clock: &GroupClock,
+        platform: &mut PlatformLayer<O>,
+        wire: &[u8],
+    ) -> Result<fec::AuthenticatedIngress, FutureFecError> {
+        self.validate(endpoint, context, clock, platform)?;
+        let result = self
+            .candidate
+            .prefetch_datagram(endpoint, context, clock, platform, wire);
+        if matches!(
+            &result,
+            Err(FutureFecError::Stale
+                | FutureFecError::Proposal(_)
+                | FutureFecError::Clock(_)
+                | FutureFecError::ClockNotAdmitted
+                | FutureFecError::Resolution(_))
+        ) {
+            self.invalid = true;
+        }
+        if result.is_ok() {
+            self.validate(endpoint, context, clock, platform)?;
+        }
+        result
+    }
+
+    /// Recover only into the still-owned future engine.
+    pub fn poll_prefetch<P: DatagramPort, A: PeerAuthority, O: KernelOps>(
+        &mut self,
+        endpoint: &MediaEndpoint<P>,
+        context: &FutureFecAuthority<'_, A>,
+        clock: &GroupClock,
+        platform: &mut PlatformLayer<O>,
+        cancelled: &AtomicBool,
+    ) -> Result<DecodeState, FutureFecError> {
+        self.validate(endpoint, context, clock, platform)?;
+        let result = self
+            .candidate
+            .poll_prefetch(endpoint, context, clock, platform, cancelled);
+        if matches!(
+            &result,
+            Err(FutureFecError::Stale
+                | FutureFecError::Proposal(_)
+                | FutureFecError::Clock(_)
+                | FutureFecError::ClockNotAdmitted
+                | FutureFecError::Resolution(_))
+        ) {
+            self.invalid = true;
+        }
+        if result.is_ok() {
+            self.validate(endpoint, context, clock, platform)?;
+        }
+        result
+    }
+
+    /// Recheck live authority, reservation, exact start and owner-controlled key, then sign one
+    /// member READY using its admitted request-domain control credential.
+    pub fn emit_ready<P: DatagramPort, K: SecretStore, O: KernelOps, S: SecretStore>(
+        &mut self,
+        endpoint: &MediaEndpoint<P>,
+        inputs: FutureReadyInputs<'_, ControlPeerDirectory<K>, O>,
+        control_store: &S,
+        peer_version: u64,
+        output: &mut [u8; MAX_PREPARE_WIRE_BYTES],
+    ) -> Result<usize, FutureFecError> {
+        let FutureReadyInputs {
+            context,
+            clock,
+            platform,
+            ledger,
+            resident_elsewhere_bytes,
+        } = inputs;
+        output.fill(0);
+        let result = (|| {
+            self.validate(endpoint, context, clock, platform)?;
+            Self::check_budget(endpoint, ledger, resident_elsewhere_bytes)?;
+            let (signed_len, tag) = {
+                let binding = self.prepare.binding();
+                let desc = binding.descriptor();
+                let peer = desc.peer();
+                let role = self
+                    .candidate
+                    .media
+                    .member_role(desc.member(), peer)
+                    .ok_or(FutureFecError::Binding)?;
+                let signed_len = write_ready_signing_bytes(binding, peer, peer_version, output)
+                    .map_err(FutureFecError::Proposal)?;
+                let tag = control_store
+                    .with_secret(&self.control_key, |_, key| {
+                        compute_proof_fixed(key, &output[..signed_len])
+                    })
+                    .map_err(|_| FutureFecError::Key)?;
+                context
+                    .verify_ready_fixed(
+                        peer,
+                        &self.control_key,
+                        &output[..signed_len],
+                        &tag,
+                        franken_control::channel::peer::PeerAdmission {
+                            version: peer_version,
+                            role,
+                            bound_epoch: Some(desc.proposal().current_epoch()),
+                        },
+                    )
+                    .map_err(FutureFecError::Proposal)?;
+                (signed_len, tag)
+            };
+            // HMAC and authority verification may consume time. Recheck the real clock and
+            // current budget before exposing any signed bytes to the caller.
+            self.validate(endpoint, context, clock, platform)?;
+            Self::check_budget(endpoint, ledger, resident_elsewhere_bytes)?;
+            append_ready_proof(output, signed_len, &tag).map_err(FutureFecError::Proposal)
+        })();
+        if result.is_err() {
+            output.fill(0);
+            self.invalid = true;
+            self.candidate.media.cancel_pending();
+        }
+        result
+    }
+
+    fn check_budget<P: DatagramPort>(
+        endpoint: &MediaEndpoint<P>,
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<(), FutureFecError> {
+        let available = crate::media_playout::stream_room(ledger, resident_elsewhere_bytes)
+            .map_err(|error| FutureFecError::Resources(HostFecAdmitError::Memory(error)))?;
+        let required = usize::try_from(endpoint.media.resident_bytes()).unwrap_or(usize::MAX);
+        if required > available {
+            return Err(FutureFecError::Resources(HostFecAdmitError::Capacity {
+                required,
+                available,
+            }));
+        }
+        Ok(())
+    }
+}
+
 impl PreparedFutureEndpointFec {
     fn check<P: DatagramPort>(&self, endpoint: &MediaEndpoint<P>) -> Result<(), FutureFecError> {
         if endpoint.carrier_generation == u64::MAX
@@ -682,12 +886,157 @@ impl<P: DatagramPort> MediaEndpoint<P> {
         }
     }
 
+    /// Reserve the exact authenticated per-member PREPARE while old audio remains active.
+    /// Neither this reservation nor an emitted READY authorizes activation.
+    pub fn prepare_authenticated_future<A: PeerAuthority, O: KernelOps>(
+        &mut self,
+        proposal: VerifiedFecProposal,
+        prepare: VerifiedFecPrepare,
+        control_key: SecretHandle,
+        inputs: FutureReadyInputs<'_, A, O>,
+    ) -> Result<PreparedFutureReady, FutureFecError> {
+        let FutureReadyInputs {
+            context,
+            clock,
+            platform,
+            ledger,
+            resident_elsewhere_bytes,
+        } = inputs;
+        let binding = prepare.binding();
+        let desc = binding.descriptor();
+        let expected = desc.proposal();
+        if control_key.kind() != SecretKind::ControlPeerKey
+            || control_key.slot().as_str() != desc.peer().as_str()
+        {
+            return Err(FutureFecError::Key);
+        }
+        if expected != proposal.proposal() || clock.epoch() != expected.next_epoch() {
+            return Err(FutureFecError::Binding);
+        }
+        let mismatch = crate::media_playout::ResolutionMismatch {
+            reported_ns: platform.clock_resolution_ns(),
+            configured_ns: clock.config().timer_resolution_ns,
+        };
+        if mismatch.reported_ns > mismatch.configured_ns {
+            return Err(FutureFecError::Resolution(mismatch));
+        }
+        let local = platform.now_ns().map_err(FutureFecError::Clock)?;
+        let group = clock
+            .group_ns(local)
+            .ok_or(FutureFecError::ClockNotAdmitted)?;
+        let target = desc
+            .start_group_ns()
+            .checked_sub(clock.config().output_delay_ns)
+            .ok_or(FutureFecError::ClockNotAdmitted)?;
+        if !matches!(clock.output(local), Output::Armed { starts_in_ns } if group.checked_add(starts_in_ns) == Some(target))
+        {
+            return Err(FutureFecError::ClockNotAdmitted);
+        }
+        context
+            .revalidate_prepare(&prepare, group)
+            .map_err(FutureFecError::Proposal)?;
+        // Reserve the actual token plus stack buffers used on every later validation and signing.
+        let overhead = core::mem::size_of::<PreparedFutureReady>()
+            .saturating_sub(core::mem::size_of::<PreparedFutureEndpointFec>())
+            .checked_add(prepare.owned_heap_bytes())
+            .and_then(|v| v.checked_add(control_key.owned_heap_bytes()))
+            .and_then(|v| {
+                v.checked_add(franken_control::channel::fec_negotiation::MAX_PREPARE_CONTEXT_BYTES)
+            })
+            .and_then(|v| {
+                v.checked_add(franken_control::channel::fec_negotiation::MAX_PREPARE_WIRE_BYTES)
+            })
+            .and_then(|v| v.checked_add(franken_control::channel::peer::PROOF_LEN))
+            .ok_or(FutureFecError::Resources(
+                HostFecAdmitError::AccountingOverflow,
+            ))?;
+        let available = crate::media_playout::stream_room(ledger, resident_elsewhere_bytes)
+            .map_err(|error| FutureFecError::Resources(HostFecAdmitError::Memory(error)))?;
+        let needed = usize::try_from(self.media.resident_bytes())
+            .unwrap_or(usize::MAX)
+            .checked_add(overhead)
+            .ok_or(FutureFecError::Resources(
+                HostFecAdmitError::AccountingOverflow,
+            ))?;
+        if needed > available {
+            return Err(FutureFecError::Resources(HostFecAdmitError::Capacity {
+                required: needed,
+                available,
+            }));
+        }
+        let key = self.media.ready_key(&prepare)?;
+        let spec = FutureFecSpec {
+            config: fec::SessionConfig {
+                stream: StreamId::new(desc.target_stream()).map_err(|_| FutureFecError::Binding)?,
+                epoch: expected.next_epoch(),
+                presentation_origin_ns: expected.origin_ns(),
+                key,
+            },
+            schedule: StartSchedule {
+                epoch: expected.next_epoch(),
+                start_group_ns: desc.start_group_ns(),
+            },
+            anchor_frame: desc.anchor_frame(),
+        };
+        let extra = resident_elsewhere_bytes
+            .checked_add(u64::try_from(overhead).unwrap_or(u64::MAX))
+            .ok_or(FutureFecError::Resources(
+                HostFecAdmitError::AccountingOverflow,
+            ))?;
+        let target = StreamId::new(desc.target_stream()).map_err(|_| FutureFecError::Binding)?;
+        let candidate =
+            self.prepare_future_target_fec(proposal, context, spec, target, ledger, extra)?;
+        let mut ready = PreparedFutureReady {
+            prepare,
+            control_key,
+            last_group_ns: group,
+            invalid: false,
+            candidate,
+        };
+        ready.candidate.media.charge_inline(overhead)?;
+        // Check again after allocation: preparation may have consumed time or lost authority.
+        let view =
+            ready
+                .candidate
+                .media
+                .checked_ready_view(&self.media, context, clock, platform)?;
+        if view.group_ns < group {
+            return Err(FutureFecError::ClockNotAdmitted);
+        }
+        context
+            .revalidate_prepare(&ready.prepare, view.group_ns)
+            .map_err(FutureFecError::Proposal)?;
+        ready.last_group_ns = view.group_ns;
+        Ok(ready)
+    }
+
     /// Reserve a future proposal's resources without changing the active carrier or its credit.
     pub fn prepare_future_host_fec<A: PeerAuthority>(
         &mut self,
         proposal: VerifiedFecProposal,
         context: &FutureFecAuthority<'_, A>,
         spec: FutureFecSpec,
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<PreparedFutureEndpointFec, FutureFecError> {
+        let target =
+            StreamId::new(proposal.proposal().stream()).map_err(|_| FutureFecError::Binding)?;
+        self.prepare_future_target_fec(
+            proposal,
+            context,
+            spec,
+            target,
+            ledger,
+            resident_elsewhere_bytes,
+        )
+    }
+
+    fn prepare_future_target_fec<A: PeerAuthority>(
+        &mut self,
+        proposal: VerifiedFecProposal,
+        context: &FutureFecAuthority<'_, A>,
+        spec: FutureFecSpec,
+        target: StreamId,
         ledger: &MemoryBudgetLedger,
         resident_elsewhere_bytes: u64,
     ) -> Result<PreparedFutureEndpointFec, FutureFecError> {
@@ -698,6 +1047,7 @@ impl<P: DatagramPort> MediaEndpoint<P> {
         let stream = spec.config.stream;
         let epoch = proposal.proposal().current_epoch();
         if self.carrier_generation == u64::MAX
+            || stream != target
             || self.carrier.stream_id() != stream
             || self.carrier.epoch() != epoch
         {
@@ -712,7 +1062,7 @@ impl<P: DatagramPort> MediaEndpoint<P> {
             ))?;
         let mut media = self
             .media
-            .prepare_future_host_fec(proposal, context, spec, ledger, extra)?;
+            .prepare_future_target_fec(proposal, context, spec, target, ledger, extra)?;
         media.charge_inline(overhead)?;
         Ok(PreparedFutureEndpointFec {
             media,

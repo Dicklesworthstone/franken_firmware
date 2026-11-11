@@ -216,6 +216,21 @@ impl StreamKey {
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
+
+    /// Commit to an authenticated N06 PREPARE context without exposing the media key.
+    #[must_use]
+    pub fn prepare_commitment(&self, context: &[u8]) -> [u8; 32] {
+        let mut mac = HmacSha256::new_from_slice(&self.0).expect("32-byte HMAC key is valid");
+        mac.update(b"FFWR-N06-v2-prepare-key");
+        mac.update(context);
+        mac.finalize().into_bytes().into()
+    }
+
+    /// Check a PREPARE commitment without exposing or directly comparing key material.
+    #[must_use]
+    pub fn matches_prepare_commitment(&self, context: &[u8], commitment: &[u8; 32]) -> bool {
+        tags_equal(&self.prepare_commitment(context), commitment)
+    }
 }
 
 impl std::fmt::Debug for StreamKey {
@@ -1240,6 +1255,17 @@ pub fn compute_xor_parity_payload(payloads: &[&[u8]]) -> Vec<u8> {
 mod tests {
     use super::*;
     use std::fmt::Write as _;
+
+    #[test]
+    fn n06_prepare_key_commitment_binds_key_and_context() {
+        let key = StreamKey::from_bytes([0x21; 32]);
+        let other = StreamKey::from_bytes([0x22; 32]);
+        let context = b"authenticated prepare context";
+        let commitment = key.prepare_commitment(context);
+        assert!(key.matches_prepare_commitment(context, &commitment));
+        assert!(!other.matches_prepare_commitment(context, &commitment));
+        assert!(!key.matches_prepare_commitment(b"different prepare context", &commitment));
+    }
 
     const VECTORS_JSON: &str = include_str!("../tests/vectors/n01_wire_vectors.json");
 

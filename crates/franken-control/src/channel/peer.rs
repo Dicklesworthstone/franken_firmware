@@ -121,6 +121,12 @@ impl PeerId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Heap bytes retained by this identity.
+    #[must_use]
+    pub fn owned_heap_bytes(&self) -> usize {
+        self.0.capacity()
+    }
 }
 
 impl fmt::Display for PeerId {
@@ -183,6 +189,14 @@ pub struct Authenticated {
     pub version: u64,
 }
 
+/// A copied current admission, without cloning its already-known identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PeerAdmission {
+    pub role: PeerRole,
+    pub bound_epoch: Option<u64>,
+    pub version: u64,
+}
+
 /// The authority the control channel asks about every request. See the module documentation for the
 /// contract an implementation must keep.
 pub trait PeerAuthority {
@@ -217,7 +231,13 @@ fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; PROOF_LEN] {
 /// The proof a peer holding `key` attaches to a request whose signed bytes are `message`.
 #[must_use]
 pub fn compute_proof(key: &[u8], message: &[u8]) -> AuthProof {
-    AuthProof(hmac_sha256(key, &[AUTH_CONTEXT, message]).to_vec())
+    AuthProof(compute_proof_fixed(key, message).to_vec())
+}
+
+/// The same request proof in fixed storage, for bounded local READY signing.
+#[must_use]
+pub fn compute_proof_fixed(key: &[u8], message: &[u8]) -> [u8; PROOF_LEN] {
+    hmac_sha256(key, &[AUTH_CONTEXT, message])
 }
 
 /// The tag a channel holding `key` puts on a reply whose signed bytes are `message`. A client holding the same key
@@ -536,6 +556,56 @@ impl<S: SecretStore> ReplySigner for PeerDirectory<S> {
     }
 }
 
+impl<S: SecretStore> PeerDirectory<S> {
+    /// Verify against this directory's current enrolled key without cloning the peer or proof.
+    /// The supplied handle must be the actual ControlPeerKey slot for `peer`.
+    pub fn authenticate_fixed(
+        &self,
+        peer: &PeerId,
+        handle: &SecretHandle,
+        message: &[u8],
+        proof: &[u8; PROOF_LEN],
+    ) -> Result<PeerAdmission, AuthFailure> {
+        let record = self.peer_record(peer)?;
+        self.authenticate_tag(peer, record, handle, message, proof)
+    }
+
+    fn peer_record(&self, peer: &PeerId) -> Result<&PeerRecord, AuthFailure> {
+        self.peers.get(peer).ok_or_else(|| {
+            if self.tombstones.contains_key(peer) {
+                AuthFailure::Revoked
+            } else {
+                AuthFailure::UnknownPeer
+            }
+        })
+    }
+
+    fn authenticate_tag(
+        &self,
+        peer: &PeerId,
+        record: &PeerRecord,
+        handle: &SecretHandle,
+        message: &[u8],
+        proof: &[u8],
+    ) -> Result<PeerAdmission, AuthFailure> {
+        if handle.kind() != SecretKind::ControlPeerKey || handle.slot().as_str() != peer.as_str() {
+            return Err(AuthFailure::BadProof);
+        }
+        let expected = self
+            .keys
+            .with_secret(handle, |_, key| compute_proof_fixed(key, message))
+            .map_err(|_| AuthFailure::UnknownPeer)?;
+        if !constant_time_eq(&expected, proof) {
+            return Err(AuthFailure::BadProof);
+        }
+        Ok(PeerAdmission {
+            role: record.role,
+            bound_epoch: record.bound_epoch,
+            version: record.version,
+        })
+    }
+}
+
 impl<S: SecretStore> PeerAuthority for PeerDirectory<S> {
     fn control_profile(&self) -> ControlProfile {
         self.profile
@@ -546,26 +616,14 @@ impl<S: SecretStore> PeerAuthority for PeerDirectory<S> {
         message: &[u8],
         proof: &AuthProof,
     ) -> Result<Authenticated, AuthFailure> {
-        let Some(record) = self.peers.get(peer) else {
-            return Err(if self.tombstones.contains_key(peer) {
-                AuthFailure::Revoked
-            } else {
-                AuthFailure::UnknownPeer
-            });
-        };
+        let record = self.peer_record(peer)?;
         let handle = key_handle(peer).map_err(|_| AuthFailure::UnknownPeer)?;
-        let expected = self
-            .keys
-            .with_secret(&handle, |_, key| hmac_sha256(key, &[AUTH_CONTEXT, message]))
-            .map_err(|_| AuthFailure::UnknownPeer)?;
-        if !constant_time_eq(&expected, proof.as_bytes()) {
-            return Err(AuthFailure::BadProof);
-        }
+        let admission = self.authenticate_tag(peer, record, &handle, message, proof.as_bytes())?;
         Ok(Authenticated {
             peer: peer.clone(),
-            role: record.role,
-            bound_epoch: record.bound_epoch,
-            version: record.version,
+            role: admission.role,
+            bound_epoch: admission.bound_epoch,
+            version: admission.version,
         })
     }
 
@@ -617,6 +675,78 @@ mod tests {
 
     fn id(raw: &str) -> PeerId {
         PeerId::parse(raw).unwrap()
+    }
+
+    #[test]
+    fn fixed_request_proof_uses_real_current_directory_and_exact_handle() {
+        let mut directory = admitted();
+        let peer = id("ctl-a");
+        let handle = SecretHandle::new(SecretKind::ControlPeerKey, peer.as_str()).unwrap();
+        let message = b"actual-ready-binding";
+        let proof = compute_proof_fixed(&test_key("ctl-a"), message);
+        let actual = directory
+            .authenticate_fixed(&peer, &handle, message, &proof)
+            .unwrap();
+        let legacy = directory
+            .authenticate(&peer, message, &compute_proof(&test_key("ctl-a"), message))
+            .unwrap();
+        assert_eq!(
+            actual,
+            PeerAdmission {
+                role: legacy.role,
+                bound_epoch: legacy.bound_epoch,
+                version: legacy.version
+            }
+        );
+        assert!(peer.owned_heap_bytes() >= peer.as_str().len());
+        assert!(handle.owned_heap_bytes() >= handle.slot().as_str().len());
+        let wrong_key = compute_proof_fixed(&test_key("ctl-b"), message);
+        assert_eq!(
+            directory.authenticate_fixed(&peer, &handle, message, &wrong_key),
+            Err(AuthFailure::BadProof)
+        );
+        let reply = compute_reply_tag(&test_key("ctl-a"), message);
+        let wrong_domain: [u8; PROOF_LEN] = reply.as_bytes().try_into().unwrap();
+        assert_eq!(
+            directory.authenticate_fixed(&peer, &handle, message, &wrong_domain),
+            Err(AuthFailure::BadProof)
+        );
+        let wrong_slot = SecretHandle::new(SecretKind::ControlPeerKey, "ctl-b").unwrap();
+        let wrong_kind = SecretHandle::new(SecretKind::StreamAuthKey, peer.as_str()).unwrap();
+        assert_eq!(
+            directory.authenticate_fixed(&peer, &wrong_slot, message, &proof),
+            Err(AuthFailure::BadProof)
+        );
+        assert_eq!(
+            directory.authenticate_fixed(&peer, &wrong_kind, message, &proof),
+            Err(AuthFailure::BadProof)
+        );
+        assert_ne!(
+            actual,
+            PeerAdmission {
+                role: PeerRole::LocalUser,
+                ..actual
+            }
+        );
+        assert_ne!(
+            actual,
+            PeerAdmission {
+                version: actual.version + 1,
+                ..actual
+            }
+        );
+        directory
+            .rebind(&peer, Some(actual.bound_epoch.unwrap_or(0) + 1))
+            .unwrap();
+        let rebound = directory
+            .authenticate_fixed(&peer, &handle, message, &proof)
+            .unwrap();
+        assert_ne!(actual, rebound);
+        assert!(directory.revoke(&peer));
+        assert_eq!(
+            directory.authenticate_fixed(&peer, &handle, message, &proof),
+            Err(AuthFailure::Revoked)
+        );
     }
 
     fn sign(peer: &str, message: &[u8]) -> AuthProof {

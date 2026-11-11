@@ -8,7 +8,7 @@ import re
 import sys
 import time
 
-from reference import PROFILE, check_replays, check_fleet, check_relock
+from reference import PROFILE, check_replays, check_fleet, check_relock, check_future, check_ready
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests/n05"))
@@ -116,6 +116,64 @@ PREFLIGHT_TESTS = (
 CASES["N06-CONSUMER"].extend(
     ("franken_speaker", SPEAKER + name) for name in PREFLIGHT_TESTS
 )
+VERIFIED_PROPOSAL_TESTS = (
+    "n06_verified_proposal_requires_authenticated_ingress_but_not_member_acks",
+    "n06_verified_proposal_rejects_stale_session_round_profile_and_peer",
+)
+OWNER_PROPOSAL_TESTS = (
+    "fleet_owner_verified_proposal_context_requires_real_ingress_and_current_round",
+)
+FUTURE_TESTS = (
+    "n06_future_candidate_prefetches_real_pcm_while_old_n01_drains",
+    "n06_future_candidate_rejects_stale_binding_budget_and_unauthorized_proposal",
+    "n06_future_candidate_epoch_and_generation_exhaustion_fail_closed",
+    "n06_future_endpoint_prefetch_keeps_old_credit_and_rejects_restart",
+)
+CASES["N06-CONSUMER"].extend(
+    ("franken_control", "channel::fec_negotiation::tests::" + name)
+    for name in VERIFIED_PROPOSAL_TESTS
+)
+CASES["N06-CONSUMER"].extend(
+    ("franken_control", "channel::owner::tests::" + name) for name in OWNER_PROPOSAL_TESTS
+)
+CASES["N06-CONSUMER"].extend(
+    ("franken_speaker", SPEAKER + name) for name in FUTURE_TESTS
+)
+READY_CONTROL_TESTS = (
+    "n06_prepare_ready_uses_authenticated_endpoint_and_rejects_stale",
+    "n06_prepare_rejects_wrong_target_timeline_key_and_rate_limit",
+    "n06_two_members_prepare_distinct_streams_and_keys_in_one_round",
+    "n06_authenticated_retries_preserve_binding_deadline_and_admit_other_member",
+    "n06_prepare_time_observations_latch_expiry_and_in_range_rollback",
+    "n06_prepare_maximum_labels_fit_bounded_nonallocating_encoders",
+    "n06_trusted_ingress_expiry_rollback_and_rate_limited_rollback_latch",
+)
+READY_OWNER_TESTS = ("fleet_owner_trusted_time_on_ordinary_control_fences_existing_prepare",)
+READY_PEER_TESTS = ("fixed_request_proof_uses_real_current_directory_and_exact_handle",)
+READY_STREAM_TESTS = ("n06_prepare_key_commitment_binds_key_and_context",)
+READY_SPEAKER_TESTS = (
+    "n06_future_owner_key_revoke_and_identical_reinstall_stales_candidate_preserves_audio",
+    "n06_ready_two_authenticated_targets_keep_old_pcm_and_reject_cross_binding",
+    "n06_ready_reinstall_and_target_role_change_refuse_emission",
+    "n06_ready_second_clock_read_expiry_clears_output_after_old_real_pcm",
+)
+READY_HEAP_TESTS = (
+    "n06_fixed_proof_valid_sign_verify_allocate_no_heap",
+    "n06_fixed_proof_refusals_and_legacy_unknown_preserve_no_heap",
+    "n06_fixed_proof_allocator_sensor_observes_real_legacy_auth",
+)
+CASES["N06-CONSUMER"].extend(
+    ("franken_control", "channel::fec_negotiation::tests::" + name) for name in READY_CONTROL_TESTS
+)
+CASES["N06-CONSUMER"].extend(
+    ("franken_control", "channel::owner::tests::" + name) for name in READY_OWNER_TESTS
+)
+CASES["N06-CONSUMER"].extend(
+    ("franken_control", "channel::peer::tests::" + name) for name in READY_PEER_TESTS
+)
+CASES["N06-CONSUMER"].extend(("franken_stream", "tests::" + name) for name in READY_STREAM_TESTS)
+CASES["N06-CONSUMER"].extend(("franken_speaker", SPEAKER + name) for name in READY_SPEAKER_TESTS)
+CASES["N06-CONSUMER"].extend(("n06_control_proof_heap", name) for name in READY_HEAP_TESTS)
 # Concrete integration gaps named by root: these remain full acceptance blockers.
 # No invented Rust test, disabled requirement, or refusal-only qualification.
 PENDING = {
@@ -126,11 +184,15 @@ PENDING = {
 
 def source_registry():
     actual = set()
-    for relative in ("crates/franken-stream/src/fec/tests.rs", "crates/franken-speaker/src/media_playout.rs", "toolchain/n06-fec-profile/src/lib.rs", "crates/franken-stream/src/carrier/fec_tests.rs", "crates/franken-speaker/src/net_carrier/fec_tests.rs", "crates/franken-speaker/src/net_carrier/fec_tests/feedback.rs", "crates/franken-speaker/src/net_carrier/fec_tests/selection.rs"):
+    for relative in ("crates/franken-stream/src/fec/tests.rs", "crates/franken-speaker/src/media_playout.rs", "toolchain/n06-fec-profile/src/lib.rs", "crates/franken-stream/src/carrier/fec_tests.rs", "crates/franken-speaker/src/net_carrier/fec_tests.rs", "crates/franken-speaker/src/net_carrier/fec_tests/feedback.rs", "crates/franken-speaker/src/net_carrier/fec_tests/selection.rs", "crates/franken-control/src/channel/fec_negotiation.rs", "crates/franken-stream/src/lib.rs", "crates/franken-alloc-probe/tests/n06_control_proof_heap.rs"):
         actual.update(re.findall(r"fn\s+(n06_[A-Za-z0-9_]+)\s*\(", (ROOT / relative).read_text()))
     actual.update(re.findall(
         r"fn\s+(fleet_owner_[A-Za-z0-9_]+)\s*\(",
         (ROOT / "crates/franken-control/src/channel/owner.rs").read_text(),
+    ))
+    actual.update(re.findall(
+        r"fn\s+(fixed_request_proof_uses_real_current_directory_and_exact_handle)\s*\(",
+        (ROOT / "crates/franken-control/src/channel/peer.rs").read_text(),
     ))
     mapped = {name.rsplit("::", 1)[-1] for tests in CASES.values() for _, name in tests}
     assert actual == mapped, "missing/stale N06 native test consumer"
@@ -138,6 +200,21 @@ def source_registry():
 
 def records(log, prefix):
     return shared.extract(log, prefix)
+
+
+def check_ready_heap(heap, sensor):
+    heap_fields = {"schema", "iterations", "verified", "allocations", "reallocations", "deallocations", "bytes_requested"}
+    sensor_fields = {"schema", "allocations", "bytes_requested"}
+    assert type(heap) is dict and set(heap) == heap_fields, "READY heap schema differs"
+    assert type(sensor) is dict and set(sensor) == sensor_fields, "READY sensor schema differs"
+    assert heap["schema"] == "n06.ready-proof-heap.v1" and sensor["schema"] == "n06.ready-proof-sensor.v1"
+    for row in (heap, sensor):
+        for key, value in row.items():
+            if key != "schema":
+                assert type(value) is int and 0 <= value < 2**64, "invalid READY heap integer"
+    assert heap["iterations"] == heap["verified"] == 512
+    assert all(heap[key] == 0 for key in ("allocations", "reallocations", "deallocations", "bytes_requested"))
+    assert sensor["allocations"] > 0 and sensor["bytes_requested"] > 0, "READY allocator sensor inactive"
 
 
 def evidence(case_id, log):
@@ -174,6 +251,19 @@ def evidence(case_id, log):
         fault = fresh[0]
         assert fault["schema"] == "n06.fresh-clock.v1" and fault["profile"] == PROFILE and fault["faulted"] is True
         assert fault["recovered"] == fault["repairs_seen"] == 0 and fault["queued"] == 2 and fault["clock_faults"] == 1
+        future = records(log, "N06-FUTURE")
+        if not future:
+            raise shared.MissingEvidence("actual future candidate observation missing")
+        assert len(future) == 1, "duplicate future candidate observation"
+        check_future(future[0])
+        ready = records(log, "N06-READY")
+        heap = records(log, "N06-READY-PROOF-HEAP")
+        sensor = records(log, "N06-READY-PROOF-SENSOR")
+        if not ready or not heap or not sensor:
+            raise shared.MissingEvidence("actual READY or proof allocation observation missing")
+        assert len(ready) == len(heap) == len(sensor) == 1, "duplicate READY observation"
+        check_ready(ready[0])
+        check_ready_heap(heap[0], sensor[0])
     elif case_id == "N06-TAIL":
         fleet = records(log, "N06-FLEET")
         if not fleet:

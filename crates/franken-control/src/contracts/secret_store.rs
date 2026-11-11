@@ -130,6 +130,12 @@ impl SecretHandle {
     pub const fn slot(&self) -> &SlotName {
         &self.slot
     }
+
+    /// Heap bytes retained by this handle, for the owning component's peak budget.
+    #[must_use]
+    pub fn owned_heap_bytes(&self) -> usize {
+        self.slot.0.capacity()
+    }
 }
 
 impl fmt::Display for SecretHandle {
