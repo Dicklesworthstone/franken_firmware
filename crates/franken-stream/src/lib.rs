@@ -892,6 +892,12 @@ impl StreamReceiver {
         self.window.active_epoch()
     }
 
+    /// The stream identity currently bound to this receiver.
+    #[must_use]
+    pub const fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
+
     #[must_use]
     pub const fn counters(&self) -> &ReceiverCounters {
         &self.counters

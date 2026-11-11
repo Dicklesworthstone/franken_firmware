@@ -55,11 +55,13 @@ use franken_platform::layer::PlatformLayer;
 use franken_platform::ops::KernelOps;
 use franken_platform::{MemoryBudgetLedger, PlatformAdmissionError};
 use franken_stream::playout::{
-    Admission, AdmitError, BLOCK_PAYLOAD_BYTES, Decision, LogConfig, MediaPacket, Outcome,
-    PlayoutConfig, PlayoutEngine, PlayoutProfile, PlayoutStats, Poll,
+    Admission, AdmitError, BLOCK_PAYLOAD_BYTES, Decision, EngineSnapshot, LogConfig, MediaPacket,
+    Outcome, PlayoutConfig, PlayoutEngine, PlayoutProfile, PlayoutStats, Poll,
     StartReject as EngineStartReject,
 };
 use franken_stream::{ReceiverCounters, StreamError, StreamId, StreamReceiver};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::clock_view::ClockViewBridge;
 
@@ -124,9 +126,67 @@ pub enum HostFecAdmitError {
     Profile(franken_stream::fec::Refusal),
     Binding,
     AlreadySelected,
+    /// Another preparation is still owned by its caller.
+    PreparationOutstanding,
+    /// This admission no longer names the same live media context.
+    StalePreparation,
+    /// The non-wrapping media context generation is exhausted.
+    GenerationExhausted,
+    /// A requested resident-byte charge cannot be represented.
+    AccountingOverflow,
     Memory(MediaAdmitError),
-    Capacity { required: usize, available: usize },
-    Allocation { requested: usize },
+    Capacity {
+        required: usize,
+        available: usize,
+    },
+    Allocation {
+        requested: usize,
+    },
+}
+
+/// Owns a fallibly allocated receiver and the single outstanding reservation.
+/// Dropping it frees that receiver and releases its charge; it does not select FEC.
+/// This is a local resource reservation, not evidence of clock or peer readiness.
+#[derive(Debug)]
+pub struct PreparedHostFec {
+    receiver: Vec<franken_stream::fec::Receiver>,
+    reservation: Arc<AtomicUsize>,
+    generation: u64,
+    snapshot: EngineSnapshot,
+    counters: ReceiverCounters,
+}
+
+impl PreparedHostFec {
+    /// The actual receiver heap capacity charged while this preparation lives.
+    #[must_use]
+    pub fn reserved_bytes(&self) -> usize {
+        self.receiver.capacity() * franken_stream::fec::Receiver::resident_bytes()
+    }
+
+    /// The proposed stream, epoch and origin, without exposing its key.
+    #[must_use]
+    pub fn identity(&self) -> (u64, u64, u64) {
+        self.receiver[0].identity()
+    }
+
+    /// Charge an enclosing owner's inline state to the same live reservation.
+    pub(crate) fn charge_inline(&mut self, bytes: usize) -> Result<(), HostFecAdmitError> {
+        let current = self.reservation.load(Ordering::Acquire);
+        let total = current
+            .checked_add(bytes)
+            .ok_or(HostFecAdmitError::AccountingOverflow)?;
+        self.reservation.store(total, Ordering::Release);
+        Ok(())
+    }
+}
+
+impl Drop for PreparedHostFec {
+    fn drop(&mut self) {
+        // Free before releasing the charge: a preparation dropped on another thread must not
+        // allow a replacement allocation to overlap an uncharged old one.
+        self.receiver = Vec::new();
+        self.reservation.store(0, Ordering::Release);
+    }
 }
 
 /// The platform reports a monotonic resolution coarser than the group clock's configuration assumes.
@@ -318,6 +378,9 @@ pub(crate) fn synthetic_ledger(stream_and_jitter_bytes: u64) -> MemoryBudgetLedg
 pub struct MediaPlayout {
     /// Empty on the baseline path. Capacity is at most one and is budgeted beside this path.
     fec: Vec<franken_stream::fec::Receiver>,
+    /// Charges the one externally held preparation, including while N01 continues.
+    fec_reservation: Arc<AtomicUsize>,
+    context_generation: u64,
     receiver: StreamReceiver,
     engine: PlayoutEngine,
     bridge: ClockViewBridge,
@@ -350,10 +413,13 @@ impl MediaPlayout {
         resident_elsewhere_bytes: u64,
     ) -> Result<Self, MediaAdmitError> {
         let held = resident_elsewhere_bytes.saturating_add(Self::inline_bytes());
+        let engine = admit_engine(profile, config, ledger, held)?;
         Ok(Self {
             fec: Vec::new(),
+            fec_reservation: Arc::new(AtomicUsize::new(0)),
+            context_generation: 0,
             receiver,
-            engine: admit_engine(profile, config, ledger, held)?,
+            engine,
             bridge: ClockViewBridge::default(),
             clock_faults: 0,
             resolution_refusals: 0,
@@ -361,10 +427,16 @@ impl MediaPlayout {
         })
     }
 
-    /// Bytes of this struct that are not the engine: the receiver, the clock bridge and the counters.
+    /// Non-engine bytes, including the shared permit allocation and space for one live preparation.
     fn inline_bytes() -> u64 {
-        u64::try_from(core::mem::size_of::<Self>() - core::mem::size_of::<PlayoutEngine>())
-            .unwrap_or(u64::MAX)
+        // Arc's two reference counts and the atomic charge live in one allocation. Precharge the
+        // caller-held preparation's inline state even before it exists, so it is never unbudgeted.
+        u64::try_from(
+            core::mem::size_of::<Self>() - core::mem::size_of::<PlayoutEngine>()
+                + 3 * core::mem::size_of::<usize>()
+                + core::mem::size_of::<PreparedHostFec>(),
+        )
+        .unwrap_or(u64::MAX)
     }
 
     /// Bytes this path holds: its inline state, the engine and its slot queue, and the diagnostics ring if one is on. This is the
@@ -376,6 +448,7 @@ impl MediaPlayout {
             .saturating_add(
                 (self.fec.capacity() * franken_stream::fec::Receiver::resident_bytes()) as u64,
             )
+            .saturating_add(self.fec_reservation.load(Ordering::Acquire) as u64)
     }
     /// Explicit HOST-ONLY DEVELOPMENT selection after an admitted MUSIC start.
     /// No packet can select a profile or allocate its backing state. This does
@@ -386,10 +459,27 @@ impl MediaPlayout {
         ledger: &MemoryBudgetLedger,
         resident_elsewhere_bytes: u64,
     ) -> Result<(), HostFecAdmitError> {
+        let prepared = self.prepare_host_fec(config, ledger, resident_elsewhere_bytes)?;
+        self.commit_host_fec(prepared, ledger, resident_elsewhere_bytes)
+    }
+
+    /// Reserve real FEC state without selecting it or changing the active stream. One preparation
+    /// may be outstanding per media path; its bytes count in `resident_bytes` until dropped or committed.
+    /// The caller must include all other simultaneously resident paths in `resident_elsewhere_bytes`.
+    /// If the media owner is dropped while the preparation survives, its caller must continue
+    /// accounting for that preparation and its shared reservation allocation.
+    pub fn prepare_host_fec(
+        &mut self,
+        config: franken_stream::fec::SessionConfig,
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<PreparedHostFec, HostFecAdmitError> {
         config.metadata(0).map_err(HostFecAdmitError::Profile)?;
-        if !self
-            .engine
-            .matches_fec_timeline(config.epoch, config.presentation_origin_ns)
+        if self.receiver.stream_id() != config.stream
+            || self.receiver.active_epoch() != config.epoch
+            || !self
+                .engine
+                .matches_fec_timeline(config.epoch, config.presentation_origin_ns)
             || self.engine.snapshot().queued != 0
         {
             return Err(HostFecAdmitError::Binding);
@@ -397,14 +487,18 @@ impl MediaPlayout {
         if !self.fec.is_empty() {
             return Err(HostFecAdmitError::AlreadySelected);
         }
-        let required = if self.fec.capacity() == 0 {
-            franken_stream::fec::Receiver::resident_bytes()
-        } else {
-            0
-        };
+        if self.fec_reservation.load(Ordering::Acquire) != 0 {
+            return Err(HostFecAdmitError::PreparationOutstanding);
+        }
+        if self.context_generation == u64::MAX {
+            return Err(HostFecAdmitError::GenerationExhausted);
+        }
+        let held = usize::try_from(self.resident_bytes()).unwrap_or(usize::MAX);
+        let receiver_bytes = franken_stream::fec::Receiver::resident_bytes();
+        let retained = self.fec.capacity().saturating_mul(receiver_bytes);
+        let required = if retained == 0 { receiver_bytes } else { 0 };
         let available =
             stream_room(ledger, resident_elsewhere_bytes).map_err(HostFecAdmitError::Memory)?;
-        let held = usize::try_from(self.resident_bytes()).unwrap_or(usize::MAX);
         let total = held.saturating_add(required);
         if total > available {
             return Err(HostFecAdmitError::Capacity {
@@ -412,20 +506,83 @@ impl MediaPlayout {
                 available,
             });
         }
-        if self.fec.capacity() == 0 {
-            self.fec
-                .try_reserve_exact(1)
-                .map_err(|_| HostFecAdmitError::Allocation {
-                    requested: required,
-                })?;
+        self.fec_reservation
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| HostFecAdmitError::PreparationOutstanding)?;
+        let mut prepared = PreparedHostFec {
+            // The selected receiver was cleared before this point. Transfer any retained
+            // empty allocation instead of charging a second receiver at reselection.
+            receiver: std::mem::take(&mut self.fec),
+            reservation: Arc::clone(&self.fec_reservation),
+            generation: self.context_generation,
+            snapshot: self.engine.snapshot(),
+            counters: self.receiver.counters().clone(),
+        };
+        prepared
+            .receiver
+            .try_reserve_exact(1)
+            .map_err(|_| HostFecAdmitError::Allocation {
+                requested: receiver_bytes,
+            })?;
+        let actual = prepared.receiver.capacity().saturating_mul(receiver_bytes);
+        let total = held.saturating_sub(retained).saturating_add(actual);
+        if total > available {
+            return Err(HostFecAdmitError::Capacity {
+                required: total,
+                available,
+            });
         }
+        self.fec_reservation.store(actual, Ordering::Release);
         let origin = config.presentation_origin_ns;
         let mut fec =
             franken_stream::fec::Receiver::new(config).map_err(HostFecAdmitError::Profile)?;
         fec.rebind(&self.engine, origin)
             .map_err(HostFecAdmitError::Profile)?;
-        self.fec.push(fec);
+        prepared.receiver.push(fec);
+        Ok(prepared)
+    }
+
+    /// Revalidate the live binding, progress and peak budget before consuming the reservation.
+    pub fn commit_host_fec(
+        &mut self,
+        mut prepared: PreparedHostFec,
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<(), HostFecAdmitError> {
+        let (stream, epoch, origin) = prepared.identity();
+        if !Arc::ptr_eq(&self.fec_reservation, &prepared.reservation)
+            || self.context_generation == u64::MAX
+            || self.context_generation != prepared.generation
+            || self.receiver.stream_id().get() != stream
+            || self.receiver.active_epoch() != epoch
+            || self.receiver.counters() != &prepared.counters
+            || self.engine.snapshot() != prepared.snapshot
+            || self.engine.snapshot().queued != 0
+            || !self.engine.matches_fec_timeline(epoch, origin)
+        {
+            return Err(HostFecAdmitError::StalePreparation);
+        }
+        if !self.fec.is_empty() {
+            return Err(HostFecAdmitError::AlreadySelected);
+        }
+        let available =
+            stream_room(ledger, resident_elsewhere_bytes).map_err(HostFecAdmitError::Memory)?;
+        let held = usize::try_from(self.resident_bytes()).unwrap_or(usize::MAX);
+        if held > available {
+            return Err(HostFecAdmitError::Capacity {
+                required: held,
+                available,
+            });
+        }
+        prepared.receiver[0]
+            .rebind(&self.engine, origin)
+            .map_err(HostFecAdmitError::Profile)?;
+        self.fec = std::mem::take(&mut prepared.receiver);
         Ok(())
+    }
+
+    fn invalidate_preparations(&mut self) {
+        self.context_generation = self.context_generation.saturating_add(1);
     }
     pub fn host_fec_status(&self) -> Option<franken_stream::fec::Status> {
         self.fec.first().map(|fec| fec.status())
@@ -582,6 +739,7 @@ impl MediaPlayout {
         clock: &mut GroupClock,
         datagram: &[u8],
     ) -> Result<AuthenticatedIngress, MediaRefusal> {
+        self.invalidate_preparations();
         let local_ns = self
             .local_ns(platform, clock)
             .map_err(LocalTimeRefusal::for_ingest)?;
@@ -706,6 +864,7 @@ impl MediaPlayout {
         clock: &mut GroupClock,
         out: &mut [u8; BLOCK_PAYLOAD_BYTES],
     ) -> Result<Preparation, ClockError> {
+        self.invalidate_preparations();
         out.fill(0);
         let local_ns = match self.local_ns(platform, clock) {
             Ok(local_ns) => local_ns,
@@ -776,6 +935,7 @@ impl MediaPlayout {
         sched: StartSchedule,
         anchor_frame: u64,
     ) -> Result<StartPlan, StartRefusal> {
+        self.invalidate_preparations();
         let local_ns = self
             .local_ns(platform, clock)
             .map_err(LocalTimeRefusal::for_start)?;
@@ -827,6 +987,7 @@ impl MediaPlayout {
         leader: u64,
     ) -> Result<(), GroupClockError> {
         clock.begin_epoch(epoch, leader)?;
+        self.invalidate_preparations();
         for fec in &mut self.fec {
             fec.stop();
         }
@@ -843,6 +1004,7 @@ impl MediaPlayout {
     /// selection and the owner makes the call once per restart. The group clock and the engine are not touched:
     /// [`Self::begin_epoch`] and [`Self::admit_start`] stay the control path's calls for those.
     pub fn bind_stream(&mut self, stream_id: StreamId, epoch: u64) {
+        self.invalidate_preparations();
         for fec in &mut self.fec {
             fec.stop();
         }
@@ -2010,20 +2172,34 @@ mod tests {
     ) -> (Outcome, [u8; 1024]) {
         let presentation = cfg.presentation_origin_ns + frames_to_ns(block * 256);
         let mut local = rig.local_of(presentation - 2_500_000, rig.time.get());
+        let mut reached_cutoff = false;
         for _ in 0..8 {
-            let uncertainty = rig.clock.report(local).uncertainty_ns.unwrap().max(500_000);
+            let group = rig.group_at(local);
+            let raw_uncertainty = rig.clock.report(local).uncertainty_ns.unwrap();
+            // N06 applies its own uncertainty guard; baseline N01 uses the clock view as-is.
+            let uncertainty = if rig.media.host_fec_selected() {
+                franken_stream::fec::profile_view(franken_stream::playout::ClockView {
+                    group_ns: group,
+                    uncertainty_ns: raw_uncertainty,
+                    usable: true,
+                })
+                .uncertainty_ns
+            } else {
+                raw_uncertainty
+            };
             let cutoff = franken_stream::playout::consume_by(
                 presentation,
                 1_000_000,
                 1_000_000,
                 uncertainty,
             );
-            let group = rig.group_at(local);
             if group >= cutoff {
+                reached_cutoff = true;
                 break;
             }
             local += cutoff - group;
         }
+        assert!(reached_cutoff, "playout cutoff did not converge");
         rig.at(local);
         let mut out = [0; 1024];
         let outcome = match rig.prepare(&mut out).unwrap() {
@@ -2036,6 +2212,542 @@ mod tests {
         };
         assert_eq!(rig.media.engine.snapshot().cursor, block + 1);
         (outcome, out)
+    }
+
+    fn unselected_fec_rig() -> (Rig, franken_stream::fec::SessionConfig) {
+        let mut rig = Rig::new();
+        rig.media = MediaPlayout::new(
+            receiver(),
+            PlayoutProfile::MUSIC,
+            PlayoutConfig {
+                work_ns: 1_000_000,
+                lead_ns: 1_000_000,
+                tolerance_ns: 0,
+            },
+            &synthetic_ledger(2 * 1024 * 1024),
+            0,
+        )
+        .unwrap();
+        rig.lock(0, OLD_TIMELINE_NS);
+        rig.at(50_000_000);
+        let start = rig.group_at(50_000_000) + 500_000_000;
+        rig.admit(start, 0).unwrap();
+        let config = franken_stream::fec::SessionConfig {
+            stream: stream_id(),
+            epoch: 1,
+            presentation_origin_ns: start,
+            key: key(),
+        };
+        (rig, config)
+    }
+
+    #[test]
+    fn n06_preflight_capacity_binding_and_abort_preserve_real_n01_audio() {
+        use franken_stream::fec;
+        let (mut rig, config) = unselected_fec_rig();
+        let before = rig.media.engine.snapshot();
+        let counters = rig.media.receiver_counters().clone();
+        let held = rig.media.resident_bytes();
+        let need = fec::Receiver::resident_bytes() as u64;
+        let ledger = synthetic_ledger(held + need);
+        let mut wrong = config.clone();
+        wrong.stream = StreamId::new(stream_id().get() + 1).unwrap();
+        assert!(matches!(
+            rig.media.prepare_host_fec(wrong, &ledger, 0),
+            Err(HostFecAdmitError::Binding)
+        ));
+        let mut wrong = config.clone();
+        wrong.epoch += 1;
+        assert!(matches!(
+            rig.media.prepare_host_fec(wrong, &ledger, 0),
+            Err(HostFecAdmitError::Binding)
+        ));
+        let mut wrong = config.clone();
+        wrong.presentation_origin_ns += 1;
+        assert!(matches!(
+            rig.media.prepare_host_fec(wrong, &ledger, 0),
+            Err(HostFecAdmitError::Binding)
+        ));
+        assert!(matches!(
+            rig.media
+                .prepare_host_fec(config.clone(), &synthetic_ledger(held + need - 1), 0),
+            Err(HostFecAdmitError::Capacity { .. })
+        ));
+        assert_eq!(rig.media.engine.snapshot(), before);
+        assert_eq!(rig.media.receiver_counters(), &counters);
+        let pending = rig
+            .media
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        assert_eq!(pending.reserved_bytes() as u64, need);
+        assert_eq!(rig.media.resident_bytes(), held + need);
+        assert!(!rig.media.host_fec_selected());
+        assert!(matches!(
+            rig.media.prepare_host_fec(config.clone(), &ledger, 0),
+            Err(HostFecAdmitError::PreparationOutstanding)
+        ));
+        drop(pending);
+        assert_eq!(rig.media.resident_bytes(), held);
+        assert_eq!(rig.media.engine.snapshot(), before);
+        rig.at(70_000_000);
+        let packet = rig.packet(0, 0, config.presentation_origin_ns, 17);
+        assert_eq!(rig.ingest(&packet), Ok(Admission::Admitted));
+        assert!(matches!(
+            rig.ingest(&packet),
+            Err(MediaRefusal::Stream(
+                StreamError::ReplayOrDuplicatePacket { .. }
+            ))
+        ));
+        let (outcome, output) = fec_prepare_block(&mut rig, &config, 0);
+        assert_eq!(outcome, Outcome::Real);
+        assert_eq!(output.as_slice(), pcm(0, 17).as_slice());
+    }
+
+    #[test]
+    fn n06_preflight_aba_refuses_then_commits_and_recovers_authenticated_pcm() {
+        use franken_stream::fec::{self, BYTES, K, N};
+        use std::sync::atomic::AtomicBool;
+        let (mut rig, config) = unselected_fec_rig();
+        let held = rig.media.resident_bytes();
+        let ledger = synthetic_ledger(held + fec::Receiver::resident_bytes() as u64);
+        let pending = rig
+            .media
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        let replacement = StreamId::new(stream_id().get() + 1).unwrap();
+        rig.media.bind_stream(replacement, 1);
+        rig.media.bind_stream(stream_id(), 1);
+        let before = rig.media.engine.snapshot();
+        let counters = rig.media.receiver_counters().clone();
+        assert_eq!(
+            rig.media.commit_host_fec(pending, &ledger, 0),
+            Err(HostFecAdmitError::StalePreparation)
+        );
+        assert_eq!(rig.media.engine.snapshot(), before);
+        assert_eq!(rig.media.receiver_counters(), &counters);
+        assert_eq!(rig.media.resident_bytes(), held);
+        let pending = rig
+            .media
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        rig.media.commit_host_fec(pending, &ledger, 0).unwrap();
+        let source: [[u8; BYTES]; K] = std::array::from_fn(|i| [i as u8 + 1; BYTES]);
+        let digest = fec::content_digest(&config.metadata(0).unwrap(), &source);
+        rig.at(70_000_000);
+        for esi in 2..N {
+            let packet = fec::sign_symbol(
+                &config,
+                0,
+                esi,
+                if esi < K { 0 } else { 2 },
+                digest,
+                &fec::encode_symbol(&source, esi).unwrap(),
+            )
+            .unwrap();
+            rig.media
+                .ingest_authenticated(&mut rig.platform, &mut rig.clock, &packet)
+                .unwrap();
+        }
+        let mut ready = false;
+        for step in 0..1000 {
+            rig.at(130_000_000 + step * 30_000);
+            if rig
+                .media
+                .poll_host_fec(&mut rig.platform, &mut rig.clock, &AtomicBool::new(false))
+                .unwrap()
+                == fec::DecodeState::Ready
+            {
+                ready = true;
+                break;
+            }
+        }
+        assert!(ready);
+        assert_eq!(rig.media.host_fec_status().unwrap().counters.recovered, 2);
+        let (outcome, bytes) = fec_prepare_block(&mut rig, &config, 0);
+        assert_eq!(outcome, Outcome::Real);
+        assert_eq!(bytes, source[0]);
+    }
+
+    #[test]
+    fn n06_preflight_progress_epoch_and_cross_owner_invalidate_without_effect() {
+        use franken_stream::fec;
+        let (mut rig, config) = unselected_fec_rig();
+        let ledger =
+            synthetic_ledger(rig.media.resident_bytes() + fec::Receiver::resident_bytes() as u64);
+        let pending = rig
+            .media
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        rig.at(70_000_000);
+        let packet = rig.packet(0, 0, config.presentation_origin_ns, 29);
+        assert_eq!(rig.ingest(&packet), Ok(Admission::Admitted));
+        let before = rig.media.engine.snapshot();
+        let counters = rig.media.receiver_counters().clone();
+        assert_eq!(
+            rig.media.commit_host_fec(pending, &ledger, 0),
+            Err(HostFecAdmitError::StalePreparation)
+        );
+        assert_eq!(rig.media.engine.snapshot(), before);
+        assert_eq!(rig.media.receiver_counters(), &counters);
+        assert!(matches!(
+            rig.ingest(&packet),
+            Err(MediaRefusal::Stream(
+                StreamError::ReplayOrDuplicatePacket { .. }
+            ))
+        ));
+        let (outcome, bytes) = fec_prepare_block(&mut rig, &config, 0);
+        assert_eq!(outcome, Outcome::Real);
+        assert_eq!(bytes.as_slice(), pcm(0, 29).as_slice());
+
+        let (mut first, config) = unselected_fec_rig();
+        let (mut second, _) = unselected_fec_rig();
+        let ledger =
+            synthetic_ledger(first.media.resident_bytes() + fec::Receiver::resident_bytes() as u64);
+        let pending = first
+            .media
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        assert_eq!(
+            second.media.commit_host_fec(pending, &ledger, 0),
+            Err(HostFecAdmitError::StalePreparation)
+        );
+        let pending = first
+            .media
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        first.media.begin_epoch(&mut first.clock, 2, 7).unwrap();
+        assert_eq!(
+            first.media.commit_host_fec(pending, &ledger, 0),
+            Err(HostFecAdmitError::StalePreparation)
+        );
+        assert!(!first.media.host_fec_selected());
+    }
+
+    #[test]
+    fn n06_preflight_rechecks_budget_and_same_timeline_rebind() {
+        use franken_stream::fec;
+        let (mut rig, mut config) = unselected_fec_rig();
+        let held = rig.media.resident_bytes();
+        let need = fec::Receiver::resident_bytes() as u64;
+        let ledger = synthetic_ledger(held + need);
+        let before = rig.media.engine.snapshot();
+        let pending = rig
+            .media
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        assert!(matches!(
+            rig.media
+                .commit_host_fec(pending, &synthetic_ledger(held + need - 1), 0),
+            Err(HostFecAdmitError::Capacity { .. })
+        ));
+        assert_eq!(rig.media.resident_bytes(), held);
+        assert_eq!(rig.media.engine.snapshot(), before);
+        let pending = rig
+            .media
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        rig.admit(config.presentation_origin_ns, 0).unwrap();
+        let after_rebind = rig.media.engine.snapshot();
+        assert_eq!(
+            rig.media.commit_host_fec(pending, &ledger, 0),
+            Err(HostFecAdmitError::StalePreparation)
+        );
+        assert_eq!(rig.media.engine.snapshot(), after_rebind);
+        assert!(!rig.media.host_fec_selected());
+        let pending = rig
+            .media
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        config.presentation_origin_ns += 100_000_000;
+        rig.admit(config.presentation_origin_ns, 0).unwrap();
+        assert_eq!(
+            rig.media.commit_host_fec(pending, &ledger, 0),
+            Err(HostFecAdmitError::StalePreparation)
+        );
+        let pending = rig.media.prepare_host_fec(config, &ledger, 0).unwrap();
+        rig.media.commit_host_fec(pending, &ledger, 0).unwrap();
+        assert!(rig.media.host_fec_selected());
+    }
+
+    #[test]
+    fn n06_preflight_generation_exhaustion_refuses_without_wrap() {
+        use franken_stream::fec;
+        let (mut rig, config) = unselected_fec_rig();
+        let held = rig.media.resident_bytes();
+        let ledger = synthetic_ledger(held + fec::Receiver::resident_bytes() as u64);
+        rig.media.context_generation = u64::MAX - 1;
+        let pending = rig
+            .media
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        rig.media.bind_stream(stream_id(), 1);
+        assert_eq!(
+            rig.media.commit_host_fec(pending, &ledger, 0),
+            Err(HostFecAdmitError::StalePreparation)
+        );
+        assert!(matches!(
+            rig.media.prepare_host_fec(config, &ledger, 0),
+            Err(HostFecAdmitError::GenerationExhausted)
+        ));
+        assert_eq!(rig.media.resident_bytes(), held);
+        assert!(!rig.media.host_fec_selected());
+    }
+
+    #[test]
+    fn n06_reenable_reuses_retained_receiver_at_exact_budget_and_recovers_pcm() {
+        use franken_stream::fec::{self, BYTES, K, N};
+        use std::sync::atomic::AtomicBool;
+        let (mut rig, config) = unselected_fec_rig();
+        let base = rig.media.resident_bytes();
+        let need = fec::Receiver::resident_bytes() as u64;
+        let ledger = synthetic_ledger(base + need);
+        rig.media
+            .enable_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        assert_eq!(rig.media.resident_bytes(), base + need);
+        rig.media.bind_stream(stream_id(), 1);
+        assert!(!rig.media.host_fec_selected());
+        assert_eq!(rig.media.resident_bytes(), base + need);
+        // The old immediate API remains admitted at exactly the same budget.
+        rig.media
+            .enable_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        assert!(rig.media.host_fec_selected());
+        assert_eq!(rig.media.resident_bytes(), base + need);
+
+        // A separately held preparation owns and charges that same retained allocation.
+        rig.media.bind_stream(stream_id(), 1);
+        let snapshot = rig.media.engine.snapshot();
+        let counters = rig.media.receiver_counters().clone();
+        let pending = rig
+            .media
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        assert_eq!(pending.reserved_bytes() as u64, need);
+        assert_eq!(rig.media.resident_bytes(), base + need);
+        assert!(!rig.media.host_fec_selected());
+        drop(pending);
+        assert_eq!(rig.media.resident_bytes(), base);
+        assert_eq!(rig.media.engine.snapshot(), snapshot);
+        assert_eq!(rig.media.receiver_counters(), &counters);
+        // Dropping discarded the allocation; allocating it again still fits the original ledger.
+        rig.media
+            .enable_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        let source: [[u8; BYTES]; K] = std::array::from_fn(|i| [i as u8 + 101; BYTES]);
+        let digest = fec::content_digest(&config.metadata(0).unwrap(), &source);
+        rig.at(70_000_000);
+        for esi in 2..N {
+            let wire = fec::sign_symbol(
+                &config,
+                0,
+                esi,
+                if esi < K { 0 } else { 2 },
+                digest,
+                &fec::encode_symbol(&source, esi).unwrap(),
+            )
+            .unwrap();
+            rig.media
+                .ingest_authenticated(&mut rig.platform, &mut rig.clock, &wire)
+                .unwrap();
+        }
+        let mut ready = false;
+        for step in 0..1000 {
+            rig.at(130_000_000 + step * 30_000);
+            if rig
+                .media
+                .poll_host_fec(&mut rig.platform, &mut rig.clock, &AtomicBool::new(false))
+                .unwrap()
+                == fec::DecodeState::Ready
+            {
+                ready = true;
+                break;
+            }
+        }
+        assert!(ready);
+        assert_eq!(rig.media.host_fec_status().unwrap().counters.recovered, 2);
+        let (outcome, bytes) = fec_prepare_block(&mut rig, &config, 0);
+        assert_eq!(outcome, Outcome::Real);
+        assert_eq!(bytes, source[0]);
+    }
+
+    #[test]
+    fn n06_endpoint_preflight_rejects_carrier_aba_and_preserves_n01_credit() {
+        use crate::net_carrier::{MediaEndpoint, PreparedEndpointFec};
+        use franken_stream::carrier::{CarrierReceiver, ReceiverLimits};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+        let (mut rig, config) = unselected_fec_rig();
+        let packet = rig.packet(0, 0, config.presentation_origin_ns, 41);
+        rig.at(70_000_000);
+        let carrier = CarrierReceiver::bind(
+            key(),
+            stream_id(),
+            1,
+            ReceiverLimits::baseline(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 9)),
+        )
+        .unwrap();
+        let mut endpoint = MediaEndpoint::new(carrier, rig.media);
+        let ledger = synthetic_ledger(
+            endpoint.media().resident_bytes()
+                + franken_stream::fec::Receiver::resident_bytes() as u64
+                + PreparedEndpointFec::inline_overhead_bytes() as u64,
+        );
+        let pending = endpoint
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        assert_eq!(
+            endpoint.media().resident_bytes(),
+            ledger.stream_and_jitter_bytes
+        );
+        endpoint
+            .carrier_mut()
+            .restart_stream(StreamId::new(stream_id().get() + 1).unwrap(), 1);
+        endpoint.carrier_mut().restart_stream(stream_id(), 1);
+        assert_eq!(
+            endpoint.commit_host_fec(pending, &ledger, 0),
+            Err(HostFecAdmitError::StalePreparation)
+        );
+        assert_eq!(
+            endpoint.media().resident_bytes()
+                + franken_stream::fec::Receiver::resident_bytes() as u64
+                + PreparedEndpointFec::inline_overhead_bytes() as u64,
+            ledger.stream_and_jitter_bytes
+        );
+        assert_eq!(endpoint.carrier().consumed_next(), 0);
+        let pending = endpoint.prepare_host_fec(config, &ledger, 0).unwrap();
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        socket
+            .send_to(&packet, endpoint.carrier().media_addr().unwrap())
+            .unwrap();
+        let report = endpoint.poll(&mut rig.platform, &mut rig.clock);
+        assert_eq!(report.media_accepted, 1);
+        assert_eq!(endpoint.carrier().consumed_next(), 1);
+        let before = endpoint.carrier().consumed_next();
+        assert_eq!(
+            endpoint.commit_host_fec(pending, &ledger, 0),
+            Err(HostFecAdmitError::StalePreparation)
+        );
+        assert_eq!(endpoint.carrier().consumed_next(), before);
+        socket
+            .send_to(&packet, endpoint.carrier().media_addr().unwrap())
+            .unwrap();
+        let report = endpoint.poll(&mut rig.platform, &mut rig.clock);
+        assert_eq!(report.media_accepted, 0);
+        assert_eq!(endpoint.carrier().consumed_next(), before);
+        assert_eq!(endpoint.media().receiver_counters().rejected_replay, 1);
+        assert!(!endpoint.media().host_fec_selected());
+    }
+
+    #[test]
+    fn n06_endpoint_prepared_commit_delivers_recovered_pcm_over_loopback() {
+        use crate::net_carrier::{MediaEndpoint, PreparedEndpointFec};
+        use franken_stream::carrier::{CarrierReceiver, ReceiverLimits};
+        use franken_stream::fec::{self, BYTES, K, N};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+        use std::sync::atomic::AtomicBool;
+        let (mut rig, config) = unselected_fec_rig();
+        let carrier = CarrierReceiver::bind(
+            key(),
+            stream_id(),
+            1,
+            ReceiverLimits::baseline(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 9)),
+        )
+        .unwrap();
+        let mut endpoint = MediaEndpoint::new(carrier, rig.media);
+        let held = endpoint.media().resident_bytes();
+        let ledger = synthetic_ledger(
+            held + fec::Receiver::resident_bytes() as u64
+                + PreparedEndpointFec::inline_overhead_bytes() as u64,
+        );
+        let pending = endpoint
+            .prepare_host_fec(config.clone(), &ledger, 0)
+            .unwrap();
+        assert_eq!(
+            pending.identity(),
+            (
+                stream_id().get(),
+                config.epoch,
+                config.presentation_origin_ns
+            )
+        );
+        assert_eq!(endpoint.carrier().consumed_next(), 0);
+        assert!(!endpoint.media().host_fec_selected());
+        endpoint.commit_host_fec(pending, &ledger, 0).unwrap();
+        let source: [[u8; BYTES]; K] = std::array::from_fn(|i| [i as u8 + 61; BYTES]);
+        let digest = fec::content_digest(&config.metadata(0).unwrap(), &source);
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let addr = endpoint.carrier().media_addr().unwrap();
+        rig.time.set(70_000_000);
+        for esi in 2..N {
+            let wire = fec::sign_symbol(
+                &config,
+                0,
+                esi,
+                if esi < K { 0 } else { 2 },
+                digest,
+                &fec::encode_symbol(&source, esi).unwrap(),
+            )
+            .unwrap();
+            socket.send_to(&wire, addr).unwrap();
+        }
+        let report = endpoint.poll(&mut rig.platform, &mut rig.clock);
+        assert_eq!(report.media_accepted as usize, N - 2);
+        assert_eq!(endpoint.carrier().consumed_next(), N as u64);
+        let mut ready = false;
+        for step in 0..1000 {
+            rig.time.set(130_000_000 + step * 30_000);
+            if endpoint
+                .poll_fec(&mut rig.platform, &mut rig.clock, &AtomicBool::new(false))
+                .unwrap()
+                == fec::DecodeState::Ready
+            {
+                ready = true;
+                break;
+            }
+        }
+        assert!(ready);
+        assert_eq!(
+            endpoint
+                .media()
+                .host_fec_status()
+                .unwrap()
+                .counters
+                .recovered,
+            2
+        );
+        let mut local = rig
+            .clock
+            .local_for_group(config.presentation_origin_ns - 2_500_000, 160_000_000)
+            .unwrap();
+        for _ in 0..8 {
+            let uncertainty = rig.clock.report(local).uncertainty_ns.unwrap().max(500_000);
+            let cutoff = franken_stream::playout::consume_by(
+                config.presentation_origin_ns,
+                1_000_000,
+                1_000_000,
+                uncertainty,
+            );
+            let now = rig.clock.group_ns(local).unwrap();
+            if now >= cutoff {
+                break;
+            }
+            local += cutoff - now;
+        }
+        rig.time.set(local);
+        let mut output = [0; BYTES];
+        let Preparation::Prepared(block) = endpoint
+            .media_mut()
+            .prepare(&mut rig.platform, &mut rig.clock, &mut output)
+            .unwrap()
+        else {
+            panic!("prepared endpoint did not deliver recovered PCM")
+        };
+        assert_eq!(block.decision.outcome, Outcome::Real);
+        assert_eq!(output, source[0]);
     }
 
     #[test]

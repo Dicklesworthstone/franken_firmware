@@ -1,0 +1,32 @@
+Observed native Linux host output EXCERPTS, not full captures.
+Only actual test rows and result footers are copied; private RCH paths/addresses are omitted.
+No board, guest, native service, allocator-abort or distributed-readiness proof is asserted.
+
+=== initial failed libraries; native build 30103800983323339 ===
+    Finished `test` profile [unoptimized] target(s) in 38.45s
+test media_playout::tests::n06_endpoint_preflight_rejects_carrier_aba_and_preserves_n01_credit ... ok
+test media_playout::tests::n06_endpoint_prepared_commit_delivers_recovered_pcm_over_loopback ... ok
+test media_playout::tests::n06_preflight_aba_refuses_then_commits_and_recovers_authenticated_pcm ... ok
+test media_playout::tests::n06_preflight_capacity_binding_and_abort_preserve_real_n01_audio ... FAILED
+test media_playout::tests::n06_preflight_generation_exhaustion_refuses_without_wrap ... ok
+test media_playout::tests::n06_preflight_progress_epoch_and_cross_owner_invalidate_without_effect ... FAILED
+test media_playout::tests::n06_preflight_rechecks_budget_and_same_timeline_rebind ... ok
+test media_playout::tests::n06_reenable_reuses_retained_receiver_at_exact_budget_and_recovers_pcm ... ok
+test result: FAILED. 458 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.79s
+test result: ok. 206 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.12s
+
+=== final libraries; native build 30103800983323342 ===
+    Finished `test` profile [unoptimized] target(s) in 11.35s
+test media_playout::tests::n06_endpoint_preflight_rejects_carrier_aba_and_preserves_n01_credit ... ok
+test media_playout::tests::n06_endpoint_prepared_commit_delivers_recovered_pcm_over_loopback ... ok
+test media_playout::tests::n06_preflight_aba_refuses_then_commits_and_recovers_authenticated_pcm ... ok
+test media_playout::tests::n06_preflight_capacity_binding_and_abort_preserve_real_n01_audio ... ok
+test media_playout::tests::n06_preflight_generation_exhaustion_refuses_without_wrap ... ok
+test media_playout::tests::n06_preflight_progress_epoch_and_cross_owner_invalidate_without_effect ... ok
+test media_playout::tests::n06_preflight_rechecks_budget_and_same_timeline_rebind ... ok
+test media_playout::tests::n06_reenable_reuses_retained_receiver_at_exact_budget_and_recovers_pcm ... ok
+test result: ok. 460 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.44s
+test result: ok. 206 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
+
+=== strict workspace Clippy; native build 30103800983323346 ===
+    Finished `dev` profile [unoptimized] target(s) in 15.06s

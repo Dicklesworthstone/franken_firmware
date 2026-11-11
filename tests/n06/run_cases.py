@@ -103,6 +103,19 @@ OWNER_TESTS = (
 CASES["N06-CONSUMER"].extend(
     ("franken_control", "channel::owner::tests::" + name) for name in OWNER_TESTS
 )
+PREFLIGHT_TESTS = (
+    "n06_preflight_capacity_binding_and_abort_preserve_real_n01_audio",
+    "n06_preflight_aba_refuses_then_commits_and_recovers_authenticated_pcm",
+    "n06_preflight_progress_epoch_and_cross_owner_invalidate_without_effect",
+    "n06_preflight_rechecks_budget_and_same_timeline_rebind",
+    "n06_preflight_generation_exhaustion_refuses_without_wrap",
+    "n06_reenable_reuses_retained_receiver_at_exact_budget_and_recovers_pcm",
+    "n06_endpoint_preflight_rejects_carrier_aba_and_preserves_n01_credit",
+    "n06_endpoint_prepared_commit_delivers_recovered_pcm_over_loopback",
+)
+CASES["N06-CONSUMER"].extend(
+    ("franken_speaker", SPEAKER + name) for name in PREFLIGHT_TESTS
+)
 # Concrete integration gaps named by root: these remain full acceptance blockers.
 # No invented Rust test, disabled requirement, or refusal-only qualification.
 PENDING = {

@@ -38,6 +38,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use franken_clock::group::GroupClock;
+use franken_platform::MemoryBudgetLedger;
 use franken_platform::abi::{Abi, SysError};
 use franken_platform::clock::ClockError;
 use franken_platform::datagram::{
@@ -53,7 +54,7 @@ use franken_platform::socket::{
 use franken_stream::StreamId;
 use franken_stream::carrier::{
     CarrierError, CarrierReceiver, CarrierSender, DatagramPort, Lane, MediaSink, PollReport,
-    PortFault, Received, SinkVerdict,
+    PortFault, Received, ReceiverStats, SinkVerdict,
 };
 use franken_stream::fec::{self, DecodeState, Feedback};
 use franken_stream::link::{
@@ -67,8 +68,8 @@ use std::sync::atomic::AtomicBool;
 use crate::SpeakerReadinessState;
 use crate::clock_view::ClockViewBridge;
 use crate::media_playout::{
-    AuthenticatedFormat, AuthenticatedIngress, MediaPlayout, MediaRefusal, Preparation,
-    StartRefusal,
+    AuthenticatedFormat, AuthenticatedIngress, HostFecAdmitError, MediaPlayout, MediaRefusal,
+    Preparation, PreparedHostFec, StartRefusal,
 };
 
 // ----------------------------------------------------------------------------------------------------- fault classification
@@ -508,6 +509,34 @@ pub struct MediaEndpoint<P: DatagramPort> {
     pending_feedback: Option<PendingFeedback>,
     feedback_clock: ClockViewBridge,
     feedback_counters: FeedbackCounters,
+    carrier_generation: u64,
+}
+
+/// Local receiver reservation plus the carrier state it was prepared against.
+/// This is not peer or distributed activation readiness.
+pub struct PreparedEndpointFec {
+    media: PreparedHostFec,
+    carrier_generation: u64,
+    carrier_stats: ReceiverStats,
+    consumed_next: u64,
+}
+
+impl PreparedEndpointFec {
+    /// Extra inline state carried by the endpoint wrapper, beyond the media preparation.
+    #[must_use]
+    pub const fn inline_overhead_bytes() -> usize {
+        core::mem::size_of::<Self>() - core::mem::size_of::<PreparedHostFec>()
+    }
+
+    #[must_use]
+    pub fn reserved_bytes(&self) -> usize {
+        self.media.reserved_bytes()
+    }
+
+    #[must_use]
+    pub fn identity(&self) -> (u64, u64, u64) {
+        self.media.identity()
+    }
 }
 
 /// Feedback is generated once per coding window; a failed datagram write must
@@ -591,7 +620,65 @@ impl<P: DatagramPort> MediaEndpoint<P> {
             pending_feedback: None,
             feedback_clock: ClockViewBridge::default(),
             feedback_counters: FeedbackCounters::default(),
+            carrier_generation: 0,
         }
+    }
+
+    /// Reserve against the current binding and empty in-memory carrier queue. The port may still
+    /// have unread datagrams: this is not an ingress fence or a distributed cutover guarantee.
+    pub fn prepare_host_fec(
+        &mut self,
+        config: fec::SessionConfig,
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<PreparedEndpointFec, HostFecAdmitError> {
+        if self.carrier_generation == u64::MAX {
+            return Err(HostFecAdmitError::GenerationExhausted);
+        }
+        if self.carrier.stream_id() != config.stream
+            || self.carrier.epoch() != config.epoch
+            || self.carrier.inbound_len() != 0
+        {
+            return Err(HostFecAdmitError::Binding);
+        }
+        let mut media = self.media.prepare_host_fec(
+            config,
+            ledger,
+            resident_elsewhere_bytes
+                .saturating_add(PreparedEndpointFec::inline_overhead_bytes() as u64),
+        )?;
+        // Keep the enclosing token charged for every other allocation while it is outstanding.
+        media.charge_inline(PreparedEndpointFec::inline_overhead_bytes())?;
+        Ok(PreparedEndpointFec {
+            media,
+            carrier_generation: self.carrier_generation,
+            carrier_stats: self.carrier.stats().clone(),
+            consumed_next: self.carrier.consumed_next(),
+        })
+    }
+
+    /// Revalidate the carrier before committing the already allocated media receiver.
+    pub fn commit_host_fec(
+        &mut self,
+        prepared: PreparedEndpointFec,
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<(), HostFecAdmitError> {
+        let (stream, epoch, _) = prepared.identity();
+        if self.carrier_generation == u64::MAX
+            || self.carrier_generation != prepared.carrier_generation
+            || self.carrier.stream_id().get() != stream
+            || self.carrier.epoch() != epoch
+            || self.carrier.inbound_len() != 0
+            || self.carrier.consumed_next() != prepared.consumed_next
+            || self.carrier.stats() != &prepared.carrier_stats
+        {
+            return Err(HostFecAdmitError::StalePreparation);
+        }
+        self.media
+            .commit_host_fec(prepared.media, ledger, resident_elsewhere_bytes)?;
+        self.note_generation();
+        Ok(())
     }
 
     /// Hold credit under the FEC origin generation the media path is bound to now. The generation is the presentation origin: a
@@ -622,6 +709,7 @@ impl<P: DatagramPort> MediaEndpoint<P> {
     }
 
     pub fn carrier_mut(&mut self) -> &mut CarrierReceiver<P> {
+        self.carrier_generation = self.carrier_generation.saturating_add(1);
         &mut self.carrier
     }
 
@@ -901,6 +989,7 @@ impl<P: DatagramPort> MediaEndpoint<P> {
     /// dropped). The group clock and the engine are the control path's calls, as for an epoch restart: `MediaPlayout::begin_epoch`
     /// and [`Self::admit_start`].
     pub fn restart_stream(&mut self, stream_id: StreamId, epoch: u64) {
+        self.carrier_generation = self.carrier_generation.saturating_add(1);
         self.retire_feedback();
         self.media.bind_stream(stream_id, epoch);
         self.carrier.restart_stream(stream_id, epoch);

@@ -1,0 +1,77 @@
+{
+  "source_sha256": {
+    "crates/franken-speaker/src/media_playout.rs": "eb2edbeeba482d15279bdda98f504f495b0886580f6a4eb1707783898aa20274",
+    "crates/franken-speaker/src/net_carrier.rs": "4b88748442010ca7e805c416b4eb4671fc3b8e196f7130fffc57492ab1221948",
+    "crates/franken-stream/src/lib.rs": "876ef93aef1b47451151dd5abbc2c618abddc09edac47bcc60dafbeb5e6dde9d",
+    "Cargo.toml": "6aaae8aac3d87262cd7057749b84bb4df921dcee810dd5d03cfdddc1c4ebe107",
+    "Cargo.lock": "39e70649d690a342c74157bada974cfabaf76bfbbcb4dc05a33fa0af6181c58c",
+    "crates/franken-speaker/Cargo.toml": "78fabf9a7059ac7e9d8990077f77b05df9cca845025f26d1fd943e09139188bc",
+    "crates/franken-stream/Cargo.toml": "c0059611538c78e101c437ff4852ac228dc45456f5c2622d41c14940fbe73089"
+  },
+  "gates": [
+    {
+      "kind": "libs",
+      "receipt_root": "e675461f4fbe9c8cb8cd95f3255063292eb17e65008f723d1520c5c52e310fd5",
+      "build_id": "30103800983323342",
+      "capture_sha256": "4e035351ba42d84c15a4c672b1e6c7f808a41df476cf250351e8679a3dc536c3",
+      "captured_files": 1563,
+      "mismatches": [],
+      "totals_pass_fail_ignore_measured_filtered": [
+        666,
+        0,
+        0,
+        0,
+        0
+      ],
+      "summaries": 2,
+      "new_tests": [
+        "n06_preflight_capacity_binding_and_abort_preserve_real_n01_audio",
+        "n06_preflight_aba_refuses_then_commits_and_recovers_authenticated_pcm",
+        "n06_preflight_progress_epoch_and_cross_owner_invalidate_without_effect",
+        "n06_preflight_rechecks_budget_and_same_timeline_rebind",
+        "n06_preflight_generation_exhaustion_refuses_without_wrap",
+        "n06_reenable_reuses_retained_receiver_at_exact_budget_and_recovers_pcm",
+        "n06_endpoint_preflight_rejects_carrier_aba_and_preserves_n01_credit",
+        "n06_endpoint_prepared_commit_delivers_recovered_pcm_over_loopback"
+      ],
+      "finished": [
+        "    Finished `test` profile [unoptimized] target(s) in 11.35s"
+      ]
+    },
+    {
+      "kind": "clippy",
+      "receipt_root": "b32865723cd0c60c98388ede19447202d1147f7510fc1154823fd4e90483bb91",
+      "build_id": "30103800983323346",
+      "capture_sha256": "eeee875dd3b044d9aa1b56fe4300b3b7c75c92ae2fb14c887d493c9b273b68e8",
+      "captured_files": 1563,
+      "mismatches": [],
+      "totals_pass_fail_ignore_measured_filtered": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "summaries": 0,
+      "new_tests": [],
+      "finished": [
+        "    Finished `dev` profile [unoptimized] target(s) in 15.06s"
+      ]
+    }
+  ],
+  "scope": "native Linux host; resource-only preparation; no device or distributed readiness claim",
+  "base_revision": "1e7fee45fd86d3a802ff61975e2f06e782dffec4",
+  "python_registry_source_sha256": {
+    "tests/n06/run_cases.py": "588d73606826a8f1548d2ab8a2ae44f61ef22d11d2a552d2c61c3bbede8e5aee",
+    "tests/n06/test_judge.py": "79b562940f8727564936f338899b75bbe788f910c286722810a26f18e4626d12"
+  },
+  "python_registry_validation": {
+    "unit_tests_passed": 9,
+    "failed": 0,
+    "native_names": 82,
+    "original_names_retained": 74,
+    "full_cases": 13,
+    "pending_blockers": 2
+  },
+  "qualification": false
+}

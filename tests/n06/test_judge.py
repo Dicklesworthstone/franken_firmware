@@ -19,7 +19,7 @@ class Controls(unittest.TestCase):
 
     def test_owned_source_registry_and_pending_integration_are_explicit(self):
         run_cases.source_registry()
-        self.assertEqual(len({name for rows in run_cases.CASES.values() for _, name in rows}), 74)
+        self.assertEqual(len({name for rows in run_cases.CASES.values() for _, name in rows}), 82)
         self.assertEqual(set(run_cases.PENDING), {"N06-CARRIER", "N06-PACED-SENDER"})
 
     def test_durable_owner_names_are_required_by_existing_consumer_case(self):
@@ -32,7 +32,16 @@ class Controls(unittest.TestCase):
         self.assertEqual(len(required), 9)
         # The added native checks cannot displace the existing 65 requirements.
         all_names = {name for rows in run_cases.CASES.values() for _, name in rows}
-        self.assertEqual(len(all_names - {name for _, name in required}), 65)
+        preflight = {run_cases.SPEAKER + name for name in run_cases.PREFLIGHT_TESTS}
+        self.assertEqual(len(all_names - {name for _, name in required} - preflight), 65)
+
+    def test_preflight_names_extend_without_displacing_existing_native_requirements(self):
+        preflight = {("franken_speaker", run_cases.SPEAKER + name)
+                     for name in run_cases.PREFLIGHT_TESTS}
+        self.assertEqual(len(preflight), 8)
+        self.assertTrue(preflight.issubset(set(run_cases.CASES["N06-CONSUMER"])))
+        all_names = {name for rows in run_cases.CASES.values() for _, name in rows}
+        self.assertEqual(len(all_names - {name for _, name in preflight}), 74)
 
     def test_missing_native_never_shrinks_denominator_or_qualifies(self):
         output = io.StringIO()
