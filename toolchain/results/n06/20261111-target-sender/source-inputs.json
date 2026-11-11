@@ -1,0 +1,139 @@
+{
+  "schema": "ffw.focused-source-inputs.v1",
+  "scope": "Per-target FEC sender host development; caller-trusted provisioning and resource allowance; no distributed activation qualification",
+  "focused_inputs_delivered_commit": "a16fa4c",
+  "parent_snapshot": "../20261111-typed-clock-udp/source-inputs.json",
+  "git_build_source": "unknown",
+  "inventory_sha256": "e5b53bc3afe72d40f487172f96f030e350fa51ade65c217e225b7517f8d9cca2",
+  "inputs": [
+    {
+      "path": "crates/franken-stream/src/carrier.rs",
+      "sha256": "784aa29a132d6bab4c15e4f3939aa78151bbe6a80f7e9cf8d77c6c0730778cd4",
+      "base_sha256": "0cc6d643d42997da16c191655abb74e13aa163a9bbaa4e7190a5a9020b7ae386"
+    },
+    {
+      "path": "crates/franken-stream/src/carrier/fec_tests.rs",
+      "sha256": "e182dda714c620cb96be2825b1f08e6cff37adf8f1cf1488d8732ee636cb3cba",
+      "base_sha256": "ba7633d83ae2167133ff355b3665bfd4d35cd33b456edafdfbc7b52484c36856"
+    },
+    {
+      "path": "tests/n06/run_cases.py",
+      "sha256": "594eedca583d6ce222ddc9bad6fa3a70a72c73190370e8ce62e0a78f83c7ebd9",
+      "base_sha256": "b1015f8e22736dcf68bca000fb653ac2d5fb0dd7c654ed310800da5706e80b0d"
+    },
+    {
+      "path": "tests/n06/test_judge.py",
+      "sha256": "d0d20469355d5d344c882ed1e7d63cbbad25ceb1adae2af15ca408e803f43c29",
+      "base_sha256": "f1df55fe1d797d5a3b96bbb1bb6c809a554b4a2c786164b3b4a193f6fadeb6aa"
+    },
+    {
+      "path": "crates/franken-codec/src/rate_bridge.rs",
+      "sha256": "a4283d0474b6439b60859624d9528440a49f4f47dcdcaf8d79e51027bb270bf4",
+      "base_sha256": "883b61af021e441552e31487cf198f0df13a0f2ec9c6e11bf3f2fc1540a2c860"
+    }
+  ],
+  "gates": [
+    {
+      "scope": "three-lib",
+      "build_id": "30104858719682922",
+      "receipt_root": "adcf0cd0da3793f8e6d8348facb9f10d525bc0dbaf3b426d6600b82344af3257",
+      "command_sha256": "fb0a0ace63582cd22f7a92363205956728dbba3a4f3e59a64b2cdb6d9a895bbe",
+      "command_exit_code": 0,
+      "matched_files": 1535,
+      "terminal_ack": true,
+      "wrapper_absent": true,
+      "all_custody_released": true,
+      "log_sha256": "01bd850f0eac2e331ef1cd41da81f51e6d752daff131029ae3febeacbac5df08",
+      "test_footers": [
+        "test result: ok. 649 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.33s",
+        "test result: ok. 468 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.23s",
+        "test result: ok. 212 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s"
+      ],
+      "finished": [
+        "Finished `test` profile [unoptimized] target(s) in 1m 07s"
+      ]
+    },
+    {
+      "scope": "allocator",
+      "build_id": "30104858719682924",
+      "receipt_root": "c982547decf55da514436dbcaf201083fc70c7b1095aabaac41817155511d356",
+      "command_sha256": "1b64c81760b51064741a1cd11b4db9a0802c542dcb8f41ae2ac0bab72c1fffc5",
+      "command_exit_code": 0,
+      "matched_files": 1535,
+      "terminal_ack": true,
+      "wrapper_absent": true,
+      "all_custody_released": true,
+      "log_sha256": "6244517bb4aba0e52b0053e3c11f8f528b2f0e838887bfff9bbcc2280c399beb",
+      "test_footers": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s"
+      ],
+      "finished": [
+        "Finished `test` profile [unoptimized] target(s) in 0.47s"
+      ]
+    },
+    {
+      "scope": "workspace-clippy",
+      "build_id": "30104858719682925",
+      "receipt_root": "a844c7fd697962cd4a7593ab9d560d032788b555a4a5818e9a87256fdacc92a4",
+      "command_sha256": "01c4b2642fa4678fb53e37f387207922d9453a7bc5efe4e696ea7e2274158197",
+      "command_exit_code": 0,
+      "matched_files": 1535,
+      "terminal_ack": true,
+      "wrapper_absent": true,
+      "all_custody_released": true,
+      "log_sha256": "ebe8249883417b6d3d5d6667bf101500b96bf2710754d1445e25cb096de7234f",
+      "test_footers": [],
+      "finished": [
+        "Finished `dev` profile [unoptimized] target(s) in 1m 10s"
+      ]
+    },
+    {
+      "scope": "reference",
+      "build_id": "30104858719682930",
+      "receipt_root": "d971116368fc79795e3678f399c719c797d003fc2eba517d6fbcb7ef6ef63eb6",
+      "command_sha256": "64e71ba1d440e86b54a81e0f85299936344d8026ff808c1b1f037754ce063ff4",
+      "command_exit_code": 0,
+      "matched_files": 1535,
+      "terminal_ack": true,
+      "wrapper_absent": true,
+      "all_custody_released": true,
+      "log_sha256": "d408834d974c683106df08f9b3ae17e962f1173c1a568214f74900596aae4ba2",
+      "test_footers": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    }
+  ],
+  "reference": "3/3 actual exact-candidate native tests passed; all selected source and final custody independently checked",
+  "preserved_failed_compile": {
+    "build_id": "30104858719682906",
+    "test_binaries_executed": 0,
+    "exit_code": 101,
+    "cause": "old fixture supplied group ID instead of actual admitted peer index"
+  },
+  "python_controls": {
+    "passed": 28,
+    "failed": 0,
+    "earlier_wrong_invocation_loader_errors": 3
+  },
+  "registry_requirements": 115,
+  "integration_cases_blocked": [
+    "N06-CARRIER",
+    "N06-PACED-SENDER"
+  ],
+  "full": {
+    "blocked": 2,
+    "diagnostics_dropped": 0,
+    "evidence_class": "offline-host-synthetic",
+    "expected": 13,
+    "failed": 0,
+    "log_sha256": "7473e5e841dd1979b15187da43fd07ad47342c8be1bac65fa3bc16f562d920a4",
+    "not_run": 0,
+    "passed": 11,
+    "production_fec_profile_admitted": false,
+    "profile": "n06.host-hybrid.k4-r4.v1",
+    "qualified": false,
+    "schema": "n06.receipt.v1",
+    "tier": "full"
+  }
+}
