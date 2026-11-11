@@ -303,8 +303,9 @@ impl FecCoordinator {
             && session.members.keys().eq(self.members.keys())
     }
 
-    /// Decode and authenticate a proposal or peer acknowledgment before recording it.
-    pub fn ingest<A: PeerAuthority>(
+    /// Decode and authenticate after the endpoint has charged its fixed ingress allowance.
+    /// Keeping this internal prevents a second public, unthrottled wire ingress path.
+    pub(super) fn ingest<A: PeerAuthority>(
         &mut self,
         wire: &[u8],
         authority: &A,
@@ -537,6 +538,7 @@ mod tests {
         channel: ControlChannel<EphemeralPeers>,
         endpoint: Endpoint,
         fec: FecCoordinator,
+        now_ns: u64,
     }
 
     impl Rig {
@@ -582,6 +584,7 @@ mod tests {
                 channel: ControlChannel::new(peers, ChannelConfig::provisional()).unwrap(),
                 endpoint: Endpoint::new(),
                 fec,
+                now_ns: 0,
             }
         }
         fn wire(&self, kind: MessageKind, name: &str, proposal: &FecProposal) -> Vec<u8> {
@@ -598,8 +601,17 @@ mod tests {
             .unwrap()
         }
         fn send(&mut self, wire: &[u8]) -> FecHandled {
-            self.endpoint
-                .handle_with_fec(&mut self.channel, &mut self.fec, 0, &self.session, wire)
+            // These tests isolate agreement semantics. Advance the injected clock by one
+            // default refill interval; endpoint/fec_ingress_tests covers same-time floods.
+            let now_ns = self.now_ns;
+            self.now_ns += 10_000_000;
+            self.endpoint.handle_with_fec(
+                &mut self.channel,
+                &mut self.fec,
+                now_ns,
+                &self.session,
+                wire,
+            )
         }
         fn signed(&mut self, kind: MessageKind, name: &str) -> FecHandled {
             let wire = self.wire(kind, name, self.fec.proposal());

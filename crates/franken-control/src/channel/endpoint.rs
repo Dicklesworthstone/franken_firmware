@@ -4,7 +4,9 @@
 //! form. This module is the glue that turns one received datagram into the channel's call and the channel's answer into the
 //! datagram to send back, and nothing more: it opens no socket, reads no clock and keeps no per-sender state. A caller that
 //! owns a socket (N07 and T02 will) calls [`Endpoint::handle`] once per datagram it receives, with the time it received it,
-//! and sends what comes back, if anything.
+//! and sends what comes back, if anything. Optional FEC negotiation additionally uses a single
+//! endpoint-wide token bucket before decoding or authentication; it never spends the ordinary or
+//! priority command allowances.
 //!
 //! # What it does with a datagram
 //!
@@ -29,13 +31,14 @@
 //!
 //! * **Move a byte.** Loss, duplication and reordering are the transport's; the channel's ledger and floors are what make
 //!   them harmless, and the tests here deliver datagrams dropped, duplicated and reordered to show it.
-//! * **Rate-limit what it cannot attribute.** A flood of datagrams that do not decode costs a decode each and is counted in
-//!   [`EndpointStats`]; limiting it per source address is the transport's, because this layer has no address. A flood that
-//!   does authenticate is the channel's per-peer limit.
-//! * **Remember anything.** The counters are the only state, saturating, and bounded by their width.
+//! * **Rate-limit ordinary N02 traffic by source address.** A flood of ordinary datagrams that do not decode costs a decode
+//!   each and is counted in [`EndpointStats`]; per-address admission belongs to the transport, because this layer has no
+//!   address. Authenticated ordinary traffic uses the channel's per-peer limits. FFCN has its own aggregate pre-decode cap.
+//! * **Remember senders.** FEC admission uses one fixed-size bucket, not an address/identity table.
 
 use franken_session::UnifiedGroupSession;
 
+use super::limiter::{RateLimit, TokenBucket};
 use super::peer::{PeerAuthority, ReplySigner};
 use super::pipeline::{AckOutcome, ControlChannel, SubmitResult};
 use super::wire::{Datagram, WireError, decode_datagram};
@@ -60,6 +63,19 @@ pub enum Handled {
 pub enum FecHandled {
     Control(Handled),
     Fec(Result<super::fec_negotiation::Ingress, super::fec_negotiation::FecError>),
+    /// Dropped before decoding or authentication. This local observation is not a wire reply.
+    RateLimited {
+        retry_after_ns: u64,
+    },
+}
+
+/// Bounded local observations of FFCN ingress; no peer identity or payload is retained.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FecIngressStats {
+    pub received: u64,
+    /// Calls allowed to parse/authenticate, including malformed or invalid proofs.
+    pub admitted: u64,
+    pub rate_limited: u64,
 }
 
 /// How many datagrams of each kind the endpoint has seen. Saturating.
@@ -83,10 +99,20 @@ fn bump(counter: &mut u64) {
     *counter = counter.saturating_add(1);
 }
 
-/// The glue between a transport and a [`ControlChannel`]. It holds counters only.
-#[derive(Debug, Default)]
+/// The glue between a transport and a [`ControlChannel`]. No I/O or per-sender state.
+#[derive(Debug)]
 pub struct Endpoint {
     stats: EndpointStats,
+    fec_stats: FecIngressStats,
+    fec_ingress: TokenBucket,
+}
+
+impl Default for Endpoint {
+    fn default() -> Self {
+        // Host-development work-count policy: one complete 32-member agreement fits in the
+        // initial burst, with bounded retry headroom. This is not board WCET qualification.
+        Self::with_fec_rate_limit(RateLimit::new(64, 10_000_000).expect("nonzero policy"), 0)
+    }
 }
 
 impl Endpoint {
@@ -95,9 +121,27 @@ impl Endpoint {
         Self::default()
     }
 
+    /// Configure the aggregate FFCN parse/authentication allowance on the caller's monotonic
+    /// clock. Keep this endpoint across proposal restarts and peer rebinds: replacing a
+    /// coordinator must not replenish its ingress allowance. Source-address filtering belongs
+    /// to the transport; a sustained attack may delay negotiation, never ordinary stop/control.
+    #[must_use]
+    pub fn with_fec_rate_limit(limit: RateLimit, now_ns: u64) -> Self {
+        Self {
+            stats: EndpointStats::default(),
+            fec_stats: FecIngressStats::default(),
+            fec_ingress: TokenBucket::new(limit, now_ns),
+        }
+    }
+
     #[must_use]
     pub const fn stats(&self) -> EndpointStats {
         self.stats
+    }
+
+    #[must_use]
+    pub const fn fec_ingress_stats(&self) -> FecIngressStats {
+        self.fec_stats
     }
 
     /// Dispatch an N06 proposal or acknowledgment through the same peer authority as N02.
@@ -111,6 +155,12 @@ impl Endpoint {
         datagram: &[u8],
     ) -> FecHandled {
         if datagram.starts_with(&super::fec_negotiation::MAGIC) {
+            bump(&mut self.fec_stats.received);
+            if let Err(retry_after_ns) = self.fec_ingress.try_take(now_ns) {
+                bump(&mut self.fec_stats.rate_limited);
+                return FecHandled::RateLimited { retry_after_ns };
+            }
+            bump(&mut self.fec_stats.admitted);
             FecHandled::Fec(fec.ingest(datagram, channel.authority(), session))
         } else {
             FecHandled::Control(self.handle(channel, now_ns, session, datagram))
@@ -157,6 +207,10 @@ impl Endpoint {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "endpoint/fec_ingress_tests.rs"]
+mod fec_ingress_tests;
 
 #[cfg(test)]
 mod tests {
