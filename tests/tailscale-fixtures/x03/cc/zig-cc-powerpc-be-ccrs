@@ -1,0 +1,34 @@
+#!/bin/sh
+# C compiler adapter for cc-rs, powerpc-unknown-linux-musl (big-endian PowerPC32, hard-float): the PowerPC twin of x01-cc/zig-cc-mips-be-ccrs-v2, for the
+# T01-X03 big-endian builds (ffw-32a). cc-rs appends the Rust spelling of the target, which Zig cannot parse ("unable to parse target query"); drop exactly
+# that one known-equivalent spelling. Refuse both one-argument and two-argument forms of every other override.
+# The Zig target is the one the repository's own linker driver uses (toolchain/linker/zig-cc-powerpc-be), so the C objects and the final link agree on the
+# float ABI: rustc's spec for powerpc-unknown-linux-musl is hard-float, and a PowerPC ELF carries no float-ABI marker, so reject explicit soft-float flags.
+# Plain sh on purpose (no arrays): the arguments are rotated through "$@", which keeps every argument whole, spaces included.
+# Tested with a stand-in `zig` (tests/t01/test_x03_cc.py); no real Zig has run it.
+set -eu
+want=0.14.1
+have=$(zig version)
+if [ "$have" != "$want" ]; then
+    echo "ffw-x03-cc: zig $want required, found $have" >&2
+    exit 97
+fi
+count=$#
+while [ "$count" -gt 0 ]; do
+    arg=$1
+    shift
+    count=$((count - 1))
+    case "$arg" in
+        --target=powerpc-unknown-linux-musl|--target=powerpc-linux-musleabihf) ;;
+        -msoft-float|-mfloat-abi=soft|-mfloat-abi=softfp)
+            echo "ffw-x03-cc: unsupported float ABI override" >&2
+            exit 98
+            ;;
+        --target=*|--target|-target|-target=*)
+            echo "ffw-x03-cc: unsupported target override" >&2
+            exit 98
+            ;;
+        *) set -- "$@" "$arg" ;;
+    esac
+done
+exec zig cc -target powerpc-linux-musleabihf "$@"
