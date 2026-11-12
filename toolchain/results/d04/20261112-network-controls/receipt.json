@@ -1,0 +1,190 @@
+{
+  "schema": "ffw.d04.network-controls.v1",
+  "recorded_at_utc": "2026-11-12T18:36:56.508061+00:00",
+  "baseline_commit": "9fd482f1cb0a88ad22d1f9824eb8a7f11ef65e9c",
+  "code_commit": "f013e34c14f143fba7527ba5f1f2ab636a3cf344",
+  "committed_source_proof": {
+    "code_commit": "f013e34c14f143fba7527ba5f1f2ab636a3cf344",
+    "inventory_sha256": "f448412d1d3dcf7b18e66463cb5f4c40cf4305a699f83a29ac58efe5eeca653d",
+    "all_committed_files_matched": 1606,
+    "mismatches": 0
+  },
+  "qualified_source_files": [
+    {
+      "path": "crates/franken-speaker/src/network_render.rs",
+      "sha256": "c58315b6b410c4c1adb0906b21f00590d7cf206ab3bdfeef025cc66b52c75eaf",
+      "bytes": 34528
+    },
+    {
+      "path": "crates/franken-speaker/src/network_render/tests.rs",
+      "sha256": "71b6549772d64169ff5a221d730fd07c988891b745e5e8d50ed34a9f29dd665a",
+      "bytes": 64244
+    }
+  ],
+  "immutable_green_inventory_sha256": "f448412d1d3dcf7b18e66463cb5f4c40cf4305a699f83a29ac58efe5eeca653d",
+  "transfer_comparison": {
+    "files_each_job": 1604,
+    "mismatches_each_job": 0,
+    "inventory_files": 1606,
+    "excluded_metadata": [
+      ".beads/.gitignore",
+      ".beads/config.yaml"
+    ]
+  },
+  "deliberate_negative": {
+    "label": "deliberate unmute_before_guard",
+    "sha256": "d724167a29e1f41214fb970b0e10006cfa0d9afa5718802532e61d51717df57f",
+    "bytes": 34610,
+    "expected_failed_tests": [
+      "network_render::tests::mute_cannot_be_undone_after_a_clock_fault_and_fresh_owner_recovers",
+      "network_render::tests::clock_fault_during_busy_control_discards_busy_pcm_but_keeps_held_dma",
+      "network_render::tests::expired_busy_deadline_refuses_unmute_and_cancels_without_losing_dma",
+      "network_render::tests::mute_cannot_be_undone_after_authority_expiry"
+    ]
+  },
+  "new_test_names": [
+    "localhost_serialized_volume_and_mute_resume_match_independent_protected_pcm",
+    "mute_cannot_be_undone_after_a_clock_fault_and_fresh_owner_recovers",
+    "clock_fault_during_busy_control_discards_busy_pcm_but_keeps_held_dma",
+    "expired_busy_deadline_refuses_unmute_and_cancels_without_losing_dma",
+    "mute_cannot_be_undone_after_authority_expiry",
+    "exhausted_source_rejects_controls_without_interrupting_scheduled_eof"
+  ],
+  "results": {
+    "red": {
+      "passed": 19,
+      "failed": 4,
+      "ignored": 0,
+      "filtered": 513,
+      "expected_failure": true,
+      "failure_assertion": "unexpected ordered render control transitions",
+      "observed_transitions": [
+        "Muted -> Running",
+        "Running -> Draining"
+      ],
+      "required_transitions": [
+        "Muted -> Draining"
+      ]
+    },
+    "green_library": {
+      "passed": 536,
+      "failed": 0,
+      "ignored": 0
+    },
+    "green_d03": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 1,
+      "ignore": "pre-existing long soak; not run by this command"
+    },
+    "clippy": {
+      "exit_code": 0,
+      "warnings_denied": true
+    }
+  },
+  "jobs": [
+    {
+      "label": "red",
+      "build_id": "30106308287922465",
+      "exit_code": 101,
+      "inventory_sha256": "596f2434e8f49ea9676e7417a87c7999cb881cfdcabd39bf2bbd01171a6e9d60",
+      "raw_log_sha256": "81be99f0d85e1565a2b47c26d548fa47912151084ff782ad6b300eb5c0f57443",
+      "command_sha256": "cbd67f4f069666f99c4c9109b6eaab4aa961cf9a08aba4c60ea4ac6ca64121d2",
+      "content_root": "fb3cb70f9ddf25cd085b2e705b42166b88e740646ea7ad2531fcaf95b8364cf3",
+      "receipt_root": "7bdccece316ebe326529989a9c7a9a4c16c902bc54b539fbdeb3b510563bd2e2",
+      "transferred_files_compared": 1604,
+      "mismatches": 0,
+      "terminal_ack": true,
+      "wrapper_dead": true,
+      "execution_started": true,
+      "staging_released": "UNKNOWN",
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "retired": true,
+      "footers": [
+        "test result: FAILED. 19 passed; 4 failed; 0 ignored; 0 measured; 513 filtered out; finished in 0.24s"
+      ],
+      "logical_reproduction_command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo +1.99.0 test --locked --offline -p franken-speaker --lib -j1 network_render:: -- --show-output --test-threads=1",
+      "strict_remote": true,
+      "source_inventory_files": 1606
+    },
+    {
+      "label": "green",
+      "build_id": "30106308287922468",
+      "exit_code": 0,
+      "inventory_sha256": "f448412d1d3dcf7b18e66463cb5f4c40cf4305a699f83a29ac58efe5eeca653d",
+      "raw_log_sha256": "d27b6093c90efdf8a98a98134efb43013279ad266e26215575932da0906142d5",
+      "command_sha256": "4700598736b78287a449036c8f7d1045009c19269c66f8ff4bde38a743c05daf",
+      "content_root": "410880a9551d91b6635ac0a6b6d928ba762b0badc38b07f0fcbbc840037d49ab",
+      "receipt_root": "d4f4846c16365274736988314a9f568e2ae824f6dd72574f5b2f872cb2991ebe",
+      "transferred_files_compared": 1604,
+      "mismatches": 0,
+      "terminal_ack": true,
+      "wrapper_dead": true,
+      "execution_started": true,
+      "staging_released": true,
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "retired": true,
+      "footers": [
+        "test result: ok. 536 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 63.10s",
+        "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.11s"
+      ],
+      "logical_reproduction_command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo +1.99.0 test --locked --offline -p franken-speaker --lib --test d03_closed_loop -j1 -- --show-output --test-threads=1",
+      "strict_remote": true,
+      "source_inventory_files": 1606
+    },
+    {
+      "label": "clippy",
+      "build_id": "30106308287922479",
+      "exit_code": 0,
+      "inventory_sha256": "f448412d1d3dcf7b18e66463cb5f4c40cf4305a699f83a29ac58efe5eeca653d",
+      "raw_log_sha256": "b946f5ff5163cb2d2263a1d15fe8161de2fea31b3b05a9b22ce24d4dd7061288",
+      "command_sha256": "8c08da66db37a286de2c375bc5f27983ab7a70221873e0c66a21538e984d7a2b",
+      "content_root": "ae87caf7c05e70326793c699f90c1cdf9db45f0ae28d8082fe88e4428eef4274",
+      "receipt_root": "90dc2355b49a337f540ec7c85e6f786d6ca2ec666867b0eb62d691c0767584bb",
+      "transferred_files_compared": 1604,
+      "mismatches": 0,
+      "terminal_ack": true,
+      "wrapper_dead": true,
+      "execution_started": true,
+      "staging_released": true,
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "retired": true,
+      "footers": [],
+      "logical_reproduction_command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo +1.99.0 clippy --locked --offline -p franken-speaker --all-targets -j1 -- -D warnings",
+      "strict_remote": true,
+      "source_inventory_files": 1606
+    }
+  ],
+  "compiler_environment": {
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "RUSTFLAGS": "-D warnings -C debuginfo=0"
+  },
+  "dispatcher_policy": {
+    "local_minimum_gib": 20,
+    "basis": "owner-authorized strict-remote exception; global SBH settings unchanged",
+    "remote_minimum_gib": 40,
+    "local_fallback": false
+  },
+  "formatting": "pinned rustfmt +1.99.0 --check on both exact source files passed before commit",
+  "independent_review": "GrayDeer 30684 reviewed exact source and retained actual outputs; shared-log review, not a second execution",
+  "observed_txt_sha256": "de1b02e3317c9f8c82be8fffdd2df96dd496896ae0141fc74587c4e8eb067d1e",
+  "scope": {
+    "actual": "real authenticated localhost UDP, MediaEndpoint, NetworkRender, D03/D02, bounded FakeBackend capture with scripted provisioned clock/kernel/calibration",
+    "not_qualified": [
+      "physical speaker playback",
+      "legacy kernel execution of this owner",
+      "real radio conditions",
+      "32 MiB resource/deadline fit",
+      "Spotify/AirPlay/Alexa/native tailnet provider qualification",
+      "end-to-end SOAP control-to-render application"
+    ]
+  },
+  "beads": "D04 and Q07 component progress only; original acceptance and external qualification remain open"
+}
