@@ -1,0 +1,167 @@
+{
+  "schema": "ffw.source-runtime-qualification.v1",
+  "base_commit": "b1c0324f4eb8375070c407ec13d4b5c5f7f5456f",
+  "runtime_commit": "0a362a57cf3a2d6c1823abf3d7334e93868083eb",
+  "candidate_inventory_sha256": "94fc078ac1e82865b25eeefcfc262d42eac44a5a63dfceaa01012b527bcaa4fe",
+  "candidate_file_count": 1581,
+  "native_transfer_file_count": 1579,
+  "excluded_from_native_transfer": [
+    ".beads/.gitignore",
+    ".beads/config.yaml"
+  ],
+  "overlays": [
+    {
+      "path": "README.md",
+      "sha256": "209c012ace1633095f551e0944d94b760231bd82faa268b46b060c1df7253333",
+      "bytes": 11002,
+      "executable": false
+    },
+    {
+      "path": "crates/franken-speaker/src/lib.rs",
+      "sha256": "58fc451b4ef341ebee437d44cd7100a62a879010cb4524f9c97e5eb1a15cebb7",
+      "bytes": 2576,
+      "executable": false
+    },
+    {
+      "path": "crates/franken-speaker/src/main.rs",
+      "sha256": "5247162e7783924e2dd5faf94e4cc0a92697891488304249e2528ffd751fb1b0",
+      "bytes": 10374,
+      "executable": false
+    },
+    {
+      "path": "crates/franken-speaker/src/source_runtime.rs",
+      "sha256": "c672ffe4fb0c4931abd50410612bd618ef3c019f8d2ce7392c64122adf58d976",
+      "bytes": 45014,
+      "executable": false
+    },
+    {
+      "path": "crates/franken-speaker/src/source_runtime_cli.rs",
+      "sha256": "208e9b48b0d34d050cc2418adb0301b1997d07f1290ae482b050997d77f025bb",
+      "bytes": 33176,
+      "executable": false
+    },
+    {
+      "path": "crates/franken-speaker/tests/source_runtime_cli.rs",
+      "sha256": "121f8d4cf5510ce5329c90743d192a20e72ab76d9fbf5ba6e7dc487d9a0a61f3",
+      "bytes": 5262,
+      "executable": false
+    },
+    {
+      "path": "scripts/e2e/run-source-loopback",
+      "sha256": "bf0728225a36b5ca95fa728150ae5031c13efea6c2157a409861a598016ff119",
+      "bytes": 306,
+      "executable": true
+    },
+    {
+      "path": "tests/source_runtime/run_loopback.py",
+      "sha256": "ac3748bca9967e2868578fbf27dfb039d7d11f62383e8e2361677180f6bc8f9c",
+      "bytes": 24192,
+      "executable": false
+    },
+    {
+      "path": "tests/source_runtime/test_oracle.py",
+      "sha256": "271fafbe2673c59e373a6fe0295680f66e0778a1690fcbb5e9c3dd130c3d2d29",
+      "bytes": 10526,
+      "executable": false
+    },
+    {
+      "path": "tests/source_runtime/make_long_vector.py",
+      "sha256": "a479e18a960124f0eac3b74afbb364be5cb9d698310863e646eb04382ac58b62",
+      "bytes": 2885,
+      "executable": false
+    },
+    {
+      "path": "tests/source_runtime/vectors/long_vectors.json",
+      "sha256": "c99120fb69f26332091c8ea83b75ade56f48be2a1e1f921d442bd41c8f4f5128",
+      "bytes": 1709,
+      "executable": false
+    },
+    {
+      "path": "tests/source_runtime/vectors/mp3_48000_long.mp3",
+      "sha256": "7785255f947a50fde36ddcaf9227a9dcbc0cac1516c562d2ffbb91038805065b",
+      "bytes": 37485,
+      "executable": false
+    },
+    {
+      "path": "tests/source_runtime/vectors/mp3_48000_long.ref.s16",
+      "sha256": "fb30800e4f9414a33392b3ffaab0a5e0be2f2919604753ffc19726da929974d1",
+      "bytes": 288000,
+      "executable": false
+    }
+  ],
+  "native_jobs": [
+    {
+      "id": "30105869848936479",
+      "kind": "tests",
+      "exit": 0,
+      "terminal_ack": true,
+      "source_and_pair_released": true,
+      "tree_retired": true,
+      "receipt_root_sha256": "16cc47bd094f838029f0291ba4ee82cf680760d129ee91ed112079c3efd07fce",
+      "source_root_sha256": "25f323aa48195ae22900d0adc1c1d6741560c584717e1e66cdd0aff714658b28",
+      "content_root_sha256": "999bd77de3e346a2262e67031f6b1b972fd7ede2fda987590f195b1462914f32",
+      "raw_log_sha256": "fe331627c78d1de5dc9f76edf8c65c0889b16bef6c7fbcbcdb134623ac910a35",
+      "passed": 818,
+      "failed": 0,
+      "ignored": 1,
+      "filtered": 0,
+      "result_footers": 15
+    },
+    {
+      "id": "30105869848936481",
+      "kind": "clippy-workspace-all-targets",
+      "exit": 0,
+      "terminal_ack": true,
+      "source_and_pair_released": true,
+      "tree_retired": true,
+      "receipt_root_sha256": "938e36464c4849da471b118e5aa37932c04f93add022b2fee39cbf43bacf20bd",
+      "source_root_sha256": "c38132604d47d004311fd67204cd27e42a0bcd4b451d0191761899c888095483",
+      "raw_log_sha256": "5593e93f4f29f717f629862abdcd9b24c086dba199005048d40b421ae101660a"
+    }
+  ],
+  "prior_attempts": [
+    {
+      "id": "30104858719683341",
+      "kind": "tests",
+      "exit": 101,
+      "executed_tests": 0,
+      "reason": "Test-only AtomicUsize::fetch_update deprecation under pinned Rust 1.99.0 and -D warnings; changed to compiler-proposed try_update. No successful test or Clippy credit.",
+      "inventory_sha256": "cb233330b6bb1c8b8d4567743dfae8905293c2cc98adb82ad82730735fe2dc29",
+      "raw_log_sha256": "fc7f9a1312dfb3dd28ee4a19072d57e6885a3706a94722b20479b1006863cec2",
+      "receipt_root_sha256": "21d33fa7101d6d7a1b10f2502872d279aa099dc3e50a373af44b4b0e2afd079d"
+    },
+    {
+      "id": "30104858719683357",
+      "kind": "tests",
+      "exit": 0,
+      "passed": 818,
+      "failed": 0,
+      "ignored": 1,
+      "n07_evidence_cases_failed": 25,
+      "reason": "Serial --nocapture output interrupted result prefixes; unchanged anti-spoof gate correctly refused evidence. Supported --show-output recapture used for final gate. These are evidence failures, not 25 executed Rust failures.",
+      "inventory_sha256": "7556b9b82871979b1ab9ec1d4035f6a9d99821d84f4219f7132ee617e10f68d1",
+      "raw_log_sha256": "84fca46c423461a1a72be363a4bbf1fae33ab0b3b49b8e347f144a0a1c9bf0f9",
+      "receipt_root_sha256": "b1101441b208f1f4095457ea9c357d0700436f84f518ee9016839db4a741e78a"
+    },
+    {
+      "id": "30104858719683365",
+      "kind": "clippy-workspace-all-targets",
+      "exit": 101,
+      "reason": "chunks_exact iteration lint; changed to as_chunks, with a preemptive test type alias cleanup. No assertion or tolerance changes.",
+      "inventory_sha256": "7556b9b82871979b1ab9ec1d4035f6a9d99821d84f4219f7132ee617e10f68d1",
+      "raw_log_sha256": "cc49badfa5c6eb1f7fa6d9938237305af19544da3830190841063c0268b6fe73",
+      "receipt_root_sha256": "0ab640f0f166f155589fd1224cad01cbf3dee6f106e513ac4c0ecd887c51740e"
+    }
+  ],
+  "no_claim": [
+    "native provider session",
+    "legacy target runtime",
+    "board RAM or CPU fit",
+    "radio or WAN performance",
+    "clock synchronization between machines",
+    "physical audio",
+    "complete S02, N07 or Q07 qualification"
+  ],
+  "artifact_retrieval": "Native jobs reported zero retrieved build files. The hash-bound executable was executed remotely; no local distributable binary is published.",
+  "harness_commit": "e491253a2b42af179216e8d33212dce79b079761"
+}

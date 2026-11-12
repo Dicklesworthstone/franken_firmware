@@ -1,0 +1,48 @@
+Selected, sanitized observations from strict-remote native job 30105869848936479.
+Only named verdicts, original result footers and the actual process-case marker are reproduced.
+This selected excerpt is NOT the raw log consumed by the unchanged N07 validator.
+Raw test log SHA-256: fe331627c78d1de5dc9f76edf8c65c0889b16bef6c7fbcbcdb134623ac910a35
+
+test source_runtime::tests::backward_post_prepare_clock_is_terminal_before_send ... ok
+test source_runtime::tests::clean_authenticated_reports_drain_but_a_drop_before_later_ack_is_incomplete ... ok
+test source_runtime::tests::finite_reader_publishes_authentic_pcm_and_not_yet_drained ... ok
+test source_runtime::tests::finite_source_eof_waits_for_real_receiver_credit ... ok
+test source_runtime::tests::fresh_post_prepare_expiry_skips_without_wire_output ... ok
+test source_runtime::tests::group_epoch_advance_never_flushes_held_old_audio ... ok
+test source_runtime::tests::lookahead_waits_before_decode_then_pumps_held_work_and_resumes ... ok
+test source_runtime::tests::rejected_topology_and_same_epoch_volume_leave_valid_source_running ... ok
+test source_runtime::tests::same_epoch_topology_changes_stop_owner_with_held_media ... ok
+test source_runtime::tests::takeover_and_stop_never_flush_held_old_audio ... ok
+test source_runtime_cli::tests::authenticated_future_packet_is_credited_but_n04_rejection_is_visible ... ok
+test source_runtime_cli::tests::fixture_provisioning_rejects_nonloopback_and_bad_keys ... ok
+test source_runtime_cli::tests::host_clock_maps_to_monotonic_time_with_declared_uncertainty ... ok
+test source_runtime_cli::tests::host_udp_lost_last_report_recovers_without_replaying_pcm_or_trusting_wrong_address ... ok
+test source_runtime_cli::tests::malformed_and_wrong_key_refusals_have_distinct_real_n01_counters ... ok
+
+test stop_before_go_and_expired_anchor_emit_no_media ... ok
+test source_loopback_processes_match_independent_pcm_and_reject_wrong_key ... ok
+
+test result: ok. 506 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 56.41s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.29s
+test result: ok. 256 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.48s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+FFW_SOURCE_LOOPBACK: {"binary_sha256": "5b519b2acec59c5f5184ca5c7ae8cb5310dc08e884f3d914725e4d4114512f59", "failed": 0, "not_qualified": ["native providers", "legacy guest runtime", "physical audio", "radio performance", "full Q07 service journeys", "target budgets"], "passed": 3, "planned": 3, "results": [{"blocks": 94, "boundary": "host-process/local-provisioning/encoded-fixture/PCM-file-sink", "capture_sha256": "0aa5cf00b6efa91c306f4a887ea039296595bc2a3dc6905254e660d6f488e1c8", "case": "vorbis_48000-pcm", "frames": 24000, "input_sha256": "de7d8f0c485ca2e3708523f9b27b60c23130b0101d0b9cc8bd63968699d53139", "manifest_sha256": "e30d9af8998ceff21c9b498c090b3b0d74e04f9a06daca66f3cdf4c9c7dbf4eb", "peak_lsb": 1, "reference_sha256": "43eec8a2d3519a72a5e580db33530fc838af11489609f1e77ef0738f1bc1ec3d", "rms_lsb": 0.04587119648174295, "samples": 48000, "status": "passed"}, {"blocks": 282, "boundary": "host-process/local-provisioning/encoded-fixture/PCM-file-sink", "capture_sha256": "4cba8f1f94fd6577b13665afea8ac0827a299a0c76d3b0b772b083f3ac6bd1ac", "case": "mp3_48000_long-pcm", "frames": 72000, "input_sha256": "7785255f947a50fde36ddcaf9227a9dcbc0cac1516c562d2ffbb91038805065b", "manifest_sha256": "c99120fb69f26332091c8ea83b75ade56f48be2a1e1f921d442bd41c8f4f5128", "peak_lsb": 1, "reference_sha256": "fb30800e4f9414a33392b3ffaab0a5e0be2f2919604753ffc19726da929974d1", "rms_lsb": 0.04579543888011362, "samples": 144000, "status": "passed"}, {"boundary": "host-process/local-provisioning/encoded-fixture/PCM-file-sink", "captured_frames": 0, "case": "vorbis_48000-wrong-key", "input_sha256": "de7d8f0c485ca2e3708523f9b27b60c23130b0101d0b9cc8bd63968699d53139", "manifest_sha256": "e30d9af8998ceff21c9b498c090b3b0d74e04f9a06daca66f3cdf4c9c7dbf4eb", "reference_sha256": "43eec8a2d3519a72a5e580db33530fc838af11489609f1e77ef0738f1bc1ec3d", "rejected": 16, "rejected_authentication": 16, "status": "passed"}], "schema": "ffw.source-loopback.v1"}
+
+Separate strict-remote native Clippy job 30105869848936481: remote exit 0; terminal ACK true.
+Raw Clippy log SHA-256: 5593e93f4f29f717f629862abdcd9b24c086dba199005048d40b421ae101660a
+    Finished `dev` profile [unoptimized] target(s) in 1m 04s
+
+Unchanged N07 consumer on the complete raw test log: 25 cases, 25 passed, 0 failed; META 7/7.
+Raw consumer output SHA-256: 157421d3c4235bad73192f34c5da27da8716340f729bf41626b95cf122445497
