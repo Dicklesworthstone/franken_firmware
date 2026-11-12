@@ -93,6 +93,12 @@ pub enum Starvation {
 pub trait RenderSource: FrameSource {
     /// `Some(why)` while the next `pull` would return `None`; `None` while frames are available.
     fn starvation(&self) -> Option<Starvation>;
+
+    /// A trusted finite source has exhausted its content and admitted lookahead.
+    /// Temporary absence is never EOF. The default preserves streaming behavior.
+    fn end_of_stream(&self) -> bool {
+        false
+    }
 }
 
 // ------------------------------------------------------------------------------------ timing
@@ -164,6 +170,28 @@ impl RenderConfig {
             output_endian: Endian::Big,
         }
     }
+}
+
+/// A read-only projection of the next block's existing device-tick schedule.
+/// These ticks have no group-time meaning until the caller admits a mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderSlot {
+    pub now: u64,
+    pub index: u64,
+    pub block_frames: usize,
+    pub release_tick: u64,
+    pub deadline_tick: u64,
+    pub presentation_tick: u64,
+    /// Exact next pull demand from a cloned D03 state, including its phase,
+    /// priming and current drift/slew. Querying never advances the real state.
+    pub required_source_frames: u64,
+    /// Pull demand for the next single output, to distinguish a finite tail
+    /// from a completely empty extra device block.
+    pub first_output_source_frames: u64,
+    /// D03 phase at the next output, including any projected epoch reset.
+    pub source_phase: franken_dsp::resample::PhaseState,
+    /// An earlier block has already pulled input and is still rendering.
+    pub in_progress: bool,
 }
 
 // ------------------------------------------------------------------------------------ errors
@@ -741,6 +769,71 @@ impl<B: DeviceBackend> RenderLoop<B> {
     }
 
     #[must_use]
+    pub const fn config(&self) -> RenderConfig {
+        self.cfg
+    }
+
+    /// Whether no external control handle can mutate this loop's queue.
+    /// A serialized enclosing owner can require this before taking the loop;
+    /// it must then keep the loop and its control port private.
+    /// This says nothing about commands queued before the other handles left.
+    #[must_use]
+    pub fn control_is_exclusive(&self) -> bool {
+        Arc::strong_count(&self.control.inner) == 1
+    }
+
+    /// Project the next block without polling, allocating, pulling input or
+    /// changing the device. Ready/Stopped project the next successful start,
+    /// including its resampler epoch reset; Running/Muted use the active run.
+    /// Drain/fault and unrepresentable tick arithmetic return `None`.
+    /// The owner must still recheck control, authority and time before a tick.
+    #[must_use]
+    pub fn next_slot(&self) -> Option<RenderSlot> {
+        self.now.checked_add(1)?;
+        let restarting = matches!(self.state, RenderState::Ready | RenderState::Stopped);
+        if !restarting && !matches!(self.state, RenderState::Running | RenderState::Muted) {
+            return None;
+        }
+        let (base, index) = if restarting {
+            (self.now, 0)
+        } else {
+            (self.base, self.next_index)
+        };
+        let release_tick = base
+            .checked_add(1)?
+            .checked_add(index.checked_mul(self.cfg.period_ticks)?)?;
+        let deadline_tick = release_tick.checked_add(self.cfg.window_ticks)?;
+        let presentation_tick = deadline_tick.checked_add(self.lead_ticks)?;
+        let mut planned = self.resampler.clone();
+        if restarting && self.started_before {
+            planned
+                .begin_epoch(self.epoch.wrapping_add(1), ResetReason::NewSource)
+                .ok()?;
+        } else if !restarting && self.resync_pending {
+            // The caller will tick only with available source data; render_block
+            // then resets the lost stream before its next pull. Model that same
+            // reset, rather than undercounting its new priming requirement.
+            planned
+                .begin_epoch(self.epoch.wrapping_add(1), ResetReason::Discontinuity)
+                .ok()?;
+        }
+        let source_phase = planned.phase_state();
+        let first_output_source_frames = planned.clone().plan(1);
+        Some(RenderSlot {
+            now: self.now,
+            index,
+            block_frames: self.cfg.block_frames,
+            release_tick,
+            deadline_tick,
+            presentation_tick,
+            required_source_frames: planned.plan(u64::try_from(self.cfg.block_frames).ok()?),
+            first_output_source_frames,
+            source_phase,
+            in_progress: self.busy.is_some(),
+        })
+    }
+
+    #[must_use]
     pub const fn counters(&self) -> RenderCounters {
         self.counters
     }
@@ -1102,6 +1195,20 @@ impl<B: DeviceBackend> RenderLoop<B> {
         source: &mut S,
         timing: &mut T,
     ) -> TickReport {
+        self.tick_with_start_permission(source, timing, true)
+    }
+
+    /// Advance the device and finish already-started work, optionally permitting
+    /// a new source block. `false` never pulls new source or moves the fixed
+    /// timeline; a later admitted start still faces its original deadline.
+    /// Cancel/flush acknowledgement continues normally. A graceful ramp requires
+    /// future permitted rendering; immediate invalidation must use `cancel`.
+    pub fn tick_with_start_permission<S: RenderSource, T: TimingModel>(
+        &mut self,
+        source: &mut S,
+        timing: &mut T,
+        start_permitted: bool,
+    ) -> TickReport {
         let mut report = TickReport {
             now: self.now,
             state: self.state,
@@ -1127,7 +1234,7 @@ impl<B: DeviceBackend> RenderLoop<B> {
         if self.state == RenderState::Draining && self.cancel_mode {
             self.wait_for_cancel_ack();
         } else if self.state != RenderState::Faulted && self.state != RenderState::Stopped {
-            self.run_block(source, timing, &mut report);
+            self.run_block(source, timing, &mut report, start_permitted);
         }
         report.now = self.now;
         report.state = self.state;
@@ -1281,6 +1388,7 @@ impl<B: DeviceBackend> RenderLoop<B> {
         source: &mut S,
         timing: &mut T,
         report: &mut TickReport,
+        start_permitted: bool,
     ) {
         if let Some(busy) = self.busy
             && self.now >= busy.complete_tick
@@ -1298,7 +1406,7 @@ impl<B: DeviceBackend> RenderLoop<B> {
                 return;
             }
         }
-        if self.busy.is_none() {
+        if self.busy.is_none() && start_permitted {
             if !self.scheduled {
                 self.schedule_next(timing);
             }
@@ -1391,11 +1499,13 @@ impl<B: DeviceBackend> RenderLoop<B> {
         if produced < n {
             self.block.left[produced..n].fill(0.0);
             self.block.right[produced..n].fill(0.0);
-            let cause = source.starvation().unwrap_or(Starvation::DecodeDelay);
-            if cause == Starvation::IngressLoss {
-                self.resync_pending = true;
+            if !source.end_of_stream() {
+                let cause = source.starvation().unwrap_or(Starvation::DecodeDelay);
+                if cause == Starvation::IngressLoss {
+                    self.resync_pending = true;
+                }
+                starved = Some((cause, n - produced));
             }
-            starved = Some((cause, n - produced));
         }
         self.block.frames = n;
         self.block.start_frame = self.frames_rendered;
@@ -1637,6 +1747,259 @@ mod tests {
         let (mut l, probe, ledger) = standard();
         l.start(READY).unwrap();
         (l, probe, ledger)
+    }
+
+    #[test]
+    fn next_slot_projects_the_schedule_without_advancing_source_or_device() {
+        let (mut l, probe, _) = standard();
+        let phase = l.resampler.phase_state();
+        let initial_tick = probe.tick();
+        let slot = l.next_slot().unwrap();
+        assert_eq!((slot.index, slot.now, slot.block_frames), (0, 0, BLOCK));
+        assert_eq!(
+            (
+                slot.release_tick,
+                slot.deadline_tick,
+                slot.presentation_tick
+            ),
+            (1, 4, 5)
+        );
+        assert_eq!(slot.required_source_frames, 66);
+        assert_eq!(slot.first_output_source_frames, 3);
+        assert_eq!(slot.source_phase, phase);
+        assert!(!slot.in_progress);
+        assert_eq!(l.resampler.phase_state(), phase);
+        assert_eq!(probe.tick(), initial_tick);
+        assert_eq!(l.config().period_ticks, 4);
+        l.start(READY).unwrap();
+        assert_eq!(l.next_slot().unwrap(), slot);
+        let mut source = ToneSource::new();
+        let mut timing = ScriptedTiming {
+            default_cost: 1,
+            ..Default::default()
+        };
+        l.tick(&mut source, &mut timing);
+        let next = l.next_slot().unwrap();
+        assert_eq!((next.index, next.now), (1, 1));
+        assert_eq!(
+            (
+                next.release_tick,
+                next.deadline_tick,
+                next.presentation_tick
+            ),
+            (5, 8, 9)
+        );
+        assert!(next.in_progress);
+        assert_eq!(next.required_source_frames, 64);
+        assert_eq!(next.first_output_source_frames, 1);
+        let after = l.resampler.phase_state();
+        assert_eq!(l.next_slot().unwrap(), next);
+        assert_eq!(l.resampler.phase_state(), after);
+    }
+
+    #[test]
+    fn next_slot_source_demand_matches_real_drift_and_resync_pulls() {
+        for ppb in [-500_000, 0, 500_000] {
+            for initial_ppb in [0, ppb] {
+                let (mut l, _, _) = started();
+                l.resampler =
+                    DriftResampler::with_initial_ppb(ResamplerConfig::default(), initial_ppb)
+                        .unwrap();
+                l.resampler.set_target_ppb(ppb);
+                let mut source = ToneSource::new();
+                for _ in 0..16 {
+                    let predicted = l.next_slot().unwrap().required_source_frames;
+                    let before = l.resampler.phase_state();
+                    let mut actual = l.resampler.clone();
+                    let report = actual
+                        .render(&mut source, &mut [0.0; BLOCK], &mut [0.0; BLOCK])
+                        .unwrap();
+                    assert_eq!(predicted, u64::try_from(report.pulled).unwrap());
+                    assert_eq!(report.produced, BLOCK);
+                    assert_eq!(l.resampler.phase_state(), before);
+                    l.resampler = actual;
+                }
+                l.resync_pending = true;
+                let old_phase = l.resampler.phase_state();
+                let predicted = l.next_slot().unwrap().required_source_frames;
+                let mut actual = l.resampler.clone();
+                actual
+                    .begin_epoch(l.epoch.wrapping_add(1), ResetReason::Discontinuity)
+                    .unwrap();
+                let report = actual
+                    .render(&mut source, &mut [0.0; BLOCK], &mut [0.0; BLOCK])
+                    .unwrap();
+                assert_eq!(predicted, u64::try_from(report.pulled).unwrap());
+                assert_eq!(report.produced, BLOCK);
+                assert_eq!(l.resampler.phase_state(), old_phase);
+                // A stopped owner next starts at its current tick with fresh source
+                // history, not at the old run's next block index or old phase.
+                l.resync_pending = false;
+                l.state = RenderState::Stopped;
+                l.now = 37;
+                l.base = 4;
+                l.next_index = 9;
+                let restarted = l.next_slot().unwrap();
+                assert_eq!((restarted.index, restarted.release_tick), (0, 38));
+                assert_eq!(restarted.required_source_frames, predicted);
+            }
+        }
+    }
+
+    #[test]
+    fn next_slot_refuses_overflow_and_inactive_states_without_mutation() {
+        for state in [RenderState::Draining, RenderState::Faulted] {
+            let (mut l, probe, _) = standard();
+            l.state = state;
+            let tick = probe.tick();
+            assert!(l.next_slot().is_none());
+            assert_eq!(probe.tick(), tick);
+        }
+        for fault in 0..4 {
+            let (mut l, _, _) = started();
+            match fault {
+                0 => l.now = u64::MAX,
+                1 => l.base = u64::MAX,
+                2 => l.next_index = u64::MAX,
+                _ => l.cfg.window_ticks = u64::MAX,
+            }
+            let phase = l.resampler.phase_state();
+            assert!(l.next_slot().is_none(), "overflow case {fault}");
+            assert_eq!(l.resampler.phase_state(), phase);
+        }
+        assert!(standard().0.next_slot().is_some());
+    }
+
+    #[test]
+    fn exclusive_control_observation_detects_and_recovers_from_a_retained_handle() {
+        let (l, probe, _) = standard();
+        let tick = probe.tick();
+        assert!(l.control_is_exclusive());
+        let control = l.control_port();
+        assert!(!l.control_is_exclusive());
+        drop(control);
+        assert!(l.control_is_exclusive());
+        assert_eq!(probe.tick(), tick);
+    }
+
+    #[test]
+    fn a_finish_only_tick_submits_busy_work_without_starting_or_pulling_another_block() {
+        let mut cfg = RenderConfig::standard(BLOCK);
+        cfg.period_ticks = 1;
+        let (mut l, probe, _) = build(fake_config(), cfg);
+        probe.capture_submissions(4);
+        l.start(READY).unwrap();
+        let mut source = ToneSource::new();
+        let mut timing = ScriptedTiming {
+            default_cost: 1,
+            ..Default::default()
+        };
+        assert_eq!(l.tick(&mut source, &mut timing).started, Some(0));
+        let pulled = source.pos;
+        assert!(l.block_in_progress());
+        let finished = l.tick_with_start_permission(&mut source, &mut timing, false);
+        assert!(finished.finished.is_some());
+        assert_eq!(finished.started, None);
+        assert_eq!(source.pos, pulled);
+        assert_eq!(probe.captured_submissions().len(), 1);
+        assert!(!l.block_in_progress());
+        let idle = l.tick_with_start_permission(&mut source, &mut timing, false);
+        assert_eq!(idle.started, None);
+        assert_eq!(source.pos, pulled);
+        // Permission resumes the existing block index/deadline, not a new run.
+        assert_eq!(l.tick(&mut source, &mut timing).started, Some(1));
+        assert!(source.pos > pulled);
+        let finished = l.tick_with_start_permission(&mut source, &mut timing, false);
+        assert!(finished.finished.is_some());
+        assert_eq!(finished.started, None);
+        assert_eq!(probe.captured_submissions().len(), 2);
+        assert_eq!(l.counters().cpu_miss_blocks, 0);
+    }
+
+    #[test]
+    fn a_finish_only_tick_keeps_cancel_acknowledgement_progressing_without_new_source() {
+        let (mut l, probe, _) = started();
+        probe.capture_submissions(4);
+        let mut source = ToneSource::new();
+        let mut timing = ScriptedTiming::default();
+        l.tick(&mut source, &mut timing);
+        assert_eq!(probe.captured_submissions().len(), 1);
+        let pulled = source.pos;
+        l.cancel().unwrap();
+        assert_eq!(l.state(), RenderState::Draining);
+        for _ in 0..16 {
+            if l.state() != RenderState::Draining {
+                break;
+            }
+            let tick = l.tick_with_start_permission(&mut source, &mut timing, false);
+            assert_eq!(tick.started, None);
+            assert_eq!(source.pos, pulled);
+        }
+        assert_eq!(l.state(), RenderState::Stopped);
+        assert_eq!(probe.captured_submissions().len(), 1);
+        assert_eq!(probe.pending(), 0);
+        assert_eq!(probe.use_after_free(), 0);
+        assert_eq!(probe.modified_while_owned(), 0);
+    }
+
+    #[test]
+    fn an_explicit_finite_end_pads_the_device_tail_but_temporary_absence_still_starves() {
+        struct FiniteSource {
+            pulled: usize,
+            declared_end: bool,
+        }
+        impl FrameSource for FiniteSource {
+            fn pull(&mut self) -> Option<[f32; 2]> {
+                if self.pulled == 39 {
+                    return None;
+                }
+                let sample = if self.pulled < 37 {
+                    [0.25, 0.125]
+                } else {
+                    [0.0; 2]
+                };
+                self.pulled += 1;
+                Some(sample)
+            }
+        }
+        impl RenderSource for FiniteSource {
+            fn starvation(&self) -> Option<Starvation> {
+                Some(Starvation::DecodeDelay)
+            }
+            fn end_of_stream(&self) -> bool {
+                self.declared_end && self.pulled == 39
+            }
+        }
+        for declared_end in [false, true] {
+            let (mut l, probe, _) = started();
+            probe.capture_submissions(2);
+            let mut source = FiniteSource {
+                pulled: 0,
+                declared_end,
+            };
+            let mut timing = ScriptedTiming::default();
+            let tick = l.tick(&mut source, &mut timing);
+            let outcome = tick.finished.unwrap().1;
+            assert_eq!(source.pulled, 39);
+            assert_eq!(probe.captured_submissions().len(), 1);
+            assert_eq!(probe.captured_submissions()[0].len(), BLOCK * 4);
+            if declared_end {
+                assert_eq!(outcome, BlockOutcome::OnTime);
+                assert_eq!(l.counters().silence_frames_decode, 0);
+                assert_eq!(l.counters().decode_delay_blocks, 0);
+            } else {
+                assert_eq!(
+                    outcome,
+                    BlockOutcome::Starved {
+                        cause: Starvation::DecodeDelay,
+                        silence_frames: 27
+                    }
+                );
+                assert_eq!(l.counters().silence_frames_decode, 27);
+                assert_eq!(l.counters().decode_delay_blocks, 1);
+            }
+            assert!(!l.resync_pending);
+        }
     }
 
     /// A steady tone, so the source never runs out unless the test makes it.
