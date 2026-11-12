@@ -1,0 +1,303 @@
+{
+  "schema": "ffw.network_render_evidence.v1",
+  "source_code_commit": "d2a60417bbe6acc8d1a8bef65144a4239e1eef2d",
+  "baseline": "8a3935d67480e39feb2059b1899ee8f9196b1377",
+  "input_inventory_sha256": "506c6893690e58eb2f7ccf869a3757cd131f091c3845b38f1a29bae6b1702619",
+  "committed_files_compared": 1602,
+  "committed_source_mismatches": 0,
+  "source_overlays": [
+    {
+      "path": "crates/franken-speaker/src/render.rs",
+      "sha256": "afb473c1be0b110e8367674c68f1a572cdc83e654331b917ac049a9f947d3ca9",
+      "bytes": 151302
+    },
+    {
+      "path": "crates/franken-speaker/src/lib.rs",
+      "sha256": "f6769293db3a49753b252e72c1edd2f44208d16c623fe8b6146ad57eb2e4897d",
+      "bytes": 2600
+    },
+    {
+      "path": "tests/d04/cases.json",
+      "sha256": "7de6588b728d6c0be58899b5a208d8cdfb0b971976477f10847392842d2bfc5a",
+      "bytes": 27559
+    },
+    {
+      "path": "crates/franken-speaker/src/network_render.rs",
+      "sha256": "c19435c755baa51d9b91386003cbce94d2105f24392761a4925e3849b2256db1",
+      "bytes": 30387
+    },
+    {
+      "path": "crates/franken-speaker/src/network_render/tests.rs",
+      "sha256": "5bb0904b42ce1d2fbe7886d44a79701d6d59ed718f285092c4ab23f02bf3fefe",
+      "bytes": 39957
+    }
+  ],
+  "final_new_tests_passed": [
+    "render::tests::a_finish_only_tick_keeps_cancel_acknowledgement_progressing_without_new_source",
+    "render::tests::a_finish_only_tick_submits_busy_work_without_starting_or_pulling_another_block",
+    "render::tests::an_explicit_finite_end_pads_the_device_tail_but_temporary_absence_still_starves",
+    "render::tests::exclusive_control_observation_detects_and_recovers_from_a_retained_handle",
+    "render::tests::next_slot_projects_the_schedule_without_advancing_source_or_device",
+    "render::tests::next_slot_refuses_overflow_and_inactive_states_without_mutation",
+    "render::tests::next_slot_source_demand_matches_real_drift_and_resync_pulls",
+    "network_render::mapping_tests::rational_tick_mapping_handles_both_sides_and_rejects_invalid_arithmetic",
+    "network_render::mapping_tests::projected_phase_tracks_real_d03_plan_across_both_drift_signs",
+    "network_render::mapping_tests::received_and_concealed_frames_remain_distinct_in_the_real_queue",
+    "network_render::tests::admission_refuses_capacity_bad_mapping_and_shared_control",
+    "network_render::tests::localhost_bad_mac_does_not_revoke_prepared_pcm",
+    "network_render::tests::clock_fault_clears_queued_pcm_and_requires_a_fresh_owner",
+    "network_render::tests::authority_expiry_invalidates_queued_audio",
+    "network_render::tests::a_missed_preparation_deadline_never_submits_late_pcm",
+    "network_render::tests::a_missed_mapped_render_deadline_cancels_prepared_pcm",
+    "network_render::tests::clock_fault_during_busy_block_keeps_submitted_dma_until_flush_ack",
+    "network_render::tests::finite_eof_waits_for_scheduled_end_after_early_dma_completion",
+    "network_render::tests::finite_eof_lost_completion_and_flush_ack_faults_without_freeing_dma",
+    "network_render::tests::localhost_full_and_partial_tail_match_independent_protected_output",
+    "network_render::tests::localhost_finite_tail_keeps_both_drift_signs",
+    "network_render::tests::queue_refusals_preserve_valid_pcm_and_allow_the_valid_successor",
+    "network_render::tests::queue_partial_payload_is_not_implicit_end_of_stream",
+    "network_render::tests::queue_accepts_explicit_partial_final_frame"
+  ],
+  "jobs": [
+    {
+      "label": "compile-imports",
+      "build_id": "30106308287922397",
+      "exit_code": 101,
+      "input_inventory_sha256": "b002ec3d1341c06ef66a518319479e4215c9d2acb1cfe8930761aba19e624518",
+      "raw_private_log_sha256": "62d04e199e2991d1ac5dc0ea660eccf8e60405c72b3b07d85ea4c4bb740620bf",
+      "executed_command_sha256": "4700598736b78287a449036c8f7d1045009c19269c66f8ff4bde38a743c05daf",
+      "source_content_root": "4eb3244500d98c904e1e8c1d81393de805aeb59f01e1914666878d3715c1fe12",
+      "receipt_root": "b62c9b669e72029ccf01291d2bd415df1b5186b178d2afd5337bc0c61b9addac",
+      "transferred_files_compared": 1600,
+      "source_mismatches": 0,
+      "excluded_metadata_paths": [
+        ".beads/.gitignore",
+        ".beads/config.yaml"
+      ],
+      "terminal_custody": {
+        "build_id": "30106308287922397",
+        "state": "finished",
+        "exit_code": 101,
+        "terminal_acknowledged": true,
+        "strict_remote": true,
+        "wrapper_pid_present": false,
+        "execution_started": true,
+        "staging_released": null,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true
+      },
+      "actual_test_footers": []
+    },
+    {
+      "label": "compile-test-type",
+      "build_id": "30106308287922402",
+      "exit_code": 101,
+      "input_inventory_sha256": "a6416ab9c582a3b1e93ac588f3307d5b56d578483fa7c8f47bce36917e9a4395",
+      "raw_private_log_sha256": "5d04b2b0ebdd2feb3a5901f43c31d5a6365bbf7af343a954c12c1985a1281c9f",
+      "executed_command_sha256": "4700598736b78287a449036c8f7d1045009c19269c66f8ff4bde38a743c05daf",
+      "source_content_root": "506d716e47c2f1aa921669e413626df36005655dfed2218ab5a2e9cfe5aff492",
+      "receipt_root": "bb5b1a22e47ae4ea563a9ecd7b099dc25811c697aa8cf70240d70152740f5a67",
+      "transferred_files_compared": 1600,
+      "source_mismatches": 0,
+      "excluded_metadata_paths": [
+        ".beads/.gitignore",
+        ".beads/config.yaml"
+      ],
+      "terminal_custody": {
+        "build_id": "30106308287922402",
+        "state": "finished",
+        "exit_code": 101,
+        "terminal_acknowledged": true,
+        "strict_remote": true,
+        "wrapper_pid_present": false,
+        "execution_started": true,
+        "staging_released": null,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true
+      },
+      "actual_test_footers": []
+    },
+    {
+      "label": "prior-tests",
+      "build_id": "30106308287922408",
+      "exit_code": 0,
+      "input_inventory_sha256": "1c649241bba525cf932ded9788e86bc08adec457c6608fb43b06af2de8d3243b",
+      "raw_private_log_sha256": "448f05447bacebdfc9385afca53d0e50e94f5a6c2447f2cd64b0aa4c73dd4e90",
+      "executed_command_sha256": "4700598736b78287a449036c8f7d1045009c19269c66f8ff4bde38a743c05daf",
+      "source_content_root": "0149dc9630db289b59c56bec16537ad3e487fb3b466ab816c3a9f8d6b7d05ab1",
+      "receipt_root": "5c97d99a66cc897989438be0e9effcffb9e99dca2d60986be55ddbcf31feac33",
+      "transferred_files_compared": 1600,
+      "source_mismatches": 0,
+      "excluded_metadata_paths": [
+        ".beads/.gitignore",
+        ".beads/config.yaml"
+      ],
+      "terminal_custody": {
+        "build_id": "30106308287922408",
+        "state": "finished",
+        "exit_code": 0,
+        "terminal_acknowledged": true,
+        "strict_remote": true,
+        "wrapper_pid_present": false,
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true
+      },
+      "actual_test_footers": [
+        "test result: ok. 530 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 59.86s",
+        "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.09s"
+      ]
+    },
+    {
+      "label": "prior-clippy-failure",
+      "build_id": "30106308287922415",
+      "exit_code": 101,
+      "input_inventory_sha256": "1c649241bba525cf932ded9788e86bc08adec457c6608fb43b06af2de8d3243b",
+      "raw_private_log_sha256": "d12f4722d29692aadd77ad8f6d8a39597d5d7e70e07234cd7f0e305515cd0e72",
+      "executed_command_sha256": "8c08da66db37a286de2c375bc5f27983ab7a70221873e0c66a21538e984d7a2b",
+      "source_content_root": "645c34ec1584324cee872c9a5f746958eddb17f4bb2fd4a5288e8a688f8680c3",
+      "receipt_root": "759f6d49a80705b134256a06d9cd65151ff6a02d7171ccd4b7e31440675f8b60",
+      "transferred_files_compared": 1600,
+      "source_mismatches": 0,
+      "excluded_metadata_paths": [
+        ".beads/.gitignore",
+        ".beads/config.yaml"
+      ],
+      "terminal_custody": {
+        "build_id": "30106308287922415",
+        "state": "finished",
+        "exit_code": 101,
+        "terminal_acknowledged": true,
+        "strict_remote": true,
+        "wrapper_pid_present": false,
+        "execution_started": true,
+        "staging_released": null,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true
+      },
+      "actual_test_footers": []
+    },
+    {
+      "label": "final-tests",
+      "build_id": "30106308287922422",
+      "exit_code": 0,
+      "input_inventory_sha256": "506c6893690e58eb2f7ccf869a3757cd131f091c3845b38f1a29bae6b1702619",
+      "raw_private_log_sha256": "b0be0937fc5806da26779e28cee6b70a1bc976441981b2fb1c4eaef2332484df",
+      "executed_command_sha256": "4700598736b78287a449036c8f7d1045009c19269c66f8ff4bde38a743c05daf",
+      "source_content_root": "06cc42510993c60008bce15555f4065804335224ef74cfcf518c023418edd13b",
+      "receipt_root": "10fa53dc1017d0310349463555b3b7314f5b87e2cb1fde3534234154455bf25f",
+      "transferred_files_compared": 1600,
+      "source_mismatches": 0,
+      "excluded_metadata_paths": [
+        ".beads/.gitignore",
+        ".beads/config.yaml"
+      ],
+      "terminal_custody": {
+        "build_id": "30106308287922422",
+        "state": "finished",
+        "exit_code": 0,
+        "terminal_acknowledged": true,
+        "strict_remote": true,
+        "wrapper_pid_present": false,
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true
+      },
+      "actual_test_footers": [
+        "test result: ok. 530 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 58.66s",
+        "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.10s"
+      ]
+    },
+    {
+      "label": "final-clippy",
+      "build_id": "30106308287922428",
+      "exit_code": 0,
+      "input_inventory_sha256": "506c6893690e58eb2f7ccf869a3757cd131f091c3845b38f1a29bae6b1702619",
+      "raw_private_log_sha256": "755b7711f29e0f99a7f108c9cf01109fb2ba653dddf2dcc11ded1a38d7760a4e",
+      "executed_command_sha256": "8c08da66db37a286de2c375bc5f27983ab7a70221873e0c66a21538e984d7a2b",
+      "source_content_root": "a0658dbb52469be26617df474620e3dccbbcca0bcc080255a90fcf783852ad2b",
+      "receipt_root": "8b9bedf949d0c7461356677cc301a952bf3d0e74b3e4dd0e43591d1336bcbd76",
+      "transferred_files_compared": 1600,
+      "source_mismatches": 0,
+      "excluded_metadata_paths": [
+        ".beads/.gitignore",
+        ".beads/config.yaml"
+      ],
+      "terminal_custody": {
+        "build_id": "30106308287922428",
+        "state": "finished",
+        "exit_code": 0,
+        "terminal_acknowledged": true,
+        "strict_remote": true,
+        "wrapper_pid_present": false,
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true
+      },
+      "actual_test_footers": []
+    }
+  ],
+  "local_controls": {
+    "python_judge_tests": {
+      "passed": 19,
+      "failed": 0
+    },
+    "d04_single_central_case": {
+      "required_rust_names": 65,
+      "passed": 1,
+      "failed": 0,
+      "full_qualification": false
+    },
+    "d04_registry": {
+      "invariants": 25,
+      "named_entries_including_duplicates": 79,
+      "distinct_rust_tests_mapped": 65
+    },
+    "rustfmt": "passed on all four touched Rust files, pinned1.99"
+  },
+  "transcript_excerpts": {
+    "tests.txt": {
+      "bytes": 191627,
+      "sha256": "e3aa9aa964c72fe2729b6f8eae9a637d6c1c8cea11bd902d3dcafc62195ed6de"
+    },
+    "clippy.txt": {
+      "bytes": 3283,
+      "sha256": "3b92812b8006ce8647c225ae3446787ae5480c8338495fb8e05a2d2f4bd48c38"
+    }
+  },
+  "observed_pcm": {
+    "full_source_frames": 512,
+    "full_device_blocks": 8,
+    "partial_source_frames": 549,
+    "partial_device_blocks": 9,
+    "drift_source_frames": 8192,
+    "negative_500ppm_output_frames": 8197,
+    "unity_output_frames": 8192,
+    "positive_500ppm_output_frames": 8188,
+    "bad_mac_preserved_protected_frames": 512,
+    "lost_ack_flush_to_fault_ticks": 9,
+    "admitted_stop_deadline_ticks": 8,
+    "lost_ack_dma_pending": 1
+  },
+  "limits": [
+    "localhost sockets, scripted group clock, synthetic board calibration and retained FakeBackend",
+    "one preexisting D03 soak ignored",
+    "no retrieved native binary or raw capture; artifact retrieval selected zero files",
+    "no board boot, physical presentation, radio, provider or full-bead qualification"
+  ]
+}
