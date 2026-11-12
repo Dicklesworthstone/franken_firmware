@@ -183,6 +183,8 @@ class Children:
     """Bounded pipe supervision; signals only processes this instance created."""
 
     def __init__(self, artifacts: Path, timeout: float):
+        if not hasattr(os, "waitid") or not hasattr(os, "WNOWAIT"):
+            raise OracleError("safe child supervision requires waitid/WNOWAIT")
         self.artifacts = artifacts
         self.deadline = time.monotonic() + timeout
         self.selector = selectors.DefaultSelector()
@@ -256,6 +258,11 @@ class Children:
             if len(child[label]) > MAX_LINE_BYTES:
                 raise OracleError(f"{child['name']} emitted an overlong diagnostic line")
 
+    @staticmethod
+    def status(child: dict):
+        # WNOWAIT preserves the leader PID/PGID until the owned group is retired.
+        return os.waitid(os.P_PID, child["process"].pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+
     def event(self, child: dict, name: str) -> dict:
         while True:
             matches = [row for row in child["events"] if row["event"] == name]
@@ -263,47 +270,60 @@ class Children:
                 raise OracleError(f"duplicate {name} event")
             if matches:
                 return matches[0]
-            if child["process"].poll() is not None and child["open"] == 0:
+            if self.status(child) is not None and child["open"] == 0:
                 raise OracleError(f"{child['name']} exited without {name}")
             self.pump()
 
     def completed(self, child: dict, expected: int = 0):
-        while child["process"].poll() is None or child["open"]:
+        while (status := self.status(child)) is None or child["open"]:
             self.pump()
-        if child["process"].returncode != expected:
-            raise OracleError(f"{child['name']} exit {child['process'].returncode}, expected {expected}")
+        code = status.si_status if status.si_code == os.CLD_EXITED else -status.si_status
+        if code != expected:
+            raise OracleError(f"{child['name']} exit {code}, expected {expected}")
 
     def __exit__(self, exc_type, *_):
         errors = []
 
-        def signal_owned(child, sig):
-            # Every group was created by Popen(start_new_session=True). There
-            # is no lookup by process name and no signal to another session.
+        def retire_owned(child):
+            process = child["process"]
             try:
-                os.killpg(child["pgid"], sig)
+                os.killpg(child["pgid"], signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            except OSError as error:
-                errors.append(f"{child['name']} signal: {error}")
+            except PermissionError:
+                # On Darwin killpg can report EPERM for an all-zombie group.
+                # The unreaped leader pins the group ID throughout this check.
+                if sys.platform != "darwin" or self.status(child) is None:
+                    raise
+                observation = subprocess.run(
+                    ["/bin/ps", "-g", str(child["pgid"]), "-o", "pid=,pgid=,stat="],
+                    capture_output=True, text=True, timeout=2, check=False)
+                members = [line.split() for line in observation.stdout.splitlines()]
+                if (observation.returncode or not members or not any(
+                        len(row) == 3 and row[0] == str(process.pid) for row in members) or any(
+                        len(row) != 3 or row[1] != str(child["pgid"]) or not row[2].startswith("Z")
+                        for row in members)):
+                    raise
 
         try:
             for child in self.children:
-                signal_owned(child, signal.SIGTERM)
-            for child in self.children:
                 process = child["process"]
                 try:
-                    process.wait(timeout=1)
-                except subprocess.TimeoutExpired:
-                    signal_owned(child, signal.SIGKILL)
+                    # Signal before wait/reap: no recycled PGID can be targeted.
+                    retire_owned(child)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    errors.append(f"{child['name']} group retirement: {error}")
+                    # The unreaped leader is still our child, never a recycled PID.
                     try:
-                        process.wait(timeout=1)
-                    except subprocess.TimeoutExpired as error:
-                        errors.append(f"{child['name']} wait: {error}")
-                except OSError as error:
+                        os.kill(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except OSError as fallback:
+                        errors.append(f"{child['name']} child fallback: {fallback}")
+                try:
+                    process.wait(timeout=2)
+                except (subprocess.TimeoutExpired, OSError) as error:
                     errors.append(f"{child['name']} wait: {error}")
-                # A direct parent may already have exited, leaving a child in
-                # its owned session. Finish that group even after parent wait.
-                signal_owned(child, signal.SIGKILL)
                 try:
                     for label in ("stdout", "stderr"):
                         stream = getattr(process, label)

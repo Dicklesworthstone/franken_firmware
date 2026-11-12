@@ -1,12 +1,14 @@
 """Canaries for the process runner's independent sample oracle."""
 import json
 import os
+import signal
 import struct
 import sys
 import tempfile
 import subprocess
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from run_loopback import (
@@ -183,6 +185,61 @@ class ProcessSupervisorTests(unittest.TestCase):
             if time.monotonic() >= deadline:
                 self.fail(f"owned descendant remains running: {state}")
             time.sleep(0.01)
+
+    def test_normal_leader_exit_retires_detached_pipe_descendant_before_reap(self):
+        signals = []
+        real_killpg = os.killpg
+        def audited(pgid, sig):
+            observed = os.waitid(os.P_PID, pgid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            signals.append((pgid, sig, observed is not None))
+            return real_killpg(pgid, sig)
+        with patch("run_loopback.os.killpg", side_effect=audited):
+            with Children(self.directory(), 3) as supervisor:
+                child = supervisor.spawn("canary", [sys.executable, "-c",
+                    'import subprocess,sys,json;'
+                    'p=subprocess.Popen([sys.executable,"-c","import time;time.sleep(15)"],'
+                    'stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);'
+                    'print(json.dumps({"event":"ready","descendant":p.pid}),flush=True)'])
+                descendant = supervisor.event(child, "ready")["descendant"]
+                supervisor.completed(child)
+                self.assertIsNone(child["process"].returncode, "leader must remain unreaped")
+            self.assertEqual(child["process"].returncode, 0)
+        self.assertEqual(signals, [(child["pgid"], signal.SIGKILL, True)])
+        deadline = time.monotonic() + 2
+        while True:
+            state = subprocess.run(["ps", "-o", "stat=", "-p", str(descendant)],
+                                   capture_output=True, text=True, timeout=1).stdout.strip()
+            if not state or state.startswith("Z"):
+                break
+            if time.monotonic() >= deadline:
+                self.fail(f"owned descendant remains running: {state}")
+            time.sleep(.01)
+
+    def test_signal_error_fails_closed_and_retires_other_owned_child(self):
+        real_killpg = os.killpg
+        groups = []
+        direct = []
+        real_kill = os.kill
+        def injected(pgid, sig):
+            groups.append(pgid)
+            if len(groups) == 1:
+                raise OSError("injected group failure")
+            return real_killpg(pgid, sig)
+        def direct_child(pid, sig):
+            direct.append((pid, sig))
+            self.assertIsNone(os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT))
+            return real_kill(pid, sig)
+        directory = self.directory()
+        with patch("run_loopback.os.killpg", side_effect=injected), patch("run_loopback.os.kill", side_effect=direct_child):
+            with self.assertRaisesRegex(OracleError, "group retirement"):
+                with Children(directory, 3) as supervisor:
+                    first = supervisor.spawn("first", [sys.executable, "-c", "import time;time.sleep(15)"])
+                    second = supervisor.spawn("second", [sys.executable, "-c", "import time;time.sleep(15)"])
+            self.assertEqual(groups, [first["pgid"], second["pgid"]])
+            self.assertEqual(direct, [(first["process"].pid, signal.SIGKILL)])
+            self.assertIsNotNone(first["process"].returncode)
+            self.assertIsNotNone(second["process"].returncode)
+            self.assertIn("injected group failure", (directory / "cleanup-errors.json").read_text())
 
     def test_unterminated_and_overlong_output_fail(self):
         for text in ('print("broken", end="", flush=True)', 'print("x"*17000, flush=True)'):
