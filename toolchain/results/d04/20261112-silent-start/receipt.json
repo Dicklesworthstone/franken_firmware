@@ -1,0 +1,260 @@
+{
+  "schema": "ffw.d04.silent-start.v1",
+  "recorded_at_utc": "2026-11-12T19:42:22.587811+00:00",
+  "baseline_commit": "edad89b3818d08aed539609df85080529a45e74d",
+  "code_commit": "6268d42798ee5e64fbc80f4d0d1f2e9c86ee9a0a",
+  "committed_source_proof": {
+    "code_commit": "6268d42798ee5e64fbc80f4d0d1f2e9c86ee9a0a",
+    "tree": "41701c61c36e22ec43abb50b1a3f47d4adefe359",
+    "inventory_sha256": "fa451f3098a32b4d7f6e064412b403c3394e62c1acc0efe26139c3eba1ef13d4",
+    "all_committed_files_matched": 1610,
+    "mismatches": 0,
+    "changed_paths": [
+      "crates/franken-hal/src/backend.rs",
+      "crates/franken-hal/src/session.rs",
+      "crates/franken-speaker/src/render.rs",
+      "crates/franken-speaker/tests/silent_start.rs"
+    ]
+  },
+  "qualified_source_files": [
+    {
+      "path": "crates/franken-hal/src/backend.rs",
+      "sha256": "62c8ef1ee356a8f3bb0c19044dac1317907ac1a63c12eb74bdb414c84f8446ce",
+      "bytes": 21672
+    },
+    {
+      "path": "crates/franken-hal/src/session.rs",
+      "sha256": "eb8d567a5c309066b69d432d8b914ea29d8cc077498333bab56666c1ed0d1a85",
+      "bytes": 152817
+    },
+    {
+      "path": "crates/franken-speaker/src/render.rs",
+      "sha256": "9e36683b4033901db4f85a2baf2322ab1588568f997035d12257576ec22d7324",
+      "bytes": 153434
+    },
+    {
+      "path": "crates/franken-speaker/tests/silent_start.rs",
+      "sha256": "84aa1514cfd623cc3115fe2c6651005626652d1867d22610ec2477caaab30d9a",
+      "bytes": 18681
+    }
+  ],
+  "immutable_green_inventory_sha256": "fa451f3098a32b4d7f6e064412b403c3394e62c1acc0efe26139c3eba1ef13d4",
+  "source_comparison": {
+    "inventory_files": 1610,
+    "files_transferred_each_job": 1608,
+    "mismatches_each_job": 0,
+    "excluded_metadata": [
+      ".beads/.gitignore",
+      ".beads/config.yaml"
+    ],
+    "comparison": "path, SHA256, byte count and executable flag; receipt roots differ between commands"
+  },
+  "mutant": {
+    "path": "crates/franken-hal/src/session.rs",
+    "sha256": "460af4fa8ce9bbf29b43e662151a094be3683a4e5bf0c50974452bb9300df2c1",
+    "bytes": 152833,
+    "expected_failed_tests": [
+      "unqualified_fake_reset_ack_never_establishes_silent_proof"
+    ],
+    "expected_passed": 7,
+    "expected_failed": 1,
+    "expected_ignored": 0,
+    "scope": "eight-test silent_start integration target"
+  },
+  "new_integration_tests": [
+    "retained_no_ack_preserves_readable_nonzero_storage_then_ack_retires_it",
+    "nonzero_prequeue_refusal_keeps_backend_and_retained_custody_untouched",
+    "copied_fifo_survives_no_ack_and_ack_purges_before_silent_admission",
+    "unqualified_fake_reset_ack_never_establishes_silent_proof",
+    "copying_short_and_failed_nonzero_attempts_invalidate_until_reset_ack",
+    "primed_silent_start_pulls_real_source_and_silences_then_recovers",
+    "nonzero_applied_gain_refuses_silent_start_but_normal_start_remains_available",
+    "silent_start_wrapper_refuses_missing_required_silence_prime"
+  ],
+  "results": {
+    "red": {
+      "passed": 7,
+      "failed": 1,
+      "ignored": 0,
+      "expected_failure": true,
+      "assertion": "!s.silent_prepared_after_reset()"
+    },
+    "hal_library": {
+      "passed": 163,
+      "failed": 0,
+      "ignored": 0
+    },
+    "speaker_library": {
+      "passed": 537,
+      "failed": 0,
+      "ignored": 0
+    },
+    "d03": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 1,
+      "ignore": "existing 25.5-hour soak; not run"
+    },
+    "silent_start": {
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0
+    },
+    "total_green": {
+      "passed": 714,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy": {
+      "exit_code": 0,
+      "warnings_denied": true
+    }
+  },
+  "jobs": [
+    {
+      "label": "red",
+      "build_id": "30106308287922523",
+      "exit_code": 101,
+      "strict_remote": true,
+      "inventory_sha256": "cd5d426edb990b025d8f58124f8988c36acefc075294e0194bd2c3dbb9eb32fc",
+      "raw_log_sha256": "d827604a1e44a0d6e1f9e539aed6e7a109256eecb9ce215b4e7ab91cb11806f0",
+      "command_sha256": "e8d5191bc45d4d61a2d66da2e31123fff4d8aa208c5f4fd7cea68241c5ae3b17",
+      "content_root": "721180e496b0641dc7660285ef625dd8e94e27c4731b8ae94f1bf71933d7a72b",
+      "receipt_root": "d0e8d309510dfedafd7f09c8c830f56346592accf4022b0f002b635392709319",
+      "transferred_files_compared": 1608,
+      "mismatches": 0,
+      "terminal_ack": true,
+      "wrapper_dead": true,
+      "execution_started": true,
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "retired": true,
+      "footers": [
+        "test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s"
+      ],
+      "logical_reproduction_command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo +1.99.0 test --locked --offline -p franken-speaker --test silent_start -j1 -- --show-output --test-threads=1",
+      "staging_release": {
+        "reported": null,
+        "source": "CyanPike 30813/30880/30894/30903 native custody report; staging field absent from local wrapper lease",
+        "independently_in_local_lease": false
+      }
+    },
+    {
+      "label": "hal",
+      "build_id": "30106308287922542",
+      "exit_code": 0,
+      "strict_remote": true,
+      "inventory_sha256": "fa451f3098a32b4d7f6e064412b403c3394e62c1acc0efe26139c3eba1ef13d4",
+      "raw_log_sha256": "4eea568a9a5c98bb203c6c33d70dce07e7c290d347676d4f1e2aa90d2952f3fd",
+      "command_sha256": "6cbec4382683fc08651c6b098d5550724b45cee13361d8943ce727dc522143e6",
+      "content_root": "38bd15e07094bfa96f32239141d921618154eccefa7ac53f888708a3b2297426",
+      "receipt_root": "42825d5f8e61589acc56657826aee97dee95ca4738a33096739b51d53f1f24bb",
+      "transferred_files_compared": 1608,
+      "mismatches": 0,
+      "terminal_ack": true,
+      "wrapper_dead": true,
+      "execution_started": true,
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "retired": true,
+      "footers": [
+        "test result: ok. 163 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s"
+      ],
+      "logical_reproduction_command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo +1.99.0 test --locked --offline -p franken-hal --lib -j1 -- --show-output --test-threads=1",
+      "staging_release": {
+        "reported": true,
+        "source": "CyanPike 30813/30880/30894/30903 native custody report; staging field absent from local wrapper lease",
+        "independently_in_local_lease": false
+      }
+    },
+    {
+      "label": "speaker",
+      "build_id": "30106308287922544",
+      "exit_code": 0,
+      "strict_remote": true,
+      "inventory_sha256": "fa451f3098a32b4d7f6e064412b403c3394e62c1acc0efe26139c3eba1ef13d4",
+      "raw_log_sha256": "3c797c358cf39a93ad76287eca63dd1f3766260f1de51e797e850b5bbb99f3f9",
+      "command_sha256": "2353026d82057d6b58cd10b820e44f72de5fac6710b6e8a279fefcd978c30665",
+      "content_root": "6c85f52af7259343d3f7c34091142a45d37654000f59e720ac88a3b400d92448",
+      "receipt_root": "98d8ad98ec14f81ccaf1ff7457af15570c7e7b730a950a03d61bbe1cc775de39",
+      "transferred_files_compared": 1608,
+      "mismatches": 0,
+      "terminal_ack": true,
+      "wrapper_dead": true,
+      "execution_started": true,
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "retired": true,
+      "footers": [
+        "test result: ok. 537 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 58.15s",
+        "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.09s",
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s"
+      ],
+      "logical_reproduction_command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo +1.99.0 test --locked --offline -p franken-speaker --lib --test d03_closed_loop --test silent_start -j1 -- --show-output --test-threads=1",
+      "staging_release": {
+        "reported": true,
+        "source": "CyanPike 30813/30880/30894/30903 native custody report; staging field absent from local wrapper lease",
+        "independently_in_local_lease": false
+      }
+    },
+    {
+      "label": "clippy",
+      "build_id": "30106308287922548",
+      "exit_code": 0,
+      "strict_remote": true,
+      "inventory_sha256": "fa451f3098a32b4d7f6e064412b403c3394e62c1acc0efe26139c3eba1ef13d4",
+      "raw_log_sha256": "178162dc650df5cf32150f360c0ede4f2497eeb091ea4fb8f8cd6b39171d777a",
+      "command_sha256": "38fb39b30ea928fa29c748f9dc758534126c179c5293459df0d6a805a78e4934",
+      "content_root": "42427dcb4791f584f12a2e6c0a7de1c45e07da9291004f1c5b5da17ac2101db8",
+      "receipt_root": "e3ca1384aec6478eb4a396d6c4904a2a120767f5e0ef1e8f066e1a2bd5275b1e",
+      "transferred_files_compared": 1608,
+      "mismatches": 0,
+      "terminal_ack": true,
+      "wrapper_dead": true,
+      "execution_started": true,
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "retired": true,
+      "footers": [],
+      "logical_reproduction_command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo +1.99.0 clippy --locked --offline -p franken-hal -p franken-speaker --all-targets -j1 -- -D warnings",
+      "staging_release": {
+        "reported": true,
+        "source": "CyanPike 30813/30880/30894/30903 native custody report; staging field absent from local wrapper lease",
+        "independently_in_local_lease": false
+      }
+    }
+  ],
+  "compiler_environment": {
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "RUSTFLAGS": "-D warnings -C debuginfo=0"
+  },
+  "formatting": "pinned rustfmt +1.99.0 --edition 2024 --check passed on all four exact source files",
+  "independent_review": "GrayDeer30910: exact source/receipt-entry and retained-output review, not a second execution",
+  "disk_admission": {
+    "local_minimum_gib": 20,
+    "remote_minimum_gib": 40,
+    "all_admitted_at_original_approved_limits": true,
+    "requested_8gib_exception_used": false,
+    "global_settings_changed": false,
+    "earlier_guard_failures": "All three GREEN gates were initially NOT RUN; admitted only after actual capacity crossings. RED was not repeated."
+  },
+  "observed_txt_sha256": "a1410f4c9c18594350fbdcf91c3e4fedc59ff8651a5548304b84a8678778dbb5",
+  "scope": {
+    "actual": "native remote host integration with synthetic board/calibration, scripted timing, actual protected DSP/HAL and bounded copied-FIFO model wrapping FakeBackend retained custody",
+    "not_qualified": [
+      "physical amplifier silence",
+      "actual retained driver reset/flush semantics",
+      "legacy target execution of this composition",
+      "32 MiB footprint or hardware deadlines",
+      "durable controller-to-render co-owner WIP",
+      "Spotify/AirPlay/Alexa/native tailnet providers",
+      "full D04/G02/G03/Q07 acceptance"
+    ]
+  },
+  "beads": "component evidence only; no original acceptance removed and no full bead closure"
+}
