@@ -1,0 +1,282 @@
+Actual selected Cargo output. ANSI and private paths removed. Full original log SHA256 digests and source receipt roots are in receipt.json. These are excerpts, not reconstructed success messages. Earlier failures remain failures. Overlapping counts must not be added. Not-admitted infrastructure attempts ran no test command and do not enter runtime case totals.
+
+=== original8_workspace / native 30106308287922583 ===
+Scope: original candidate; later suites not reached
+Observed command exit: 101
+    Finished `test` profile [unoptimized] target(s) in 2m 06s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.27s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test n07_a_port_that_keeps_every_datagram_is_caught_as_growth ... FAILED
+test n07_each_group_heap_check_fails_on_its_own_synthetic_edit_of_a_passing_run ... FAILED
+test n07_each_heap_check_fails_on_its_own_synthetic_edit_of_a_passing_run ... FAILED
+test n07_groups_come_and_go_without_moving_the_heap_at_peer_caps_that_are_not_powers_of_two ... FAILED
+test n07_the_carrier_heap_at_ordinary_caps_fits_the_bound_written_from_them ... FAILED
+test n07_the_carrier_heap_at_the_peer_aggregate_and_window_caps_fits_the_bound_written_from_them ... FAILED
+test result: FAILED. 1 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+error: test failed, to rerun pass `-p franken-alloc-probe --test n07_carrier_heap`
+
+=== clean_baseline_heap / native 30106308287922587 ===
+Scope: clean baseline; unchanged heap assertions
+Observed command exit: 101
+    Finished `test` profile [unoptimized] target(s) in 38.66s
+test n07_a_port_that_keeps_every_datagram_is_caught_as_growth ... FAILED
+test n07_each_group_heap_check_fails_on_its_own_synthetic_edit_of_a_passing_run ... FAILED
+test n07_each_heap_check_fails_on_its_own_synthetic_edit_of_a_passing_run ... FAILED
+test n07_groups_come_and_go_without_moving_the_heap_at_peer_caps_that_are_not_powers_of_two ... FAILED
+test n07_the_carrier_heap_at_ordinary_caps_fits_the_bound_written_from_them ... FAILED
+error: test failed, to rerun pass `-p franken-alloc-probe --test n07_carrier_heap`
+test n07_the_carrier_heap_at_the_peer_aggregate_and_window_caps_fits_the_bound_written_from_them ... FAILED
+test result: FAILED. 1 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.06s
+
+=== original8_control_session / native 30106308287922590 ===
+Scope: reserved reply-tag failure; later suites not reached
+Observed command exit: 101
+    Finished `test` profile [unoptimized] target(s) in 24.51s
+test channel::reply::tests::malformed_input_fails_to_decode_with_the_named_error ... FAILED
+test result: FAILED. 672 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.12s
+error: test failed, to rerun pass `-p franken-control --lib`
+
+=== combined18_workspace / native 30106308287922597 ===
+Scope: four original heap failures; later suites not reached
+Observed command exit: 101
+    Finished `test` profile [unoptimized] target(s) in 2m 08s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.08s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test n07_a_port_that_keeps_every_datagram_is_caught_as_growth ... FAILED
+test n07_each_heap_check_fails_on_its_own_synthetic_edit_of_a_passing_run ... FAILED
+test n07_selection_identity_reports_live_and_retired_group_allocations ... ok
+test n07_the_carrier_heap_at_ordinary_caps_fits_the_bound_written_from_them ... FAILED
+test n07_the_carrier_heap_at_the_peer_aggregate_and_window_caps_fits_the_bound_written_from_them ... FAILED
+test result: FAILED. 6 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+error: test failed, to rerun pass `-p franken-alloc-probe --test n07_carrier_heap`
+
+=== combined18_control_render / native 30106308287922601 ===
+Scope: natural EOF failure; later suites not reached
+Observed command exit: 101
+    Finished `test` profile [unoptimized] target(s) in 0.11s
+test result: ok. 674 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.84s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 163 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+test result: ok. 119 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.83s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+test network_render::tests::controller_events::committed_control_then_prestart_clock_fault_drains_without_clock_or_source ... ok
+test network_render::tests::controller_events::committed_empty_group_stop_cancels_pending_join_and_duplicate_does_not_repeat ... ok
+test network_render::tests::controller_events::coowner_start_failure_stays_faulted_without_submission_or_fabricated_ack ... ok
+test network_render::tests::controller_events::failed_clock_defers_transport_notification_without_fabricating_timestamp ... ok
+test network_render::tests::controller_events::failed_flush_on_prepared_or_active_owner_still_exposes_terminal_drain ... ok
+test network_render::tests::controller_events::failed_group_volume_store_never_publishes_the_rolled_back_value ... ok
+test network_render::tests::controller_events::failed_store_withholds_remote_stop_but_reapplies_local_stop ... ok
+test network_render::tests::controller_events::fresh_bundle_cannot_be_reprovisioned_after_parts_are_consumed ... ok
+test network_render::tests::controller_events::fresh_bundle_rejects_existing_media_used_owner_and_mismatched_authority ... ok
+test network_render::tests::controller_events::fresh_coowner_rechecks_network_epoch_leader_clock_and_admission_time ... ok
+test network_render::tests::controller_events::fresh_join_rejects_substitute_token_but_accepts_the_provisioned_token ... ok
+test network_render::tests::controller_events::fresh_owner_does_not_mint_ready_member_or_start_before_protocol_activation ... ok
+test network_render::tests::controller_events::gena_membership_activation_and_failed_store_local_silence_are_truthful ... ok
+test network_render::tests::controller_events::gena_signed_group_updates_only_actual_committed_state ... ok
+test network_render::tests::controller_events::gena_soap_notifications_stay_on_handled_without_double_publish ... ok
+test network_render::tests::controller_events::missing_ack_never_reports_stopped_and_subscriber_removal_is_respected ... ok
+test network_render::tests::controller_events::natural_eof_publishes_transition_then_stopped_only_after_delayed_ack ... FAILED
+test network_render::tests::controller_events::provisioned_lease_expires_while_waiting_and_causes_actual_drain ... ok
+test network_render::tests::controller_events::readiness_requires_declared_stop_capability_and_later_noack_retains_custody ... ok
+test network_render::tests::controller_events::signed_local_stop_still_silences_after_session_sequence_is_exhausted ... ok
+error: test failed, to rerun pass `-p franken-speaker --lib`
+test result: FAILED. 561 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 61.51s
+
+=== packed19_stream_allocator / native 30106308287922611 ===
+Scope: stream/allocator subset only
+Observed command exit: 0
+    Finished `test` profile [unoptimized] target(s) in 53.65s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.38s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test n07_selection_identity_reports_live_and_retired_group_allocations ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.13s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+test carrier::tests::n07_packed_queue_keeps_legacy_and_protected_clock_paths_distinct ... ok
+test carrier::tests::n07_packed_queue_tag_preserves_lengths_flags_and_slot_bound ... ok
+test result: ok. 258 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.85s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== final19_v1_workspace / native 30106308287922620 ===
+Scope: complete workspace; predecessor test syntax
+Observed command exit: 0
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    Finished `test` profile [unoptimized] target(s) in 2m 12s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.45s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test n07_selection_identity_reports_live_and_retired_group_allocations ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.23s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 95 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.94s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+test result: ok. 102 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.46s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.09s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+test result: ok. 674 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.42s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test convert::soft_float_tests::f32_to_s16_and_the_clamp_match_the_original_over_all_four_billion_bit_patterns ... ignored, exhaustive 2^32 sweep: run in release mode with --ignored
+test format::tests::packed_block_lengths_zero_max_misaligned_and_partial ... ok
+test result: ok. 176 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.83s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 163 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.82s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.21s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.08s
+test result: ok. 248 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 119 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.39s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test network_render::tests::controller_events::committed_control_then_prestart_clock_fault_drains_without_clock_or_source ... ok
+test network_render::tests::controller_events::committed_empty_group_stop_cancels_pending_join_and_duplicate_does_not_repeat ... ok
+test network_render::tests::controller_events::coowner_start_failure_stays_faulted_without_submission_or_fabricated_ack ... ok
+test network_render::tests::controller_events::failed_clock_defers_transport_notification_without_fabricating_timestamp ... ok
+test network_render::tests::controller_events::failed_flush_on_prepared_or_active_owner_still_exposes_terminal_drain ... ok
+test network_render::tests::controller_events::failed_group_volume_store_never_publishes_the_rolled_back_value ... ok
+test network_render::tests::controller_events::failed_store_withholds_remote_stop_but_reapplies_local_stop ... ok
+test network_render::tests::controller_events::finite_tail_clock_failure_is_not_misreported_as_normal_finishing ... ok
+test network_render::tests::controller_events::finite_tail_volume_intent_is_deferred_without_early_flush_or_new_source_pcm ... ok
+test network_render::tests::controller_events::fresh_bundle_cannot_be_reprovisioned_after_parts_are_consumed ... ok
+test network_render::tests::controller_events::fresh_bundle_rejects_existing_media_used_owner_and_mismatched_authority ... ok
+test network_render::tests::controller_events::fresh_coowner_rechecks_network_epoch_leader_clock_and_admission_time ... ok
+test network_render::tests::controller_events::fresh_join_rejects_substitute_token_but_accepts_the_provisioned_token ... ok
+test network_render::tests::controller_events::fresh_owner_does_not_mint_ready_member_or_start_before_protocol_activation ... ok
+test network_render::tests::controller_events::gena_membership_activation_and_failed_store_local_silence_are_truthful ... ok
+test network_render::tests::controller_events::gena_signed_group_updates_only_actual_committed_state ... ok
+test network_render::tests::controller_events::gena_soap_notifications_stay_on_handled_without_double_publish ... ok
+test network_render::tests::controller_events::local_mute_and_stop_cancel_finishing_tail_and_require_actual_ack ... ok
+test network_render::tests::controller_events::missing_ack_never_reports_stopped_and_subscriber_removal_is_respected ... ok
+test network_render::tests::controller_events::natural_eof_publishes_transition_then_stopped_only_after_delayed_ack ... ok
+test network_render::tests::controller_events::provisioned_lease_expires_while_waiting_and_causes_actual_drain ... ok
+test network_render::tests::controller_events::readiness_requires_declared_stop_capability_and_later_noack_retains_custody ... ok
+test network_render::tests::controller_events::signed_local_stop_still_silences_after_session_sequence_is_exhausted ... ok
+test result: ok. 565 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 64.75s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.29s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.37s
+test carrier::tests::n07_packed_queue_keeps_legacy_and_protected_clock_paths_distinct ... ok
+test carrier::tests::n07_packed_queue_tag_preserves_lengths_flags_and_slot_bound ... ok
+test result: ok. 258 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.82s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.17s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.42s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== final19_v1_clippy / native 30106308287922638 ===
+Scope: strict Clippy failure: two test syntax lints
+Observed command exit: 101
+error: match expression looks like `matches!` macro
+error: this OR pattern can be rewritten using a range
+error: could not compile `franken-speaker` (lib test) due to 2 previous errors
+
+=== final19_v2_clippy / native 30107136981729281 ===
+Scope: final source; strict workspace all-target Clippy
+Observed command exit: 0
+    Finished `dev` profile [unoptimized] target(s) in 1m 18s
+
+=== final19_v2_speaker / native 30107136981729282 ===
+Scope: final source; complete speaker package
+Observed command exit: 0
+    Finished `test` profile [unoptimized] target(s) in 53.94s
+test network_render::tests::controller_events::committed_control_then_prestart_clock_fault_drains_without_clock_or_source ... ok
+test network_render::tests::controller_events::committed_empty_group_stop_cancels_pending_join_and_duplicate_does_not_repeat ... ok
+test network_render::tests::controller_events::coowner_start_failure_stays_faulted_without_submission_or_fabricated_ack ... ok
+test network_render::tests::controller_events::failed_clock_defers_transport_notification_without_fabricating_timestamp ... ok
+test network_render::tests::controller_events::failed_flush_on_prepared_or_active_owner_still_exposes_terminal_drain ... ok
+test network_render::tests::controller_events::failed_group_volume_store_never_publishes_the_rolled_back_value ... ok
+test network_render::tests::controller_events::failed_store_withholds_remote_stop_but_reapplies_local_stop ... ok
+test network_render::tests::controller_events::finite_tail_clock_failure_is_not_misreported_as_normal_finishing ... ok
+test network_render::tests::controller_events::finite_tail_volume_intent_is_deferred_without_early_flush_or_new_source_pcm ... ok
+test network_render::tests::controller_events::fresh_bundle_cannot_be_reprovisioned_after_parts_are_consumed ... ok
+test network_render::tests::controller_events::fresh_bundle_rejects_existing_media_used_owner_and_mismatched_authority ... ok
+test network_render::tests::controller_events::fresh_coowner_rechecks_network_epoch_leader_clock_and_admission_time ... ok
+test network_render::tests::controller_events::fresh_join_rejects_substitute_token_but_accepts_the_provisioned_token ... ok
+test network_render::tests::controller_events::fresh_owner_does_not_mint_ready_member_or_start_before_protocol_activation ... ok
+test network_render::tests::controller_events::gena_membership_activation_and_failed_store_local_silence_are_truthful ... ok
+test network_render::tests::controller_events::gena_signed_group_updates_only_actual_committed_state ... ok
+test network_render::tests::controller_events::gena_soap_notifications_stay_on_handled_without_double_publish ... ok
+test network_render::tests::controller_events::local_mute_and_stop_cancel_finishing_tail_and_require_actual_ack ... ok
+test network_render::tests::controller_events::missing_ack_never_reports_stopped_and_subscriber_removal_is_respected ... ok
+test network_render::tests::controller_events::natural_eof_publishes_transition_then_stopped_only_after_delayed_ack ... ok
+test network_render::tests::controller_events::provisioned_lease_expires_while_waiting_and_causes_actual_drain ... ok
+test network_render::tests::controller_events::readiness_requires_declared_stop_capability_and_later_noack_retains_custody ... ok
+test network_render::tests::controller_events::signed_local_stop_still_silences_after_session_sequence_is_exhausted ... ok
+test result: ok. 565 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 62.10s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.31s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.37s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

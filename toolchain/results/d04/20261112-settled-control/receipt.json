@@ -1,0 +1,488 @@
+{
+  "schema": "ffw.settled-control.native.v1",
+  "recorded_at_utc": "2026-11-12T23:28:27.731Z",
+  "baseline_commit": "fd68130a2a1abb6cfccc5e3146cdd18358efa110",
+  "code_commits": [
+    "e4a5bd1f9d45a24844a63ba398c952f2e1ef0d9e",
+    "c550753292b6237678ec8c2ebd95d8da6c17a1f1",
+    "fce5014d54c85a56dafd777e83432c3f4e95c24b"
+  ],
+  "code_commit": "fce5014d54c85a56dafd777e83432c3f4e95c24b",
+  "committed_source_proof": {
+    "baseline": "fd68130a2a1abb6cfccc5e3146cdd18358efa110",
+    "code_commits": [
+      "e4a5bd1f9d45a24844a63ba398c952f2e1ef0d9e",
+      "c550753292b6237678ec8c2ebd95d8da6c17a1f1",
+      "fce5014d54c85a56dafd777e83432c3f4e95c24b"
+    ],
+    "code_commit": "fce5014d54c85a56dafd777e83432c3f4e95c24b",
+    "tree": "0ba70a21e278d05e132609323277821e8902e2bc",
+    "inventory_sha256": "11e4c5e47272c0d1d9d805a219b55c01af1e13c14515995270c7dfd4f3cf96a5",
+    "all_committed_files_matched": 1615,
+    "mismatches": [],
+    "source_paths": [
+      "crates/franken-control/src/channel/pipeline.rs",
+      "crates/franken-control/src/channel/pipeline/persist.rs",
+      "crates/franken-control/src/channel/diag.rs",
+      "crates/franken-control/src/channel/reply.rs",
+      "crates/franken-control/src/channel/owner.rs",
+      "crates/franken-control/src/channel/replay.rs",
+      "crates/franken-control/src/fsonos/server.rs",
+      "crates/franken-session/src/lib.rs",
+      "crates/franken-hal/src/backend.rs",
+      "crates/franken-hal/src/session.rs",
+      "crates/franken-speaker/src/lib.rs",
+      "crates/franken-speaker/src/render.rs",
+      "crates/franken-speaker/src/network_render.rs",
+      "crates/franken-speaker/src/settled_render.rs",
+      "crates/franken-speaker/src/network_render/tests.rs",
+      "crates/franken-speaker/src/network_render/tests/controller_events.rs",
+      "crates/franken-stream/src/carrier.rs",
+      "crates/franken-alloc-probe/tests/n07_carrier_heap.rs",
+      "crates/franken-stream/src/carrier/tests.rs"
+    ]
+  },
+  "qualified_source_files": [
+    {
+      "path": "crates/franken-control/src/channel/pipeline.rs",
+      "sha256": "1a5d7dc23db03916dafe4a59f450c041cac9c21f2a5ac1baef01e305074f92ca",
+      "bytes": 170074
+    },
+    {
+      "path": "crates/franken-control/src/channel/pipeline/persist.rs",
+      "sha256": "8507831fc8a6f269c820efad0ee5ee91a6d7444e75469f0d50d80d2b3cf2a3ea",
+      "bytes": 161264
+    },
+    {
+      "path": "crates/franken-control/src/channel/diag.rs",
+      "sha256": "82e698a4a04f9e89c7038d6b4b5d86bbe8cb94cd3289cb71797df2f87d7cb9f3",
+      "bytes": 103816
+    },
+    {
+      "path": "crates/franken-control/src/channel/reply.rs",
+      "sha256": "468c722f2f7449c27bf81d9565bd607867639b4d545b1974d7dd011933e9388e",
+      "bytes": 64674
+    },
+    {
+      "path": "crates/franken-control/src/channel/owner.rs",
+      "sha256": "a22f840165b8e292d74fa2f442254b5d43079bddc66c5cee9a67508111d53393",
+      "bytes": 80251
+    },
+    {
+      "path": "crates/franken-control/src/channel/replay.rs",
+      "sha256": "21c8481a81c88f07883c2ea397315adbebf51eff2d8660ed28c074b798d8766d",
+      "bytes": 29124
+    },
+    {
+      "path": "crates/franken-control/src/fsonos/server.rs",
+      "sha256": "528c75b7714c3f23576eacdcee1a4da525d92991fd83f53564f4e0e614d88d65",
+      "bytes": 167391
+    },
+    {
+      "path": "crates/franken-session/src/lib.rs",
+      "sha256": "6304cdd50d896d1e831d53346f69357b576900d11faf9dbc3536186ce3ea3eeb",
+      "bytes": 46859
+    },
+    {
+      "path": "crates/franken-hal/src/backend.rs",
+      "sha256": "a645a570558b6aa6c1b801e64cb8221da7160a11b6273b2eea40af385bec911d",
+      "bytes": 22052
+    },
+    {
+      "path": "crates/franken-hal/src/session.rs",
+      "sha256": "7328791603422cec59d4322cae67b72d299d96a0406aa71984320de2cd56dcb7",
+      "bytes": 153389
+    },
+    {
+      "path": "crates/franken-speaker/src/lib.rs",
+      "sha256": "d4d67d0d46d95b3b9113df502854f589ff275074c367a0eac4705548cb400139",
+      "bytes": 2624
+    },
+    {
+      "path": "crates/franken-speaker/src/render.rs",
+      "sha256": "eb16638b5726c666443c5ca98c1c387086d46c9d91ff80d478cbe701bca59b56",
+      "bytes": 162269
+    },
+    {
+      "path": "crates/franken-speaker/src/network_render.rs",
+      "sha256": "dc45a69a72c86f0b8cf3105b0390f15fd525600720e1e72888e301c5cb86cf2d",
+      "bytes": 39615
+    },
+    {
+      "path": "crates/franken-speaker/src/settled_render.rs",
+      "sha256": "5969d0d727f0b91f79c635d69681f42aa668c09b8475e264aee5ea8b13b5dfc3",
+      "bytes": 30481
+    },
+    {
+      "path": "crates/franken-speaker/src/network_render/tests.rs",
+      "sha256": "3ccd4204e6af60b2e45d64980415f28712ab694e51f24a10b7d419b126afeb65",
+      "bytes": 64281
+    },
+    {
+      "path": "crates/franken-speaker/src/network_render/tests/controller_events.rs",
+      "sha256": "dbb93c85821b31e1d72454df24d0df5dac89fec6a8f0b35e5f7d6dac68a7d555",
+      "bytes": 86209
+    },
+    {
+      "path": "crates/franken-stream/src/carrier.rs",
+      "sha256": "6e539bc0b0d8e0ec1474bacad64c71569314607ebfb60ac09557e763faef6a88",
+      "bytes": 238184
+    },
+    {
+      "path": "crates/franken-alloc-probe/tests/n07_carrier_heap.rs",
+      "sha256": "20c38ff1c3baf0f41c24880d889627855049c6c25bdf4ce9325698078b626048",
+      "bytes": 53710
+    },
+    {
+      "path": "crates/franken-stream/src/carrier/tests.rs",
+      "sha256": "9101ae10184f3030b79b4ac9c69007a77fcb96bf783e156eb8a22e2e25a96708",
+      "bytes": 212302
+    }
+  ],
+  "full_workspace_source": {
+    "manifest_sha256": "b652582c3ae30924bcf6e772aeff8dfa68e2169723b483674e549e4341719697",
+    "inventory_sha256": "b5aabf97f0044a8bcb21a503890a26c8277050f88f6258d2bf73dc371ab06888",
+    "difference_from_committed_source": "Only two equivalent test expressions in controller_events.rs; all production and other test files identical. Both assertions retained.",
+    "previous_test_sha256": "54d53f5d70f67f38d16a29601726a87340ece71ca13e41dbb3bd7f933285fa63",
+    "final_test_sha256": "dbb93c85821b31e1d72454df24d0df5dac89fec6a8f0b35e5f7d6dac68a7d555"
+  },
+  "final_source": {
+    "manifest_sha256": "223bba94872cb30eff3ba06016c71a701e07a4c6847ae713894d8729f3e69907",
+    "inventory_sha256": "11e4c5e47272c0d1d9d805a219b55c01af1e13c14515995270c7dfd4f3cf96a5",
+    "files": 1615,
+    "transferred_files_each_final_job": 1613,
+    "excluded_metadata": [
+      ".beads/.gitignore",
+      ".beads/config.yaml"
+    ],
+    "mismatches_each_final_job": 0
+  },
+  "required_controller_tests": [
+    "committed_control_then_prestart_clock_fault_drains_without_clock_or_source",
+    "committed_empty_group_stop_cancels_pending_join_and_duplicate_does_not_repeat",
+    "failed_store_withholds_remote_stop_but_reapplies_local_stop",
+    "readiness_requires_declared_stop_capability_and_later_noack_retains_custody",
+    "signed_local_stop_still_silences_after_session_sequence_is_exhausted",
+    "gena_signed_group_updates_only_actual_committed_state",
+    "gena_membership_activation_and_failed_store_local_silence_are_truthful",
+    "gena_soap_notifications_stay_on_handled_without_double_publish",
+    "natural_eof_publishes_transition_then_stopped_only_after_delayed_ack",
+    "missing_ack_never_reports_stopped_and_subscriber_removal_is_respected",
+    "failed_group_volume_store_never_publishes_the_rolled_back_value",
+    "failed_clock_defers_transport_notification_without_fabricating_timestamp",
+    "fresh_bundle_rejects_existing_media_used_owner_and_mismatched_authority",
+    "fresh_coowner_rechecks_network_epoch_leader_clock_and_admission_time",
+    "fresh_owner_does_not_mint_ready_member_or_start_before_protocol_activation",
+    "fresh_join_rejects_substitute_token_but_accepts_the_provisioned_token",
+    "provisioned_lease_expires_while_waiting_and_causes_actual_drain",
+    "fresh_bundle_cannot_be_reprovisioned_after_parts_are_consumed",
+    "failed_flush_on_prepared_or_active_owner_still_exposes_terminal_drain",
+    "coowner_start_failure_stays_faulted_without_submission_or_fabricated_ack",
+    "finite_tail_volume_intent_is_deferred_without_early_flush_or_new_source_pcm",
+    "local_mute_and_stop_cancel_finishing_tail_and_require_actual_ack",
+    "finite_tail_clock_failure_is_not_misreported_as_normal_finishing"
+  ],
+  "actual_current_commands": [
+    {
+      "native_id": "30107136981729281",
+      "executed_payload": "env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_DEV_DEBUG=0' 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 clippy --locked --offline --workspace --all-targets -j1 -- -D warnings",
+      "exit": 0
+    },
+    {
+      "native_id": "30107136981729282",
+      "executed_payload": "env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_DEV_DEBUG=0' 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 test --locked --offline -p franken-speaker -j1 -- --show-output '--test-threads=1'",
+      "exit": 0
+    }
+  ],
+  "compiler_environment": {
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "RUSTFLAGS": "-D warnings -C debuginfo=0"
+  },
+  "formatting": "Pinned Rustfmt1.99 edition2024 checked all19 changed files before commitment.",
+  "jobs": [
+    {
+      "label": "original8_workspace",
+      "scope": "original candidate; later suites not reached",
+      "footer_count": 6,
+      "counts": {
+        "passed": 25,
+        "failed": 6,
+        "ignored": 0
+      },
+      "native_id": "30106308287922583",
+      "exit": 101,
+      "receipt_root": "7a88338a78853a9541ee5bfd00e210e1a3b22a2fb8148120b9898dab9423f500",
+      "content_root": "fcf2301ec739b2b899a180768235b5489e7144a477a02e582463aa3cbbb9eb7f",
+      "raw_log_sha256": "81e09ab0fad7de34c7cd6b326fe19d68f80769ca5f01820eb83447a9c17543fa",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "transfer_files": 1611,
+      "command_sha256": "d17236cd6b2cd7fb3805e8271dd603d212f25f3a6bc5535ac9ae249b400b0537",
+      "custody": {
+        "execution_started": true,
+        "staging_released": null,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      }
+    },
+    {
+      "label": "clean_baseline_heap",
+      "scope": "clean baseline; unchanged heap assertions",
+      "footer_count": 1,
+      "counts": {
+        "passed": 1,
+        "failed": 6,
+        "ignored": 0
+      },
+      "native_id": "30106308287922587",
+      "transfer_files": 1611,
+      "receipt_root": "0517bdb3637653e126bbda6c3a66f0c7bcfd5fee338763e4db1d45017872b718",
+      "content_root": "291d54df799c6b2461581b84b3e47032536f382a908a0dcbf649d4ccbeceb888",
+      "raw_log_sha256": "dffb6c76537d4e64566c5f53e6bbd07b84d5ef4fb3213eef3b2610a76096cb9b",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": null,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "exit": 101,
+      "command_sha256": "0472e7fa0ffa962b3f17d097e5a9e0392e658b9acacb5e576881c2c3d20224e9"
+    },
+    {
+      "label": "original8_control_session",
+      "scope": "reserved reply-tag failure; later suites not reached",
+      "footer_count": 1,
+      "counts": {
+        "passed": 672,
+        "failed": 1,
+        "ignored": 0
+      },
+      "native_id": "30106308287922590",
+      "exit": 101,
+      "transfer_files": 1611,
+      "receipt_root": "f310db89aa9aadd90547ce06b30d3805f72d7758e2ceea3d64657be9145a5e1f",
+      "content_root": "031c0d8fdbe8a2204f3e725a885bac912381527798fd6b578fcc9290a96e2881",
+      "command_sha256": "10f4ef0826ad374c16ad988f754e7ebbcd8cdacab5e4193de8f8d0dfe9e96277",
+      "raw_log_sha256": "9a142fe1fe170393f7f2cc1935b27392bab48b70cc0c5d207653f892e8b8ce3b",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": null,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      }
+    },
+    {
+      "label": "combined18_workspace",
+      "scope": "four original heap failures; later suites not reached",
+      "footer_count": 6,
+      "counts": {
+        "passed": 30,
+        "failed": 4,
+        "ignored": 0
+      },
+      "native_id": "30106308287922597",
+      "exit": 101,
+      "transfer_files": 1613,
+      "receipt_root": "d5be8d4684223db5870e0a4b65693087f928ed5ed423e59a86ffa4d35db54cc5",
+      "content_root": "2722fdcbabc4fab2c119ec405575c6997b5ef56f1a97f46e5d25e6b23ea5d19c",
+      "command_sha256": "d17236cd6b2cd7fb3805e8271dd603d212f25f3a6bc5535ac9ae249b400b0537",
+      "raw_log_sha256": "529900c383a0b4bfa54bc6855c0980afd65540a21f6836b92fffb0ce7b7e9787",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": null,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      }
+    },
+    {
+      "label": "combined18_control_render",
+      "scope": "natural EOF failure; later suites not reached",
+      "footer_count": 6,
+      "counts": {
+        "passed": 1523,
+        "failed": 1,
+        "ignored": 0
+      },
+      "native_id": "30106308287922601",
+      "exit": 101,
+      "transfer_files": 1613,
+      "receipt_root": "e07492997b2914281ecf0143c13fa7b10550ee671a29097826c984532c8aaf46",
+      "content_root": "fd1e67fcc38cdce48e7ad6b6f52419c41d588a68f7a559ad44c7365e6557beb9",
+      "command_sha256": "5cba6b6e8798d5baec6dd7f8a24bce9077024f7aec7305de269d6e81813415a8",
+      "raw_log_sha256": "c8e19f655120d4d6c64d4b50f6164d9b98b02febc52bcd56c5d74bab7d3d58e0",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": null,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      }
+    },
+    {
+      "label": "packed19_stream_allocator",
+      "scope": "stream/allocator subset only",
+      "footer_count": 19,
+      "counts": {
+        "passed": 331,
+        "failed": 0,
+        "ignored": 0
+      },
+      "native_id": "30106308287922611",
+      "exit": 0,
+      "transfer_files": 1613,
+      "receipt_root": "6ad1d4378d09170e6edfbfd34bfd0bbc4ba5f7f365a584f08feefa29e6c1c2e9",
+      "content_root": "b468e31ae7d9175c864b89c3da5a7c7be33459f22112e98aefe1ffa9e15f137c",
+      "command_sha256": "548879d988a7d20b092d231e066780606393d3029a7f7fd978adce868f0159e8",
+      "raw_log_sha256": "af3d19a7681af675db73a7c5112c923bc0c138d7ecd0dfdbd9e442c714ecffef",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      }
+    },
+    {
+      "label": "final19_v1_workspace",
+      "scope": "complete workspace; predecessor test syntax",
+      "footer_count": 81,
+      "counts": {
+        "passed": 2888,
+        "failed": 0,
+        "ignored": 2
+      },
+      "native_id": "30106308287922620",
+      "exit": 0,
+      "transfer_files": 1613,
+      "receipt_root": "2fb20caf0fab4d16332a90fd6bce73e3ea8ff8e37f2c6e0e3d1a391895ccecb3",
+      "content_root": "6a921f4452dd5931d50f38d27b79d6d52bc8ddb0fac39758b182dddb865b96b6",
+      "command_sha256": "d17236cd6b2cd7fb3805e8271dd603d212f25f3a6bc5535ac9ae249b400b0537",
+      "raw_log_sha256": "c34c928f1dae8f19614d8a185cdd2ec6073b37d45fe9e3a39c153492770157dd",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      }
+    },
+    {
+      "label": "final19_v1_clippy",
+      "scope": "strict Clippy failure: two test syntax lints",
+      "footer_count": 0,
+      "counts": null,
+      "native_id": "30106308287922638",
+      "exit": 101,
+      "transfer_files": 1613,
+      "receipt_root": "50f7ee3d66e544f4623dfd8b20077968f823e2b0d6dae1f3470e36b98b9e7dd4",
+      "content_root": "f6caf51638203f5a3aae0b56696c1e6fb242a4aa182ef8ed033264bb7ea37720",
+      "command_sha256": "eab08515760cdd1c65668e96f9e53be4b89995c0c3d31944281e965185b87633",
+      "raw_log_sha256": "70ed65c5304ca258caf0814c887e75f29653b5ce69f75fd8de872cda6ae44b3c",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": null,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      }
+    },
+    {
+      "label": "final19_v2_clippy",
+      "scope": "final source; strict workspace all-target Clippy",
+      "footer_count": 0,
+      "counts": null,
+      "native_id": "30107136981729281",
+      "exit": 0,
+      "transfer_files": 1613,
+      "receipt_root": "ce68e08cd889b4e5473c95462a3428bd4c0d7cb9834382b1de562641d55e751b",
+      "content_root": "cff2a57412f71fa179fbdd6bdf38d9403ad30bcc757a74266d0fbb086c36dcde",
+      "command_sha256": "eab08515760cdd1c65668e96f9e53be4b89995c0c3d31944281e965185b87633",
+      "raw_log_sha256": "973b6ae2d58d84e25196202ff6d30f55bc58b3fa47b054f3e6106460c8418d33",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      }
+    },
+    {
+      "label": "final19_v2_speaker",
+      "scope": "final source; complete speaker package",
+      "footer_count": 10,
+      "counts": {
+        "passed": 616,
+        "failed": 0,
+        "ignored": 1
+      },
+      "native_id": "30107136981729282",
+      "exit": 0,
+      "transfer_files": 1613,
+      "receipt_root": "0b967522ade7a9d5138e200d822a2f70190ce31899dffe2258332b1ccd29bf7a",
+      "content_root": "b001b41223607f1db71cf5c5640d24cf9ceea72c00d5a2bec05ee9b2e221c559",
+      "command_sha256": "89b35cd2d03c511d49168652a07ab8bfbcdb31bc530b644d053ccb34870ba868",
+      "raw_log_sha256": "eb3a4ef4ac6b3bc99783634f7a5e918834ce0140fcfbd42aa4dc3bfce015d3d3",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      }
+    }
+  ],
+  "recovery": {
+    "defect": "Unrelated local port cleanup repeatedly sent SIGTERM to shared RCH. Native signal observations retained privately.",
+    "final_route": "Unmodified RCH2.1.36, private Unix socket/history; exact selected worker configuration; TCP, file-cache cleanup and target reaping off. No shared configuration or unrelated service changed.",
+    "admission": "Strict remote; fresh native capacity and pressure; worker ledger and peer checks; local20GiB/remote40GiB preflight floors. No lower-floor exception or fallback.",
+    "private_daemon_stop": "Initial native guarded stop refused for unrelated global client leases. One authorized 300-second guarded drain returned exit1 RCH-E325; private queue empty, four peer leases outstanding, helper still alive with admission reopened. No force, signal, cancellation or second attempt; verifier retains ownership pending next reviewed gate. Own two jobs already ACK/custody released."
+  },
+  "proof_class": "Remote native host, synthetic/localhost integration with retained FakeBackend and scripted board/calibration/clock.",
+  "not_qualified": [
+    "existing-media/reconstructed-session recovery",
+    "allchannelroles/persistedlocalintent",
+    "nativeproviders/tailnet",
+    "target32MiBfit/physicaloutput",
+    "actualGENAdelivery",
+    "warmedco-ownernoallocation",
+    "callerSourceMediareservationintegration/retiredcallerhandles",
+    "legacy target/kernel runtime",
+    "physical audio/synchronization",
+    "original full N02/D04/G02/G03/N07/Q07 acceptance"
+  ],
+  "independent_review": "Gray source reviews31016/31067/31155/31206/31254; Cyan execution; Root independent source/receipt/terminal comparisons. Shared-log review is not second execution.",
+  "retirement": "Qualification stops applying when bound source/profile changes; historical failures remain retained."
+}
