@@ -1805,7 +1805,7 @@ mod tests {
                 l.resampler =
                     DriftResampler::with_initial_ppb(ResamplerConfig::default(), initial_ppb)
                         .unwrap();
-                l.resampler.set_target_ppb(ppb);
+                l.resampler.set_target_ppb(i64::from(ppb));
                 let mut source = ToneSource::new();
                 for _ in 0..16 {
                     let predicted = l.next_slot().unwrap().required_source_frames;

@@ -751,14 +751,24 @@ fn finite_eof_waits_for_scheduled_end_after_early_dma_completion() {
     }
     let first = completion_step.expect("must observe early completion before presentation");
     let mut complete = false;
+    let mut first_flush_earliest = None;
     for step in first + 1..5000_u64 {
         rig.now
             .set(rig.start_local_ns - 15_000_000 + step * 100_000);
-        match rig
+        let outcome = rig
             .owner
             .step(&mut timing)
-            .expect("finite EOF must complete after scheduled end")
+            .expect("finite EOF must complete after scheduled end");
+        if first_flush_earliest.is_none()
+            && rig
+                .probe
+                .calls()
+                .iter()
+                .any(|call| matches!(call, FakeCall::RequestFlush))
         {
+            first_flush_earliest = Some(earliest_group_time(&rig));
+        }
+        match outcome {
             OwnerStep::Complete => {
                 complete = true;
                 break;
@@ -767,6 +777,11 @@ fn finite_eof_waits_for_scheduled_end_after_early_dma_completion() {
         }
     }
     assert!(complete);
+    assert!(
+        first_flush_earliest.expect("finite EOF must request a flush")
+            >= rig.start_group_ns + frames_to_ns(64),
+        "the first flush must not precede the admitted presentation end"
+    );
     assert!(earliest_group_time(&rig) >= rig.start_group_ns + frames_to_ns(64));
     assert!(
         rig.probe
@@ -785,7 +800,7 @@ fn finite_eof_waits_for_scheduled_end_after_early_dma_completion() {
 
 #[test]
 fn finite_eof_lost_completion_and_flush_ack_faults_without_freeing_dma() {
-    use crate::render::RenderState;
+    use crate::render::{FaultReason, RenderState};
     use franken_hal::backend::FakeCall;
     use franken_hal::slots::SlotState;
 
@@ -800,6 +815,12 @@ fn finite_eof_lost_completion_and_flush_ack_faults_without_freeing_dma() {
     };
     let mut observed_fault = false;
     let mut flush_earliest = None;
+    let mut flush_tick = None;
+    let stop_deadline_ticks = rig.owner.render.session().stop_deadline_ticks().unwrap();
+    assert_eq!(
+        stop_deadline_ticks, 8,
+        "the fixture admits an eight-tick stop deadline"
+    );
     for step in 0..5000_u64 {
         rig.now
             .set(rig.start_local_ns - 15_000_000 + step * 100_000);
@@ -812,6 +833,7 @@ fn finite_eof_lost_completion_and_flush_ack_faults_without_freeing_dma() {
                 .any(|call| matches!(call, FakeCall::RequestFlush))
         {
             flush_earliest = Some(earliest_group_time(&rig));
+            flush_tick = Some(rig.probe.tick());
         }
         match result {
             Err(NetworkRenderError::Preparation) => {
@@ -837,6 +859,17 @@ fn finite_eof_lost_completion_and_flush_ack_faults_without_freeing_dma() {
             .any(|call| matches!(call, FakeCall::RequestFlush))
     );
     assert_eq!(rig.owner.render_state(), RenderState::Faulted);
+    assert_eq!(rig.owner.render.fault(), Some(FaultReason::DrainTimedOut));
+    let elapsed_ticks = rig
+        .probe
+        .tick()
+        .checked_sub(flush_tick.expect("flush tick"))
+        .expect("fake device clock must remain monotone");
+    assert!(
+        elapsed_ticks > 0 && elapsed_ticks <= stop_deadline_ticks + 1,
+        "flush-to-fault took {elapsed_ticks} ticks; bound is {}",
+        stop_deadline_ticks + 1
+    );
     assert_eq!(
         rig.probe.pending(),
         1,
@@ -861,7 +894,7 @@ fn finite_eof_lost_completion_and_flush_ack_faults_without_freeing_dma() {
     assert_eq!(count, 64);
     assert_eq!(rig.probe.captured_submissions(), expected);
     println!(
-        "FFW_NETWORK_RENDER_EOF_LOST_ACK: {{\"bounded_fault\":true,\"dma_pending\":1,\"quarantined\":true}}"
+        "FFW_NETWORK_RENDER_EOF_LOST_ACK: {{\"bounded_fault\":true,\"flush_to_fault_ticks\":{elapsed_ticks},\"stop_deadline_ticks\":{stop_deadline_ticks},\"dma_pending\":1,\"quarantined\":true}}"
     );
 }
 
@@ -955,7 +988,7 @@ fn localhost_finite_tail_keeps_both_drift_signs() {
 fn expected_protected(pcm: &[u8], ratio_ppb: i32) -> (Vec<Vec<u8>>, usize) {
     let mut left = Vec::new();
     let mut right = Vec::new();
-    for frame in pcm.chunks_exact(4) {
+    for frame in pcm.as_chunks::<4>().0 {
         left.push(f32::from(i16::from_be_bytes([frame[0], frame[1]])) / 32768.0);
         right.push(f32::from(i16::from_be_bytes([frame[2], frame[3]])) / 32768.0);
     }
@@ -1057,7 +1090,7 @@ fn queue_refusals_preserve_valid_pcm_and_allow_the_valid_successor() {
         Err(NetworkRenderError::Capacity)
     ));
     assert_eq!(q.len, 512);
-    for raw in signal(0, 256).chunks_exact(4) {
+    for raw in signal(0, 256).as_chunks::<4>().0 {
         let frame = q.pull().unwrap();
         assert_eq!(
             frame[0],

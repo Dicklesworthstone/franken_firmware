@@ -7,7 +7,8 @@ use franken_clock::group::{GroupClock, Output, StartSchedule};
 use franken_dsp::resample::{FrameSource, PRIME_FRAMES, PhaseState};
 use franken_hal::backend::DeviceBackend;
 use franken_hal::session::StartPreconditions;
-use franken_platform::{KernelOps, PlatformLayer};
+use franken_platform::layer::PlatformLayer;
+use franken_platform::ops::KernelOps;
 use franken_stream::carrier::{DatagramPort, PollReport};
 use franken_stream::playout::{BLOCK_FRAMES, BLOCK_PAYLOAD_BYTES, Outcome, Poll, frames_to_ns};
 
@@ -188,7 +189,7 @@ impl PreparedPcm {
         {
             return Err(NetworkRenderError::Capacity);
         }
-        for sample in bytes[..frames * 4].chunks_exact(4) {
+        for sample in bytes[..frames * 4].as_chunks::<4>().0 {
             let left = i16::from_be_bytes([sample[0], sample[1]]);
             let right = i16::from_be_bytes([sample[2], sample[3]]);
             let index = (self.head + self.len) % self.capacity;
@@ -808,7 +809,7 @@ mod mapping_tests {
     fn received_and_concealed_frames_remain_distinct_in_the_real_queue() {
         let mut queue = PreparedPcm::new(514, 0, 512, 1_000_000_000);
         let mut bytes = [0_u8; BLOCK_PAYLOAD_BYTES];
-        for frame in bytes.chunks_exact_mut(4) {
+        for frame in bytes.as_chunks_mut::<4>().0 {
             frame.copy_from_slice(&[0x40, 0, 0x40, 0]);
         }
         for (block, outcome) in [(0, Outcome::Real), (1, Outcome::Concealed { run: 1 })] {
