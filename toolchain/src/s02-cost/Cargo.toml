@@ -1,0 +1,18 @@
+[package]
+name = "ffw-s02-cost"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Offline, source-bound target probe, not a firmware package. Its workspace and
+# generated lockfile are independent of the application workspace and lockfile.
+[workspace]
+
+[dependencies]
+franken-codec = { path = "../../../crates/franken-codec" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
