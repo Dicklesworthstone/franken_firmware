@@ -1,0 +1,90 @@
+Selected native verdicts followed by COMPLETE LF-NORMALIZED final QEMU serial stdout.
+Private native remapped paths and source-content JSON are omitted; raw native log hashes remain.
+Native excerpts are not complete raw logs or separate executions. QEMU display normalizes CRLF to LF; exact raw bytes are base64-preserved in source-inputs.json.
+file(1): ffw-s02-cost: ELF 32-bit MSB executable, MIPS, MIPS32 rel2 version 1 (SYSV), statically linked, stripped
+ELF SHA-256: 440c0361d716d959d71fd9d9f0b85c66a371a596386d79664c01b1c7dffcb2b0
+ELF bytes: 1477400; e_type=2, e_machine=8, FP ABI=3 (soft float), FPU executable words=0
+QEMU emulator version 11.1.3
+Python guest controls: 18 run, 18 passed, 0 failed/errors.
+Python source-loopback controls: 19 run, 19 passed, 0 failed/errors.
+
+Selected original native observations: probe-tests, job 30105869848936710
+Raw log SHA-256: c6ead4995944a1206b586c0e4c85967fd15d1502ac0e2f36ef68719552ef3b5b
+    Finished `test` profile [unoptimized] target(s) in 17.24s
+test tests::actual_full_mp3_passes_and_truncated_mp3_is_refused ... ok
+test tests::oracle_rejects_bad_samples_and_missing_tail ... ok
+test tests::reporting_failures_never_prevent_guarded_shutdown_decision ... ok
+test tests::shutdown_policy_requires_opted_in_mips_linux_guest_pid1 ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+Selected original native observations: probe-clippy, job 30105869848936714
+Raw log SHA-256: 10622c05ac92b81539872a0dbc5c1f5c58cbeeb87475b75992c0f43d38a33663
+    Finished `dev` profile [unoptimized] target(s) in 6.57s
+
+Selected original native observations: speaker-process-tests, job 30105869848936716
+Raw log SHA-256: f60d936ce2f89d955bebb902b18ec54c19c5b2e37a7751d3c4e2b86842103bfc
+    Finished `test` profile [unoptimized] target(s) in 32.30s
+test source_loopback_processes_match_independent_pcm_and_reject_wrong_key ... ok
+test stop_before_go_and_expired_anchor_emit_no_media ... ok
+FFW_SOURCE_LOOPBACK: {"binary_sha256": "5b519b2acec59c5f5184ca5c7ae8cb5310dc08e884f3d914725e4d4114512f59", "failed": 0, "not_qualified": ["native providers", "legacy guest runtime", "physical audio", "radio performance", "full Q07 service journeys", "target budgets"], "passed": 3, "planned": 3, "results": [{"blocks": 94, "boundary": "host-process/local-provisioning/encoded-fixture/PCM-file-sink", "capture_sha256": "36ed9e42cfeaa4cb43715c105f34cf11e2a08e56566ddb6b09c8338278e04834", "case": "vorbis_48000-pcm", "frames": 24000, "input_sha256": "de7d8f0c485ca2e3708523f9b27b60c23130b0101d0b9cc8bd63968699d53139", "manifest_sha256": "e30d9af8998ceff21c9b498c090b3b0d74e04f9a06daca66f3cdf4c9c7dbf4eb", "peak_lsb": 1, "reference_sha256": "43eec8a2d3519a72a5e580db33530fc838af11489609f1e77ef0738f1bc1ec3d", "rms_lsb": 0.04587119648174295, "samples": 48000, "status": "passed"}, {"blocks": 282, "boundary": "host-process/local-provisioning/encoded-fixture/PCM-file-sink", "capture_sha256": "2761a4ea6898e46f5e437e68b885d8ef7fb29f96041427a5cc6c8bc2205174d6", "case": "mp3_48000_long-pcm", "frames": 72000, "input_sha256": "7785255f947a50fde36ddcaf9227a9dcbc0cac1516c562d2ffbb91038805065b", "manifest_sha256": "c99120fb69f26332091c8ea83b75ade56f48be2a1e1f921d442bd41c8f4f5128", "peak_lsb": 1, "reference_sha256": "fb30800e4f9414a33392b3ffaab0a5e0be2f2919604753ffc19726da929974d1", "rms_lsb": 0.04579543888011362, "samples": 144000, "status": "passed"}, {"boundary": "host-process/local-provisioning/encoded-fixture/PCM-file-sink", "captured_frames": 0, "case": "vorbis_48000-wrong-key", "input_sha256": "de7d8f0c485ca2e3708523f9b27b60c23130b0101d0b9cc8bd63968699d53139", "manifest_sha256": "e30d9af8998ceff21c9b498c090b3b0d74e04f9a06daca66f3cdf4c9c7dbf4eb", "reference_sha256": "43eec8a2d3519a72a5e580db33530fc838af11489609f1e77ef0738f1bc1ec3d", "rejected": 16, "rejected_authentication": 16, "status": "passed"}], "schema": "ffw.source-loopback.v1"}
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.36s
+
+Selected original native observations: mips-release, job 30105869848936718
+Raw log SHA-256: e0bdbc01dbfa6b1e294aed511a81fa7d18ba488141e7a480d8a143a3f16b63df
+    Finished `release` profile [optimized] target(s) in 1m 09s
+
+BEGIN COMPLETE LF-NORMALIZED QEMU SERIAL STDOUT
+[    0.000000] Linux version 4.19.0-21-4kc-malta (debian-kernel@lists.debian.org) (gcc version 8.3.0 (Debian 8.3.0-6)) #1 SMP Debian 4.19.249-2 (2022-06-30)
+[    0.000000] earlycon: uart8250 at I/O port 0x3f8 (options '38400n8')
+[    0.000000] bootconsole [uart8250] enabled
+[    0.000000] CPU0 revision is: 00019300 (MIPS 24Kc)
+[    0.000000] FPU revision is: 00739300
+[    0.000000] MIPS: machine is mti,malta
+[    0.000000] Software DMA cache coherency enabled
+[    0.000000] Determined physical RAM map:
+[    0.000000]  memory: 03fff000 @ 00000000 (usable)
+FFW_S02COST_ALIVE
+FFW_S02COST_BEGIN version=1 codec=mp3_48000 frames_expected=24000 reps=3 input_fnv=da1589c2833424c5 reference_fnv=46a8dd21d7b5b39e
+FFW_S02COST_EMPTY phase=before ticks=[1, 0, 0, 0, 0, 0, 0, 0]
+FFW_S02COST_EMPTY phase=after ticks=[0, 0, 0, 0, 0, 0, 1, 0]
+FFW_S02COST_RULER phase=before rep=0 shape=3 iterations=1300000 ticks=656947
+FFW_S02COST_RULER phase=before rep=0 shape=3 iterations=5000000 ticks=2535933
+FFW_S02COST_RULER phase=before rep=0 shape=3 iterations=12000000 ticks=6083621
+FFW_S02COST_RULER phase=before rep=0 shape=3 iterations=20000000 ticks=10139326
+FFW_S02COST_RULER phase=before rep=0 shape=5 iterations=800000 ticks=675161
+FFW_S02COST_RULER phase=before rep=0 shape=5 iterations=3000000 ticks=2534377
+FFW_S02COST_RULER phase=before rep=0 shape=5 iterations=7200000 ticks=6084447
+FFW_S02COST_RULER phase=before rep=0 shape=5 iterations=12000000 ticks=10139434
+FFW_S02COST_RULER phase=before rep=1 shape=3 iterations=1300000 ticks=658999
+FFW_S02COST_RULER phase=before rep=1 shape=3 iterations=5000000 ticks=2534414
+FFW_S02COST_RULER phase=before rep=1 shape=3 iterations=12000000 ticks=6084355
+FFW_S02COST_RULER phase=before rep=1 shape=3 iterations=20000000 ticks=10139391
+FFW_S02COST_RULER phase=before rep=1 shape=5 iterations=800000 ticks=673902
+FFW_S02COST_RULER phase=before rep=1 shape=5 iterations=3000000 ticks=2536389
+FFW_S02COST_RULER phase=before rep=1 shape=5 iterations=7200000 ticks=6083511
+FFW_S02COST_RULER phase=before rep=1 shape=5 iterations=12000000 ticks=10139070
+FFW_S02COST_RULER phase=after rep=0 shape=3 iterations=1300000 ticks=656917
+FFW_S02COST_RULER phase=after rep=0 shape=3 iterations=5000000 ticks=2534141
+FFW_S02COST_RULER phase=after rep=0 shape=3 iterations=12000000 ticks=6085476
+FFW_S02COST_RULER phase=after rep=0 shape=3 iterations=20000000 ticks=10138962
+FFW_S02COST_RULER phase=after rep=0 shape=5 iterations=800000 ticks=674945
+FFW_S02COST_RULER phase=after rep=0 shape=5 iterations=3000000 ticks=2535137
+FFW_S02COST_RULER phase=after rep=0 shape=5 iterations=7200000 ticks=6083317
+FFW_S02COST_RULER phase=after rep=0 shape=5 iterations=12000000 ticks=10138852
+FFW_S02COST_RULER phase=after rep=1 shape=3 iterations=1300000 ticks=658903
+FFW_S02COST_RULER phase=after rep=1 shape=3 iterations=5000000 ticks=2534323
+FFW_S02COST_RULER phase=after rep=1 shape=3 iterations=12000000 ticks=6083352
+FFW_S02COST_RULER phase=after rep=1 shape=3 iterations=20000000 ticks=10139820
+FFW_S02COST_RULER phase=after rep=1 shape=5 iterations=800000 ticks=674975
+FFW_S02COST_RULER phase=after rep=1 shape=5 iterations=3000000 ticks=2534947
+FFW_S02COST_RULER phase=after rep=1 shape=5 iterations=7200000 ticks=6082323
+FFW_S02COST_RULER phase=after rep=1 shape=5 iterations=12000000 ticks=10142189
+FFW_S02COST_RUN rep=0 frames=24000 blocks=22 pull_ticks_sum=38585617 pull_ticks_max=7025588 eof_ticks=178 peak_lsb=1 sum_sq_lsb=24103 samples=48000
+FFW_S02COST_RUN rep=1 frames=24000 blocks=22 pull_ticks_sum=33045383 pull_ticks_max=1572106 eof_ticks=163 peak_lsb=1 sum_sq_lsb=24103 samples=48000
+FFW_S02COST_RUN rep=2 frames=24000 blocks=22 pull_ticks_sum=33045144 pull_ticks_max=1574281 eof_ticks=167 peak_lsb=1 sum_sq_lsb=24103 samples=48000
+FFW_S02COST_END checked_reps=3 counter_wrap_unresolved=1 stack_unmeasured=1 allocator_unmeasured=1
+[  234.100306] reboot: Restarting system
+END COMPLETE LF-NORMALIZED QEMU SERIAL STDOUT
+QEMU stderr: empty (0 bytes).
+QEMU exit: 0; runner exit: 0.
+Functional guest: passed; instruction count: UNQUALIFIED; counter_wrap_unresolved=true.
