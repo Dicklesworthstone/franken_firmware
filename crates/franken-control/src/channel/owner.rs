@@ -7,7 +7,9 @@
 use std::collections::BTreeSet;
 
 use franken_journal::{Journal, JournalError, Limits, Source, Storage};
-use franken_session::{AuthorityToken, MembershipError, UnifiedGroupSession};
+use franken_session::{
+    AuthorityToken, GroupMembership, MembershipConfig, MembershipError, UnifiedGroupSession,
+};
 
 use super::custody::{self, CustodyError, RestoreFailed, Revoked};
 use super::endpoint::{Endpoint, FecHandled, FecIngressStats};
@@ -53,6 +55,38 @@ pub enum AgreementError {
     Storage(JournalError),
 }
 
+/// Why a trusted new-group provisioning request could not form a fresh owner bundle.
+#[derive(Debug)]
+pub enum FreshGroupError {
+    NotFresh,
+    InvalidIdentity,
+    Authority(MembershipError),
+}
+
+/// One freshly provisioned control owner and the group state it constructed.
+/// Fields are private: an arbitrary reconstructed session cannot form this bundle.
+pub struct FreshFleetGroup<K: SecretStore, S: Storage> {
+    control: FleetControlOwner<K, S>,
+    membership: GroupMembership,
+    session: UnifiedGroupSession,
+    authority: AuthorityToken,
+}
+
+impl<K: SecretStore, S: Storage> FreshFleetGroup<K, S> {
+    /// Consume the bundle once. The receiving owner must not accept separately
+    /// reconstructed parts as a substitute for this fresh input.
+    pub fn into_parts(
+        self,
+    ) -> (
+        FleetControlOwner<K, S>,
+        GroupMembership,
+        UnifiedGroupSession,
+        AuthorityToken,
+    ) {
+        (self.control, self.membership, self.session, self.authority)
+    }
+}
+
 /// Explicit 33-identity host profile, retaining one endpoint across negotiation attempts.
 /// The media membership ceiling remains the session's existing 21-member limit.
 pub struct FleetControlOwner<K: SecretStore, S: Storage> {
@@ -62,6 +96,9 @@ pub struct FleetControlOwner<K: SecretStore, S: Storage> {
     coordinator: Option<FecCoordinator>,
     legacy_peers: BTreeSet<PeerId>,
     ingress_started: bool,
+    /// Only this process's fresh provisioning is known, not reconstructed history.
+    fresh_control_provisioning: bool,
+    fresh_group_constructed: bool,
 }
 
 impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
@@ -77,6 +114,7 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
     ) -> Result<(Self, BootStatus), BootError> {
         let (mut journal, recovery) = Journal::open(storage, Limits::fleet_control_development())
             .map_err(BootError::Storage)?;
+        let fresh_control_provisioning = recovery.source == Source::Blank;
         if recovery.source == Source::Blank {
             custody::claim_fleet_profile_with_marks(
                 &mut journal,
@@ -119,6 +157,8 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
                 coordinator: None,
                 legacy_peers: BTreeSet::new(),
                 ingress_started: false,
+                fresh_control_provisioning,
+                fresh_group_constructed: false,
             },
             BootStatus {
                 mark,
@@ -131,6 +171,76 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
     /// Read-only authority for transport routing and immediately revalidated sender handoff.
     pub fn authority(&self) -> &PeerDirectory<K> {
         self.channel.authority()
+    }
+
+    /// Whether this session can no longer safely allocate a control sequence.
+    #[must_use]
+    pub fn session_sequence_exhausted(&self, session: &UnifiedGroupSession) -> bool {
+        self.channel.session_sequence_exhausted(session)
+    }
+
+    /// Check the currently held channel lease against this session and its
+    /// configured early-expiry margin without cloning the authority token.
+    #[must_use]
+    pub fn lease_is_live(&self, session: &UnifiedGroupSession, now_ns: u64) -> bool {
+        self.channel.lease().is_some_and(|token| {
+            token
+                .check_with_margin(session, now_ns, self.channel.config().lease_margin_ns)
+                .is_ok()
+        })
+    }
+
+    /// Whether this owner's constructed fresh group can still be used.
+    /// Only the consuming fresh-group constructor sets this state; existing
+    /// media and arbitrary sessions do not establish it. A storage failure
+    /// revokes it. This does not prove recovery from erased or rolled-back media.
+    #[must_use]
+    pub fn fresh_group_is_healthy(&self) -> bool {
+        self.fresh_group_constructed && self.healthy()
+    }
+
+    /// Construct a new group's session and membership within this fresh owner.
+    /// Group identity and authority are explicit trusted provisioning inputs;
+    /// no member is admitted and no device, credential enrollment or recovery
+    /// is implied. `now_ns` and the lease share the caller's group timebase.
+    pub fn provision_fresh_group(
+        mut self,
+        group_id: &str,
+        issuer_id: &str,
+        epoch: u64,
+        config: MembershipConfig,
+        authority: AuthorityToken,
+        now_ns: u64,
+    ) -> Result<FreshFleetGroup<K, S>, FreshGroupError> {
+        if !self.fresh_control_provisioning
+            || self.fresh_group_constructed
+            || !self.healthy()
+            || self.ingress_started
+            || self.coordinator.is_some()
+            || self.journal.state().marks.get(PROPOSAL_MARK) != Some(&0)
+        {
+            return Err(FreshGroupError::NotFresh);
+        }
+        if group_id.is_empty() || issuer_id.is_empty() || epoch == 0 {
+            return Err(FreshGroupError::InvalidIdentity);
+        }
+        let session = UnifiedGroupSession::new(group_id, issuer_id, epoch);
+        if self.channel.session_sequence_exhausted(&session) {
+            return Err(FreshGroupError::NotFresh);
+        }
+        authority
+            .check_with_margin(&session, now_ns, config.lease.clock_uncertainty_ns)
+            .map_err(FreshGroupError::Authority)?;
+        self.install_lease(&session, authority.clone(), now_ns)
+            .map_err(FreshGroupError::Authority)?;
+        let membership = GroupMembership::new(config);
+        self.fresh_group_constructed = true;
+        Ok(FreshFleetGroup {
+            control: self,
+            membership,
+            session,
+            authority,
+        })
     }
 
     /// Trusted composition configures every SOAP bridge before opening any ingress, including
@@ -499,6 +609,237 @@ mod tests {
         .0
     }
 
+    fn blank_with_config(config: ChannelConfig) -> Owner {
+        Owner::boot(
+            EphemeralSecretStore::fleet_control_development(),
+            MemStorage::new(Limits::fleet_control_development().segment_bytes),
+            config,
+        )
+        .unwrap()
+        .0
+    }
+
+    fn token(group: &str, issuer: &str, epoch: u64) -> AuthorityToken {
+        AuthorityToken {
+            group_id: group.to_string(),
+            issuer_id: issuer.to_string(),
+            epoch,
+            expires_at_ns: 1_000_000_000_000,
+        }
+    }
+
+    fn fresh_group(
+        owner: Owner,
+    ) -> Result<FreshFleetGroup<EphemeralSecretStore, MemStorage>, FreshGroupError> {
+        owner.provision_fresh_group(
+            "grp",
+            "coord",
+            EPOCH,
+            MembershipConfig::default(),
+            token("grp", "coord", EPOCH),
+            0,
+        )
+    }
+
+    #[test]
+    fn fresh_control_qualification_is_not_inferred_from_an_absent_restart_marker() {
+        let fresh = blank();
+        assert!(!fresh.fresh_group_is_healthy());
+        assert!(!fresh.session_sequence_exhausted(&fixture_session(EPOCH)));
+        let (fresh, membership, session, authority) = fresh_group(fresh).unwrap().into_parts();
+        assert!(fresh.fresh_group_is_healthy());
+        assert_eq!(
+            (
+                &*session.group_id,
+                &*session.coordinator_id,
+                session.current_epoch
+            ),
+            ("grp", "coord", EPOCH)
+        );
+        assert_eq!(session.state_revision, 0);
+        assert!(session.members.is_empty());
+        assert!(membership.lease_is_live(&session, &authority, 0));
+        let (restarted, _) = boot(fresh.into_storage());
+        assert!(!restarted.fresh_group_is_healthy());
+        assert!(!restarted.session_sequence_exhausted(&fixture_session(EPOCH)));
+        assert!(matches!(
+            fresh_group(restarted),
+            Err(FreshGroupError::NotFresh)
+        ));
+    }
+
+    #[test]
+    fn a_latched_storage_failure_revokes_fresh_control_qualification() {
+        let (mut owner, _, _, _) = fresh_group(blank()).unwrap().into_parts();
+        assert!(owner.fresh_group_is_healthy());
+        owner.channel.latch_durability("test_store_failure");
+        assert!(!owner.fresh_group_is_healthy());
+    }
+
+    #[test]
+    fn fresh_bundle_cannot_be_provisioned_a_second_time_after_unpacking() {
+        let (owner, _, mut original_session, _) = fresh_group(blank()).unwrap().into_parts();
+        original_session
+            .apply_command(FencedControlCommand {
+                epoch: EPOCH,
+                command_seq: 1,
+                payload: GroupCommandPayload::SetGroupVolume {
+                    volume_0_to_100: 75,
+                },
+            })
+            .unwrap();
+        assert_eq!(original_session.group_master_volume, 75);
+        assert!(owner.fresh_group_is_healthy());
+        assert!(matches!(fresh_group(owner), Err(FreshGroupError::NotFresh)));
+    }
+
+    #[test]
+    fn fresh_bundle_rejects_exhausted_counter_and_accepts_neighbor() {
+        let mut config = ChannelConfig::provisional();
+        config.session_seq_base = u64::MAX;
+        assert!(matches!(
+            fresh_group(blank_with_config(config)),
+            Err(FreshGroupError::NotFresh)
+        ));
+        config.session_seq_base = u64::MAX - 1;
+        let (owner, _, session, _) = fresh_group(blank_with_config(config)).unwrap().into_parts();
+        assert!(owner.fresh_group_is_healthy());
+        assert!(!owner.session_sequence_exhausted(&session));
+    }
+
+    #[test]
+    fn channel_margin_is_checked_at_provision_and_each_live_lease_query() {
+        let mut config = ChannelConfig::provisional();
+        config.lease_margin_ns = 100;
+        let mut authority = token("grp", "coord", EPOCH);
+        authority.expires_at_ns = 100;
+        assert!(matches!(
+            blank_with_config(config).provision_fresh_group(
+                "grp",
+                "coord",
+                EPOCH,
+                MembershipConfig::default(),
+                authority.clone(),
+                0,
+            ),
+            Err(FreshGroupError::Authority(
+                MembershipError::AuthorityExpired { .. }
+            ))
+        ));
+
+        authority.expires_at_ns = 101;
+        let (owner, membership, session, actual) = blank_with_config(config)
+            .provision_fresh_group(
+                "grp",
+                "coord",
+                EPOCH,
+                MembershipConfig::default(),
+                authority,
+                0,
+            )
+            .unwrap()
+            .into_parts();
+        assert!(membership.lease_is_live(&session, &actual, 0));
+        assert!(owner.lease_is_live(&session, 0));
+        assert!(!owner.lease_is_live(&session, 1));
+        assert!(membership.lease_is_live(&session, &actual, 1));
+        assert!(!owner.lease_is_live(&UnifiedGroupSession::new("other", "coord", EPOCH), 0));
+        assert!(!owner.lease_is_live(&UnifiedGroupSession::new("grp", "other", EPOCH), 0));
+        assert!(!owner.lease_is_live(&UnifiedGroupSession::new("grp", "coord", EPOCH + 1), 0));
+        assert!(!blank().lease_is_live(&session, 0));
+    }
+
+    #[test]
+    fn fresh_provisioning_rejects_invalid_identity_authority_and_used_owner() {
+        assert!(matches!(
+            blank().provision_fresh_group(
+                "",
+                "coord",
+                EPOCH,
+                MembershipConfig::default(),
+                token("grp", "coord", EPOCH),
+                0
+            ),
+            Err(FreshGroupError::InvalidIdentity)
+        ));
+        assert!(matches!(
+            blank().provision_fresh_group(
+                "grp",
+                "coord",
+                0,
+                MembershipConfig::default(),
+                token("grp", "coord", 0),
+                0
+            ),
+            Err(FreshGroupError::InvalidIdentity)
+        ));
+        assert!(matches!(
+            blank().provision_fresh_group(
+                "grp",
+                "coord",
+                EPOCH,
+                MembershipConfig::default(),
+                token("wrong", "coord", EPOCH),
+                0
+            ),
+            Err(FreshGroupError::Authority(MembershipError::WrongGroup))
+        ));
+        assert!(matches!(
+            blank().provision_fresh_group(
+                "grp",
+                "coord",
+                EPOCH,
+                MembershipConfig::default(),
+                token("grp", "wrong", EPOCH),
+                0
+            ),
+            Err(FreshGroupError::Authority(
+                MembershipError::NotConfiguredIssuer
+            ))
+        ));
+        assert!(matches!(
+            blank().provision_fresh_group(
+                "grp",
+                "coord",
+                EPOCH,
+                MembershipConfig::default(),
+                token("grp", "coord", EPOCH + 1),
+                0
+            ),
+            Err(FreshGroupError::Authority(
+                MembershipError::FutureAuthority { .. }
+            ))
+        ));
+        let mut expired = token("grp", "coord", EPOCH);
+        expired.expires_at_ns = 0;
+        assert!(matches!(
+            blank().provision_fresh_group(
+                "grp",
+                "coord",
+                EPOCH,
+                MembershipConfig::default(),
+                expired,
+                0
+            ),
+            Err(FreshGroupError::Authority(
+                MembershipError::AuthorityExpired { .. }
+            ))
+        ));
+        let mut margin = MembershipConfig::default();
+        margin.lease.clock_uncertainty_ns = 100;
+        let mut short = token("grp", "coord", EPOCH);
+        short.expires_at_ns = 100;
+        assert!(matches!(
+            blank().provision_fresh_group("grp", "coord", EPOCH, margin, short, 0),
+            Err(FreshGroupError::Authority(
+                MembershipError::AuthorityExpired { .. }
+            ))
+        ));
+        let mut used = blank();
+        used.step(0, &mut fixture_session(EPOCH)).unwrap();
+        assert!(matches!(fresh_group(used), Err(FreshGroupError::NotFresh)));
+    }
+
     fn session() -> UnifiedGroupSession {
         let mut session = fixture_session(EPOCH);
         let board = franken_board_profile::synthetic_test_fixture_catalog()
@@ -584,6 +925,16 @@ mod tests {
             )
             .unwrap()
             .clone()
+    }
+
+    #[test]
+    fn prior_session_agreement_cannot_be_relabelled_as_fresh_provisioning() {
+        let mut owner = blank();
+        let prior = session();
+        let bindings = enroll(&mut owner, &prior);
+        let _proposal = begin(&mut owner, &prior, bindings);
+        assert!(!owner.ingress_started);
+        assert!(matches!(fresh_group(owner), Err(FreshGroupError::NotFresh)));
     }
 
     /// Real next-epoch clock locked by probe exchanges and admitted for `start`.
@@ -1541,6 +1892,49 @@ mod tests {
         let body = RequestBody::new(id(peer), seq, EPOCH, revision, command).unwrap();
         let proof = compute_proof(&key(peer), &body.signing_bytes());
         super::super::wire::encode_request(&ControlRequest::new(body, proof)).unwrap()
+    }
+
+    #[test]
+    fn failed_exhaustion_mark_cannot_qualify_restarted_fleet_owner() {
+        use crate::channel::request::ControlCommand;
+        let (mut owner, _, mut session, _) = fresh_group(blank()).unwrap().into_parts();
+        owner
+            .admit(&id("panel"), PeerRole::LocalUser, &key("panel"), None, 1)
+            .unwrap();
+        session.state_revision = u64::MAX;
+        let stop = ControlCommand::StopGroupPlayback {
+            now_ns: 1_000,
+            irrevocable_dma_tail_ns: 500,
+        };
+        assert!(matches!(
+            owner
+                .receive(0, &session, &control_wire("panel", 1, stop, None))
+                .unwrap(),
+            FecHandled::Control(super::super::endpoint::Handled::Request {
+                result: super::super::pipeline::SubmitResult::Queued { .. },
+                ..
+            })
+        ));
+        owner.journal.storage_mut().power_cut(0, false);
+        let failed = owner.step(0, &mut session).unwrap_err();
+        assert_eq!(failed.applied.len(), 1);
+        assert!(matches!(
+            failed.applied[0].outcome,
+            super::super::pipeline::Outcome::Committed { revision: u64::MAX }
+        ));
+        assert!(session.last_group_stop().is_some());
+        assert!(!owner.fresh_group_is_healthy());
+        let image = owner.journal.storage().durable().to_vec();
+        let restored_storage =
+            MemStorage::from_image(Limits::fleet_control_development().segment_bytes, &image);
+        let (restored, _) = boot(restored_storage);
+        let rebuilt = fixture_session(EPOCH);
+        assert!(!restored.session_sequence_exhausted(&rebuilt));
+        assert!(!restored.fresh_group_is_healthy());
+        assert!(matches!(
+            fresh_group(restored),
+            Err(FreshGroupError::NotFresh)
+        ));
     }
 
     #[test]

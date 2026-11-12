@@ -80,8 +80,9 @@
 //! every remote command that names a revision is refused as `StaleRevision { observed, floor: u64::MAX }`.
 //! The local user is exempt from revision checks and keeps the group controllable at the device. That also
 //! refuses a *fresh* remote command: with the mark gone the channel cannot tell a stale copy from a fresh
-//! one, and it says so rather than guess. The floor is never stored (see [`store_high_water`]), so it
-//! lasts for the run, not for ever.
+//! one, and it says so rather than guess. The unknown floor itself is never stored (see
+//! [`store_high_water`]), so it lasts for the run, not for ever. A real live MAX revision is
+//! different evidence and may be stored; exhaustion is recorded separately.
 //!
 //! # What this does not do
 //!
@@ -124,6 +125,10 @@ pub const SEQ_FLOORS_KEY: &[u8] = b"n02.seq";
 /// The floor the channel is given when the mark cannot be read: no revision a command can name is at or
 /// above it, so every remote command that names one is refused.
 pub const REFUSING_FLOOR: u64 = u64::MAX;
+
+/// Monotone evidence that the channel ran out of safe session fences.
+/// This is separate from revision and from the unreadable-floor sentinel.
+const EXHAUSTED_KEY: &[u8] = b"n02.exh";
 
 /// Why the mark could not be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,19 +301,34 @@ pub fn restore_from_open<A: PeerAuthority, S: Storage>(
         },
     };
     match restored {
-        Restored::Mark(mark) => channel.restore_high_water(mark)?,
+        Restored::Mark(mark) => {
+            channel.restore_high_water(mark)?;
+            // Here MAX is a real recovered mark, not the unreadable sentinel.
+            channel.restored_sequence_exhausted |= mark == u64::MAX;
+        }
         Restored::Refusing(_) => channel.restore_high_water(REFUSING_FLOOR)?,
         Restored::FreshMedium | Restored::NeverStored => {}
+    }
+    if !matches!(restored, Restored::Refusing(_))
+        && let Ok((journal, _)) = opened
+        && journal
+            .state()
+            .marks
+            .get(EXHAUSTED_KEY)
+            .is_some_and(|mark| *mark != 0)
+    {
+        channel.restored_sequence_exhausted = true;
     }
     Ok(restored)
 }
 
 /// Store the mark the channel has reached: the session's revision, or the restored mark if that is higher.
+/// Also persist a monotone exhaustion marker before returning an exhausted outcome, including when a
+/// refused command spent no revision. A full mark namespace or an I/O error is returned to the caller.
 ///
 /// The journal refuses a mark below the stored one and writes nothing for an equal one ([`Commit::Noop`]),
-/// so a stored mark never goes down. [`REFUSING_FLOOR`] is never stored: it says the mark could not be read,
-/// not that the session reached the largest revision, and storing it would refuse remote commands on every
-/// later boot.
+/// so a stored mark never goes down. An unreadable-floor sentinel alone is never stored;
+/// an actual live revision of MAX is a real mark and is stored as such.
 ///
 /// # Errors
 /// The journal's: a storage fault (the journal is then poisoned until reopened), a full `Marks` namespace,
@@ -319,14 +339,27 @@ pub fn store_high_water<A: PeerAuthority, S: Storage>(
     session: &UnifiedGroupSession,
     journal: &mut Journal<S>,
 ) -> Result<Commit, JournalError> {
+    // A refused command can exhaust the allocator without moving revision.
+    // This marker must reach the same journal before an outcome is delivered.
+    let marker_commit = if channel.session_sequence_exhausted(session)
+        && !journal
+            .state()
+            .marks
+            .get(EXHAUSTED_KEY)
+            .is_some_and(|mark| *mark != 0)
+    {
+        journal.raise_mark(EXHAUSTED_KEY, 1)?
+    } else {
+        Commit::Noop
+    };
     let mark = channel.high_water(session);
-    if mark == REFUSING_FLOOR {
-        return Ok(Commit::Noop);
+    if mark == REFUSING_FLOOR && session.state_revision != u64::MAX {
+        return Ok(marker_commit);
     }
     // Nothing moved the mark: there is nothing to store, and a journal that is poisoned has nothing to say about it.
     // (A stored mark that is *higher* still goes to the journal, which refuses it as `MarkRegressed`.)
     if journal.state().marks.get(HIGH_WATER_KEY) == Some(&mark) {
-        return Ok(Commit::Noop);
+        return Ok(marker_commit);
     }
     journal.raise_mark(HIGH_WATER_KEY, mark)
 }
@@ -443,6 +476,12 @@ pub fn reopen_from_open<A: PeerAuthority, S: Storage>(
         return Reopened::StillFailed(Cause::ProfileMismatch);
     }
     let mark = journal.state().marks.get(HIGH_WATER_KEY).copied();
+    channel.restored_sequence_exhausted |= mark == Some(u64::MAX)
+        || journal
+            .state()
+            .marks
+            .get(EXHAUSTED_KEY)
+            .is_some_and(|mark| *mark != 0);
     let (table, cause) = match journal.state().records.get(SEQ_FLOORS_KEY) {
         None => (SeqFloors::with_profile(profile), None),
         Some(bytes) => match SeqFloors::decode_with_profile(bytes, profile) {
@@ -2932,6 +2971,267 @@ mod tests {
             .collect();
         named.sort();
         named
+    }
+
+    #[test]
+    fn exhausted_local_mute_survives_failed_store_without_replaying_louder_work() {
+        let mut medium = blank_medium();
+        let mut one = healthy_with_a_dying_journal(&mut medium);
+        // The test channel's base is 1,000. Exhaust its sequence while leaving
+        // the revision below the special unreadable-mark sentinel so this step
+        // attempts the journal write and actually exercises rollback.
+        let revision = u64::MAX - 1_000;
+        one.session.state_revision = revision;
+        let prior_volume = one.session.group_master_volume;
+        queue(&mut one, "panel", 2, set_group(90));
+        queue(&mut one, "panel", 3, mute(true));
+        let journal = one.journal.as_mut().unwrap();
+        let failed = step_then_store(&mut one.channel, 0, &mut one.session, journal).unwrap_err();
+        assert_eq!(seqs(&failed.applied), vec![3]);
+        assert!(committed(&failed.applied[0].outcome));
+        assert_eq!(seqs(&failed.withheld), vec![2]);
+        assert_eq!(one.session.group_master_volume, prior_volume);
+        assert!(one.session.members["kitchen"].muted);
+        assert!(one.session.control_sequence_exhausted());
+        assert_eq!(one.session.state_revision, revision);
+        assert!(matches!(
+            one.channel.durability(),
+            Durability::Failed { .. }
+        ));
+        let retry = one.request("panel", 3, mute(true));
+        assert_eq!(
+            one.channel.submit(0, retry),
+            SubmitResult::Settled(failed.applied[0].outcome.clone())
+        );
+    }
+
+    #[test]
+    fn actual_max_stop_persists_exhaustion_and_reopens_over_lower_session() {
+        let mut medium = blank_medium();
+        let mut one = Incarnation::boot(&mut medium, Owner::Faithful);
+        one.session.state_revision = u64::MAX;
+        let request = one.request("panel", 1, stop());
+        let outcome = one.deliver(request.clone(), "panel", 1).unwrap();
+        assert_eq!(outcome, Outcome::Committed { revision: u64::MAX });
+        assert!(one.session.last_group_stop().is_some());
+        assert_eq!(
+            one.channel.submit(0, request),
+            SubmitResult::Settled(outcome)
+        );
+        assert_eq!(one.stored_mark(), Some(u64::MAX));
+        assert_eq!(
+            one.journal
+                .as_ref()
+                .unwrap()
+                .state()
+                .marks
+                .get(EXHAUSTED_KEY),
+            Some(&1)
+        );
+        let image = one.journal.as_ref().unwrap().storage().durable().to_vec();
+
+        // Reopen the same durable image, but reconstruct a lower-revision session.
+        let mut reopened = MemStorage::from_image(limits().segment_bytes, &image);
+        let mut two = Incarnation::boot(&mut reopened, Owner::Faithful);
+        assert_eq!(two.restored, Some(Restored::Mark(u64::MAX)));
+        assert_eq!(two.session.state_revision, 2);
+        assert!(two.channel.session_sequence_exhausted(&two.session));
+        assert_eq!(
+            two.run("panel", 2, set_group(90)).unwrap(),
+            Outcome::Refused(Refusal::SequenceExhausted)
+        );
+        let stop_request = two.request("panel", 3, stop());
+        let stop_result = two.deliver(stop_request.clone(), "panel", 3).unwrap();
+        assert_eq!(stop_result, Outcome::Committed { revision: 2 });
+        assert!(two.session.last_group_stop().is_some());
+        assert_eq!(
+            two.channel.submit(0, stop_request),
+            SubmitResult::Settled(stop_result)
+        );
+        let mute_request = two.request("panel", 4, mute(true));
+        let mute_result = two.deliver(mute_request.clone(), "panel", 4).unwrap();
+        assert_eq!(mute_result, Outcome::Committed { revision: 2 });
+        assert!(two.session.members["kitchen"].muted);
+        assert_eq!(
+            two.channel.submit(0, mute_request),
+            SubmitResult::Settled(mute_result)
+        );
+    }
+
+    #[test]
+    fn exhausted_counter_without_high_revision_persists_across_same_journal_restart() {
+        let mut medium = blank_medium();
+        let mut one = Incarnation::boot(&mut medium, Owner::Faithful);
+        one.channel.next_session_seq = u64::MAX;
+        assert_eq!(one.session.state_revision, 2);
+        let request = one.request("panel", 1, set_group(90));
+        let outcome = one.deliver(request.clone(), "panel", 1).unwrap();
+        assert_eq!(outcome, Outcome::Refused(Refusal::SequenceExhausted));
+        assert_eq!(
+            one.channel.submit(0, request),
+            SubmitResult::Settled(outcome)
+        );
+        assert_eq!(one.stored_mark(), Some(2));
+        assert_eq!(
+            one.journal
+                .as_ref()
+                .unwrap()
+                .state()
+                .marks
+                .get(EXHAUSTED_KEY),
+            Some(&1)
+        );
+        let image = one.journal.as_ref().unwrap().storage().durable().to_vec();
+
+        let mut reopened = MemStorage::from_image(limits().segment_bytes, &image);
+        let mut two = Incarnation::boot(&mut reopened, Owner::Faithful);
+        assert_eq!(two.restored, Some(Restored::Mark(2)));
+        assert!(two.channel.session_sequence_exhausted(&two.session));
+        assert_eq!(
+            two.run("panel", 2, set_group(90)).unwrap(),
+            Outcome::Refused(Refusal::SequenceExhausted)
+        );
+        let mute_request = two.request("panel", 3, mute(true));
+        let mute_result = two.deliver(mute_request.clone(), "panel", 3).unwrap();
+        assert_eq!(mute_result, Outcome::Committed { revision: 2 });
+        assert!(two.session.members["kitchen"].muted);
+        assert_eq!(
+            two.channel.submit(0, mute_request),
+            SubmitResult::Settled(mute_result)
+        );
+        let stop_request = two.request("panel", 4, stop());
+        let stop_result = two.deliver(stop_request.clone(), "panel", 4).unwrap();
+        assert_eq!(stop_result, Outcome::Committed { revision: 2 });
+        assert!(two.session.last_group_stop().is_some());
+        assert_eq!(
+            two.channel.submit(0, stop_request),
+            SubmitResult::Settled(stop_result)
+        );
+
+        // Exercise the in-process reopen path as well as fresh boot: the marker
+        // itself must restore the safety signal even with a low session revision.
+        let reopen_medium = MemStorage::from_image(limits().segment_bytes, &image);
+        let opened = Journal::open(reopen_medium, limits());
+        two.channel.restored_sequence_exhausted = false;
+        two.channel.next_session_seq = two.channel.config.session_seq_base;
+        two.session = fixture_session(EPOCH);
+        two.channel.latch_durability("test_reopen");
+        assert!(matches!(
+            reopen_from_open(&mut two.channel, &opened),
+            Reopened::Healthy { .. }
+        ));
+        assert!(two.channel.session_sequence_exhausted(&two.session));
+    }
+
+    #[test]
+    fn first_already_silent_result_also_persists_exhaustion() {
+        let mut medium = blank_medium();
+        let mut one = Incarnation::boot(&mut medium, Owner::Faithful);
+        one.channel.next_session_seq = u64::MAX;
+        one.session.members.get_mut("kitchen").unwrap().muted = true;
+        let request = one.request("panel", 1, mute(true));
+        let result = one.deliver(request.clone(), "panel", 1).unwrap();
+        assert_eq!(result, Outcome::AlreadySilent { revision: 2 });
+        assert_eq!(
+            one.channel.submit(0, request),
+            SubmitResult::Settled(result)
+        );
+        assert!(one.session.control_sequence_exhausted());
+        let image = one.journal.as_ref().unwrap().storage().durable().to_vec();
+        let mut reopened = MemStorage::from_image(limits().segment_bytes, &image);
+        let two = Incarnation::boot(&mut reopened, Owner::Faithful);
+        assert!(!two.session.members["kitchen"].muted);
+        assert!(two.channel.session_sequence_exhausted(&two.session));
+    }
+
+    #[test]
+    fn actual_recovered_max_mark_is_not_the_unreadable_sentinel() {
+        let mut medium = blank_medium();
+        let mut one = Incarnation::boot(&mut medium, Owner::Faithful);
+        one.journal
+            .as_mut()
+            .unwrap()
+            .raise_mark(HIGH_WATER_KEY, u64::MAX)
+            .unwrap();
+        assert!(
+            !one.journal
+                .as_ref()
+                .unwrap()
+                .state()
+                .marks
+                .contains_key(EXHAUSTED_KEY)
+        );
+        let image = one.journal.as_ref().unwrap().storage().durable().to_vec();
+        let mut reopened = MemStorage::from_image(limits().segment_bytes, &image);
+        let mut two = Incarnation::boot(&mut reopened, Owner::Faithful);
+        assert_eq!(two.restored, Some(Restored::Mark(u64::MAX)));
+        assert!(two.channel.session_sequence_exhausted(&two.session));
+        assert_eq!(
+            two.run("panel", 1, set_group(90)).unwrap(),
+            Outcome::Refused(Refusal::SequenceExhausted)
+        );
+        assert_eq!(
+            two.run("panel", 2, mute(true)).unwrap(),
+            Outcome::Committed { revision: 2 }
+        );
+        assert!(two.session.members["kitchen"].muted);
+    }
+
+    #[test]
+    fn failed_exhaustion_marker_write_keeps_live_silence_but_not_restart_proof() {
+        let mut medium = blank_medium();
+        let mut one = healthy_with_a_dying_journal(&mut medium);
+        one.session.state_revision = u64::MAX;
+        queue(&mut one, "panel", 2, stop());
+        let journal = one.journal.as_mut().unwrap();
+        let failed = step_then_store(&mut one.channel, 0, &mut one.session, journal).unwrap_err();
+        assert_eq!(seqs(&failed.applied), vec![2]);
+        assert_eq!(
+            failed.applied[0].outcome,
+            Outcome::Committed { revision: u64::MAX }
+        );
+        assert!(one.session.last_group_stop().is_some());
+        assert!(one.channel.session_sequence_exhausted(&one.session));
+        assert!(matches!(
+            one.channel.durability(),
+            Durability::Failed { .. }
+        ));
+        let image = one.journal.as_ref().unwrap().storage().durable().to_vec();
+
+        // A write that never reached the journal cannot prove exhaustion to a
+        // different process. Do not turn the live exception into a restart claim.
+        let mut reopened = MemStorage::from_image(limits().segment_bytes, &image);
+        let two = Incarnation::boot(&mut reopened, Owner::Faithful);
+        assert_eq!(two.stored_mark(), Some(3));
+        assert!(!two.channel.session_sequence_exhausted(&two.session));
+    }
+
+    #[test]
+    fn exhausted_already_muted_survives_failed_store_as_noop() {
+        let mut medium = blank_medium();
+        let mut one = healthy_with_a_dying_journal(&mut medium);
+        let revision = u64::MAX - 1_000;
+        one.session.state_revision = revision;
+        one.session.members.get_mut("kitchen").unwrap().muted = true;
+        queue(&mut one, "panel", 2, set_group(90));
+        queue(&mut one, "panel", 3, mute(true));
+        let journal = one.journal.as_mut().unwrap();
+        let failed = step_then_store(&mut one.channel, 0, &mut one.session, journal).unwrap_err();
+        assert_eq!(seqs(&failed.applied), vec![3]);
+        assert_eq!(
+            failed.applied[0].outcome,
+            Outcome::AlreadySilent { revision }
+        );
+        assert_eq!(seqs(&failed.withheld), vec![2]);
+        assert_eq!(one.session.group_master_volume, 60);
+        assert!(one.session.members["kitchen"].muted);
+        assert!(one.session.control_sequence_exhausted());
+        assert_eq!(one.session.state_revision, revision);
+        let retry = one.request("panel", 3, mute(true));
+        assert_eq!(
+            one.channel.submit(0, retry),
+            SubmitResult::Settled(Outcome::AlreadySilent { revision })
+        );
     }
 
     #[test]

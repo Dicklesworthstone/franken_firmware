@@ -1112,7 +1112,7 @@ fn rejection_fault(rejection: &Rejection, legacy: bool) -> Fault {
 
 fn outcome_result(outcome: &Outcome) -> Result<(), Fault> {
     match outcome {
-        Outcome::Committed { .. } => Ok(()),
+        Outcome::Committed { .. } | Outcome::AlreadySilent { .. } => Ok(()),
         Outcome::Refused(refusal) => Err(refusal_fault(refusal)),
         Outcome::Withdrawn | Outcome::CancelApplied { .. } => {
             Err(Fault::ActionFailed("the command was withdrawn"))
@@ -1122,6 +1122,9 @@ fn outcome_result(outcome: &Outcome) -> Result<(), Fault> {
 
 fn refusal_fault(refusal: &Refusal) -> Fault {
     match refusal {
+        Refusal::SequenceExhausted => {
+            Fault::ActionFailed("session sequence exhausted; read the state")
+        }
         Refusal::StaleEpoch { .. } | Refusal::EpochAhead { .. } => {
             Fault::ActionFailed("the group is in another epoch")
         }
@@ -1192,6 +1195,17 @@ fn command_response(call: &SoapCall, cmd: Cmd, state: &EventState) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn already_silent_soap_succeeds_but_exhaustion_is_a_fault() {
+        use super::{Fault, Outcome, Refusal, outcome_result};
+        assert!(outcome_result(&Outcome::AlreadySilent { revision: u64::MAX }).is_ok());
+        assert!(matches!(
+            outcome_result(&Outcome::Refused(Refusal::SequenceExhausted)),
+            Err(Fault::ActionFailed(
+                "session sequence exhausted; read the state"
+            ))
+        ));
+    }
     use franken_journal::{Journal, Limits, MemStorage, Namespace};
     use franken_session::{AuthorityToken, ChannelRole, FencedControlCommand, GroupCommandPayload};
 

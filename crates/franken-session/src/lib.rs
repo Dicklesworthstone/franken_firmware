@@ -191,6 +191,55 @@ impl AppliedCommands {
     }
 }
 
+/// Identity of the latest stop actually applied to this session. Epoch and
+/// revision do not move backwards. The command sequence distinguishes distinct
+/// stops even when the existing revision counter has saturated. This is runtime
+/// session state; a control journal's high-water mark is not a restored marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupStopMarker {
+    epoch: u64,
+    revision: u64,
+    command_seq: u64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    exhausted_local: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+impl GroupStopMarker {
+    #[must_use]
+    pub const fn epoch(self) -> u64 {
+        self.epoch
+    }
+    #[must_use]
+    pub const fn revision(self) -> u64 {
+        self.revision
+    }
+}
+
+/// The only reducer effects allowed after the N02 session-sequence space is exhausted.
+/// The caller must authenticate a local user before invoking this interface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExhaustedLocalSilence {
+    Stop {
+        now_ns: u64,
+        irrevocable_dma_tail_ns: u64,
+    },
+    MuteMember {
+        member_id: String,
+    },
+}
+
+/// Whether the requested local silence changed playback state. The returned
+/// revision is the existing revision, not an invented new fence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExhaustedSilenceOutcome {
+    Applied { revision: u64 },
+    AlreadySilent { revision: u64 },
+}
+
 /// Unified group state machine supporting mixed S1 (`swGen=1`) and S2 (`swGen=2`) speakers (`G01`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedGroupSession {
@@ -201,6 +250,10 @@ pub struct UnifiedGroupSession {
     pub group_master_volume: u8,
     pub members: BTreeMap<String, GroupMemberState>,
     applied_commands: AppliedCommands,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_group_stop: Option<GroupStopMarker>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    control_sequence_exhausted: bool,
 }
 
 impl UnifiedGroupSession {
@@ -214,7 +267,96 @@ impl UnifiedGroupSession {
             group_master_volume: 50,
             members: BTreeMap::new(),
             applied_commands: AppliedCommands::default(),
+            last_group_stop: None,
+            control_sequence_exhausted: false,
         }
+    }
+
+    /// Most recent stop applied to this owned session, including an empty group.
+    /// It says nothing about DMA acknowledgment or journal restart restoration.
+    #[must_use]
+    pub const fn last_group_stop(&self) -> Option<GroupStopMarker> {
+        self.last_group_stop
+    }
+
+    /// Whether exhausted N02 authority has been latched by a local silence
+    /// effect. This survives clones and serialized sessions; callers must not
+    /// resume from it as though the ordinary fence space remained available.
+    #[must_use]
+    pub const fn control_sequence_exhausted(&self) -> bool {
+        self.control_sequence_exhausted
+    }
+
+    /// Apply only a local stop or local member mute after the caller has
+    /// authenticated LocalUser and established allocator exhaustion. It never
+    /// advances epoch, invents a command sequence, or fabricates a revision.
+    /// Unknown members are refused before any state, including the sticky
+    /// exhaustion latch, changes. This is not a generic command entry point.
+    pub fn apply_exhausted_local_silence(
+        &mut self,
+        op: ExhaustedLocalSilence,
+    ) -> Result<ExhaustedSilenceOutcome, SessionError> {
+        let revision = self.state_revision;
+        let changed = match op {
+            ExhaustedLocalSilence::MuteMember { member_id } => {
+                let member = self
+                    .members
+                    .get_mut(&member_id)
+                    .ok_or(SessionError::UnknownMember { member_id })?;
+                let changed = !member.muted;
+                member.muted = true;
+                changed
+            }
+            ExhaustedLocalSilence::Stop {
+                now_ns,
+                irrevocable_dma_tail_ns,
+            } => {
+                let tail = now_ns.saturating_add(irrevocable_dma_tail_ns);
+                let had_current_stop = self
+                    .last_group_stop
+                    .is_some_and(|mark| mark.epoch == self.current_epoch);
+                let mut changed = !had_current_stop;
+                for member in self.members.values_mut() {
+                    let retained_tail = match &member.lifecycle {
+                        MemberLifecycleState::StoppingDmaTail { tail_complete_ns } => {
+                            (*tail_complete_ns).max(tail)
+                        }
+                        _ => {
+                            changed = true;
+                            tail
+                        }
+                    };
+                    if member.lifecycle
+                        != (MemberLifecycleState::StoppingDmaTail {
+                            tail_complete_ns: retained_tail,
+                        })
+                    {
+                        changed = true;
+                        member.lifecycle = MemberLifecycleState::StoppingDmaTail {
+                            tail_complete_ns: retained_tail,
+                        };
+                    }
+                }
+                if changed {
+                    // A genuine new local effect is distinguishable from an
+                    // ordinary stop even at a saturated revision. An already
+                    // silent no-op leaves the previous marker unchanged.
+                    self.last_group_stop = Some(GroupStopMarker {
+                        epoch: self.current_epoch,
+                        revision,
+                        command_seq: 0,
+                        exhausted_local: true,
+                    });
+                }
+                changed
+            }
+        };
+        self.control_sequence_exhausted = true;
+        Ok(if changed {
+            ExhaustedSilenceOutcome::Applied { revision }
+        } else {
+            ExhaustedSilenceOutcome::AlreadySilent { revision }
+        })
     }
 
     /// Apply a fenced control command, enforcing epoch monotonicity and idempotency.
@@ -235,6 +377,7 @@ impl UnifiedGroupSession {
             self.applied_commands.check(cmd.epoch, cmd.command_seq)?;
         }
 
+        let is_group_stop = matches!(&cmd.payload, GroupCommandPayload::StopGroupPlayback { .. });
         match cmd.payload {
             GroupCommandPayload::AdmitMember {
                 member_id,
@@ -311,6 +454,14 @@ impl UnifiedGroupSession {
         }
         self.applied_commands.record(cmd.command_seq);
         self.state_revision = self.state_revision.saturating_add(1);
+        if is_group_stop {
+            self.last_group_stop = Some(GroupStopMarker {
+                epoch: self.current_epoch,
+                revision: self.state_revision,
+                command_seq: cmd.command_seq,
+                exhausted_local: false,
+            });
+        }
         Ok(self.state_revision)
     }
 
@@ -344,6 +495,258 @@ mod tests {
     use super::*;
     // Synthetic fixture: the canonical catalog holds non-admissible hypotheses.
     use franken_board_profile::synthetic_test_fixture_catalog as canonical_board_catalog;
+
+    #[test]
+    fn empty_group_stop_marker_tracks_real_application_and_not_rejections() {
+        let mut session = UnifiedGroupSession::new("g", "leader", 3);
+        let stop = FencedControlCommand {
+            epoch: 3,
+            command_seq: 7,
+            payload: GroupCommandPayload::StopGroupPlayback {
+                now_ns: 1,
+                irrevocable_dma_tail_ns: 0,
+            },
+        };
+        let legacy = serde_json::to_value(&session).unwrap();
+        assert!(legacy.get("last_group_stop").is_none());
+        let restored: UnifiedGroupSession = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.last_group_stop(), None);
+        assert_eq!(session.apply_command(stop.clone()), Ok(1));
+        let first = session.last_group_stop().unwrap();
+        assert_eq!((first.epoch(), first.revision()), (3, 1));
+        assert!(matches!(
+            session.apply_command(stop.clone()),
+            Err(SessionError::DuplicateCommand { .. })
+        ));
+        assert_eq!(session.last_group_stop(), Some(first));
+        let mut stale = stop.clone();
+        stale.epoch = 2;
+        stale.command_seq = 8;
+        assert!(matches!(
+            session.apply_command(stale),
+            Err(SessionError::StaleEpoch { .. })
+        ));
+        assert_eq!(session.last_group_stop(), Some(first));
+        let restored: UnifiedGroupSession =
+            serde_json::from_value(serde_json::to_value(&session).unwrap()).unwrap();
+        assert_eq!(restored.last_group_stop(), Some(first));
+        // Existing revision arithmetic saturates; the marker still distinguishes
+        // a distinct stop with its deduplicated session command sequence.
+        session.state_revision = u64::MAX;
+        let mut next = stop.clone();
+        next.command_seq = 8;
+        assert_eq!(session.apply_command(next.clone()), Ok(u64::MAX));
+        let saturated = session.last_group_stop().unwrap();
+        next.command_seq = 9;
+        assert_eq!(session.apply_command(next), Ok(u64::MAX));
+        assert_ne!(session.last_group_stop(), Some(saturated));
+    }
+
+    #[test]
+    fn exhausted_local_silence_is_reduce_only_sticky_and_does_not_invent_a_revision() {
+        let mut session = UnifiedGroupSession::new("g", "leader", 3);
+        assert_eq!(
+            session.apply_exhausted_local_silence(ExhaustedLocalSilence::MuteMember {
+                member_id: "missing".to_string(),
+            }),
+            Err(SessionError::UnknownMember {
+                member_id: "missing".to_string()
+            })
+        );
+        assert!(!session.control_sequence_exhausted());
+        assert_eq!(session.last_group_stop(), None);
+        let stop = ExhaustedLocalSilence::Stop {
+            now_ns: 10,
+            irrevocable_dma_tail_ns: 2,
+        };
+        assert_eq!(
+            session.apply_exhausted_local_silence(stop.clone()),
+            Ok(ExhaustedSilenceOutcome::Applied { revision: 0 })
+        );
+        let marker = session.last_group_stop().unwrap();
+        assert_eq!((marker.epoch(), marker.revision()), (3, 0));
+        assert!(session.control_sequence_exhausted());
+        assert_eq!(session.state_revision, 0);
+        assert_eq!(
+            session.apply_exhausted_local_silence(stop),
+            Ok(ExhaustedSilenceOutcome::AlreadySilent { revision: 0 })
+        );
+        assert_eq!(session.last_group_stop(), Some(marker));
+        let clone = session.clone();
+        assert!(clone.control_sequence_exhausted());
+        let restored: UnifiedGroupSession =
+            serde_json::from_value(serde_json::to_value(&session).unwrap()).unwrap();
+        assert!(restored.control_sequence_exhausted());
+        assert_eq!(restored.last_group_stop(), Some(marker));
+    }
+
+    #[test]
+    fn exhausted_local_mute_only_sets_mute_and_refuses_to_unmute() {
+        let board = canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap();
+        let mut session = UnifiedGroupSession::new("g", "leader", 3);
+        session
+            .apply_command(FencedControlCommand {
+                epoch: 3,
+                command_seq: 1,
+                payload: GroupCommandPayload::AdmitMember {
+                    member_id: "m".into(),
+                    board,
+                    role: ChannelRole::Stereo,
+                },
+            })
+            .unwrap();
+        let before = session.state_revision;
+        let mute = ExhaustedLocalSilence::MuteMember {
+            member_id: "m".into(),
+        };
+        assert_eq!(
+            session.apply_exhausted_local_silence(mute.clone()),
+            Ok(ExhaustedSilenceOutcome::Applied { revision: before })
+        );
+        assert!(session.members["m"].muted);
+        assert_eq!(
+            session.apply_exhausted_local_silence(mute),
+            Ok(ExhaustedSilenceOutcome::AlreadySilent { revision: before })
+        );
+        assert_eq!(session.state_revision, before);
+        assert!(session.control_sequence_exhausted());
+    }
+
+    #[test]
+    fn exhausted_stop_preserves_and_can_extend_existing_irrevocable_tail() {
+        let board = canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap();
+        let mut session = UnifiedGroupSession::new("g", "leader", 3);
+        session
+            .apply_command(FencedControlCommand {
+                epoch: 3,
+                command_seq: 1,
+                payload: GroupCommandPayload::AdmitMember {
+                    member_id: "m".into(),
+                    board,
+                    role: ChannelRole::Stereo,
+                },
+            })
+            .unwrap();
+        session
+            .apply_command(FencedControlCommand {
+                epoch: 3,
+                command_seq: 2,
+                payload: GroupCommandPayload::StopGroupPlayback {
+                    now_ns: 10,
+                    irrevocable_dma_tail_ns: 10,
+                },
+            })
+            .unwrap();
+        let rev = session.state_revision;
+        assert_eq!(
+            session.apply_exhausted_local_silence(ExhaustedLocalSilence::Stop {
+                now_ns: 1,
+                irrevocable_dma_tail_ns: 0,
+            }),
+            Ok(ExhaustedSilenceOutcome::AlreadySilent { revision: rev })
+        );
+        assert_eq!(
+            session.members["m"].lifecycle,
+            MemberLifecycleState::StoppingDmaTail {
+                tail_complete_ns: 20
+            }
+        );
+        assert_eq!(
+            session.apply_exhausted_local_silence(ExhaustedLocalSilence::Stop {
+                now_ns: 30,
+                irrevocable_dma_tail_ns: 5,
+            }),
+            Ok(ExhaustedSilenceOutcome::Applied { revision: rev })
+        );
+        assert_eq!(
+            session.members["m"].lifecycle,
+            MemberLifecycleState::StoppingDmaTail {
+                tail_complete_ns: 35
+            }
+        );
+        assert_eq!(session.state_revision, rev);
+    }
+
+    #[test]
+    fn exhausted_already_silent_stop_keeps_ordinary_marker() {
+        let mut session = UnifiedGroupSession::new("g", "leader", 3);
+        session.state_revision = u64::MAX;
+        session
+            .apply_command(FencedControlCommand {
+                epoch: 3,
+                command_seq: u64::MAX,
+                payload: GroupCommandPayload::StopGroupPlayback {
+                    now_ns: 1,
+                    irrevocable_dma_tail_ns: 0,
+                },
+            })
+            .unwrap();
+        let normal = session.last_group_stop();
+        assert_eq!(
+            session.apply_exhausted_local_silence(ExhaustedLocalSilence::Stop {
+                now_ns: 1,
+                irrevocable_dma_tail_ns: 0,
+            }),
+            Ok(ExhaustedSilenceOutcome::AlreadySilent { revision: u64::MAX })
+        );
+        assert_eq!(session.last_group_stop(), normal);
+        assert!(session.control_sequence_exhausted());
+        assert_eq!(session.state_revision, u64::MAX);
+    }
+
+    #[test]
+    fn exhausted_effect_has_distinct_marker_at_saturated_revision() {
+        let board = canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap();
+        let mut session = UnifiedGroupSession::new("g", "leader", 3);
+        session.state_revision = u64::MAX;
+        session
+            .apply_command(FencedControlCommand {
+                epoch: 3,
+                command_seq: 1,
+                payload: GroupCommandPayload::StopGroupPlayback {
+                    now_ns: 1,
+                    irrevocable_dma_tail_ns: 0,
+                },
+            })
+            .unwrap();
+        let previous_stop = session.last_group_stop();
+        session
+            .apply_command(FencedControlCommand {
+                epoch: 3,
+                command_seq: 2,
+                payload: GroupCommandPayload::AdmitMember {
+                    member_id: "m".into(),
+                    board,
+                    role: ChannelRole::Stereo,
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            session.apply_exhausted_local_silence(ExhaustedLocalSilence::Stop {
+                now_ns: 2,
+                irrevocable_dma_tail_ns: 1,
+            }),
+            Ok(ExhaustedSilenceOutcome::Applied { revision: u64::MAX })
+        );
+        assert_ne!(session.last_group_stop(), previous_stop);
+        assert_eq!(
+            session.members["m"].lifecycle,
+            MemberLifecycleState::StoppingDmaTail {
+                tail_complete_ns: 3
+            }
+        );
+        assert!(session.control_sequence_exhausted());
+        assert_eq!(session.state_revision, u64::MAX);
+    }
 
     #[test]
     fn unified_group_combines_s1_ppc_and_s2_mips_and_enforces_epoch_and_dma_tail() {

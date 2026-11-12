@@ -101,6 +101,8 @@ pub use submit_log::MAX_PENDING_REJECTS;
 pub enum Outcome {
     /// Applied; `revision` is the session's state revision after it.
     Committed { revision: u64 },
+    /// The authenticated local silence was already in effect; no new revision was created.
+    AlreadySilent { revision: u64 },
     /// Removed by a cancel before it was applied.
     Withdrawn,
     /// This command was a cancel, and it withdrew `target_seq`.
@@ -112,6 +114,8 @@ pub enum Outcome {
 /// Why an accepted command had no effect.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
+    /// The session command-number space cannot produce another safe fence.
+    SequenceExhausted,
     StaleEpoch {
         request: u64,
         current: u64,
@@ -547,6 +551,8 @@ pub struct ControlChannel<A: PeerAuthority> {
     revision_floor: Option<u64>,
     /// The stored high-water mark the owner restored before the first `step`; zero if none.
     restored_high_water: u64,
+    /// True only for known exhausted authority, including a restored durable marker.
+    restored_sequence_exhausted: bool,
     /// The group lease (G01 `AuthorityToken`) under which this channel may mutate the group. `None`
     /// until the owner installs one, and again after a restart: the channel fails closed.
     lease: Option<AuthorityToken>,
@@ -572,6 +578,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
             next_session_seq: config.session_seq_base,
             revision_floor: None,
             restored_high_water: 0,
+            restored_sequence_exhausted: false,
             lease: None,
             config,
             ordinary: VecDeque::new(),
@@ -684,6 +691,28 @@ impl<A: PeerAuthority> ControlChannel<A> {
     #[must_use]
     pub fn revision_floor(&self) -> Option<u64> {
         self.revision_floor
+    }
+
+    /// True when the current session cannot be assigned another safe channel fence.
+    /// The terminal value is reserved to avoid reusing it after a saturated restart.
+    #[must_use]
+    pub fn session_sequence_exhausted(&self, session: &UnifiedGroupSession) -> bool {
+        // MAX is also the unreadable-journal sentinel, not an observed mark.
+        // Do not reinterpret that separate existing recovery condition as a
+        // proven allocator exhaustion; its own revision gate remains in force.
+        let restored = if self.restored_high_water == REFUSING_FLOOR {
+            0
+        } else {
+            self.restored_high_water
+        };
+        session.control_sequence_exhausted()
+            || self.restored_sequence_exhausted
+            || self.next_session_seq == u64::MAX
+            || self
+                .config
+                .session_seq_base
+                .checked_add(session.state_revision.max(restored))
+                .is_none_or(|next| next == u64::MAX)
     }
 
     /// The session error behind the most recent `Refusal::InternalFault`, for the operator. Holds a
@@ -943,6 +972,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
         } = times;
         match &outcome {
             Outcome::Committed { .. } => bump(&mut self.stats.committed),
+            Outcome::AlreadySilent { .. } => {}
             Outcome::Withdrawn => bump(&mut self.stats.withdrawn),
             Outcome::CancelApplied { .. } => bump(&mut self.stats.cancels_applied),
             Outcome::Refused(refusal) => {
@@ -1116,7 +1146,10 @@ impl<A: PeerAuthority> ControlChannel<A> {
                 )
             };
             if self.defer_facts
-                && matches!(outcome, Outcome::Committed { .. })
+                && matches!(
+                    outcome,
+                    Outcome::Committed { .. } | Outcome::AlreadySilent { .. }
+                )
                 && Self::silences_locally(&item)
             {
                 self.silenced.push(item.clone());
@@ -1416,6 +1449,41 @@ impl<A: PeerAuthority> ControlChannel<A> {
             ControlCommand::Cancel { .. } => return Outcome::Refused(Refusal::NotCancellable),
         };
 
+        // Never reuse the terminal session fence, including after a saturated restart.
+        // Only an authenticated, still-current local user's reduce-only commands may
+        // use the session's explicit exhausted-silence reducer.
+        if self.session_sequence_exhausted(session) {
+            self.next_session_seq = u64::MAX;
+            if !Self::silences_locally(item) {
+                return Outcome::Refused(Refusal::SequenceExhausted);
+            }
+            let operation = match body.command() {
+                ControlCommand::StopGroupPlayback {
+                    now_ns,
+                    irrevocable_dma_tail_ns,
+                } => franken_session::ExhaustedLocalSilence::Stop {
+                    now_ns: *now_ns,
+                    irrevocable_dma_tail_ns: *irrevocable_dma_tail_ns,
+                },
+                ControlCommand::SetMemberMute {
+                    member_id,
+                    muted: true,
+                } => franken_session::ExhaustedLocalSilence::MuteMember {
+                    member_id: member_id.clone(),
+                },
+                _ => return Outcome::Refused(Refusal::SequenceExhausted),
+            };
+            return match session.apply_exhausted_local_silence(operation) {
+                Ok(franken_session::ExhaustedSilenceOutcome::Applied { revision }) => {
+                    Outcome::Committed { revision }
+                }
+                Ok(franken_session::ExhaustedSilenceOutcome::AlreadySilent { revision }) => {
+                    Outcome::AlreadySilent { revision }
+                }
+                Err(error) => Outcome::Refused(Refusal::Session(error)),
+            };
+        }
+
         // A relative command is the one kind that must never be applied twice, so its duplicate-suppression record is
         // made durable BEFORE the effect, here and not earlier (a refusal above leaves the command free to be sent
         // again) and not after (a crash between the effect and a later store would leave an effect nobody remembers).
@@ -1434,12 +1502,18 @@ impl<A: PeerAuthority> ControlChannel<A> {
         // The larger of the next counter value and base + revision. The revision only ever grows, so a
         // restarted channel lands above everything its predecessor used; the counter keeps a refused
         // number (which the revision does not move on) from being tried twice.
-        let command_seq = self.next_session_seq.max(
-            self.config
-                .session_seq_base
-                .saturating_add(session.state_revision),
-        );
-        self.next_session_seq = command_seq.saturating_add(1);
+        let Some(base) = self
+            .config
+            .session_seq_base
+            .checked_add(session.state_revision)
+        else {
+            return Outcome::Refused(Refusal::SequenceExhausted);
+        };
+        let command_seq = self.next_session_seq.max(base);
+        let Some(next) = command_seq.checked_add(1) else {
+            return Outcome::Refused(Refusal::SequenceExhausted);
+        };
+        self.next_session_seq = next;
         match session.apply_command(FencedControlCommand {
             epoch: session.current_epoch,
             command_seq,
@@ -1748,6 +1822,194 @@ mod tests {
 
     fn committed(revision: u64) -> Outcome {
         Outcome::Committed { revision }
+    }
+
+    #[test]
+    fn exhausted_sequence_still_applies_authenticated_local_stop_and_mute() {
+        let mut rig = Rig::roomy();
+        // Another caller has already spent MAX: reissuing it would be a duplicate.
+        rig.session.state_revision = u64::MAX;
+        rig.session
+            .apply_command(FencedControlCommand {
+                epoch: EPOCH,
+                command_seq: u64::MAX,
+                payload: GroupCommandPayload::SetGroupVolume {
+                    volume_0_to_100: 50,
+                },
+            })
+            .unwrap();
+        let before_stop = rig.session.last_group_stop();
+        let prior_revision = rig.session.state_revision;
+        let request = rig.req("panel", 1, EPOCH, None, stop());
+        assert!(matches!(
+            rig.submit(request.clone()),
+            SubmitResult::Queued { .. }
+        ));
+        let result = rig.step();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].outcome, committed(prior_revision));
+        assert!(rig.session.control_sequence_exhausted());
+        assert_ne!(rig.session.last_group_stop(), before_stop);
+        assert!(matches!(
+            rig.session.members["kitchen"].lifecycle,
+            franken_session::MemberLifecycleState::StoppingDmaTail { .. }
+        ));
+        assert_eq!(rig.session.state_revision, prior_revision);
+        assert_eq!(
+            rig.submit(request),
+            SubmitResult::Settled(result[0].outcome.clone())
+        );
+
+        let request = rig.req("panel", 2, EPOCH, None, mute("kitchen", true));
+        assert!(matches!(
+            rig.submit(request.clone()),
+            SubmitResult::Queued { .. }
+        ));
+        let result = rig.step();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].outcome, committed(prior_revision));
+        assert!(rig.session.members["kitchen"].muted);
+        assert_eq!(rig.session.state_revision, prior_revision);
+        assert_eq!(
+            rig.submit(request),
+            SubmitResult::Settled(result[0].outcome.clone())
+        );
+
+        let duplicate_silence = rig.req("panel", 3, EPOCH, None, mute("kitchen", true));
+        assert!(matches!(
+            rig.submit(duplicate_silence.clone()),
+            SubmitResult::Queued { .. }
+        ));
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::AlreadySilent {
+                revision: prior_revision
+            }
+        );
+        assert_eq!(
+            rig.submit(duplicate_silence),
+            SubmitResult::Settled(Outcome::AlreadySilent {
+                revision: prior_revision
+            })
+        );
+    }
+
+    #[test]
+    fn exhausted_sequence_never_authorizes_louder_or_remote_changes() {
+        let mut rig = Rig::roomy();
+        rig.session.state_revision = u64::MAX;
+        let prior_volume = rig.session.group_master_volume;
+        let ordinary = rig.req("panel", 1, EPOCH, None, set_group(90));
+        assert!(matches!(rig.submit(ordinary), SubmitResult::Queued { .. }));
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::SequenceExhausted)
+        );
+        assert_eq!(rig.session.group_master_volume, prior_volume);
+        let remote = rig.req("ctl-a", 1, EPOCH, None, stop());
+        assert!(matches!(rig.submit(remote), SubmitResult::Queued { .. }));
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::SequenceExhausted)
+        );
+        assert_eq!(rig.session.last_group_stop(), None);
+        assert_eq!(rig.session.state_revision, u64::MAX);
+        let unmute = rig.req("panel", 2, EPOCH, None, mute("kitchen", false));
+        assert!(matches!(rig.submit(unmute), SubmitResult::Queued { .. }));
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::SequenceExhausted)
+        );
+        assert!(!rig.session.control_sequence_exhausted());
+        assert!(rig.channel.session_sequence_exhausted(&rig.session));
+    }
+
+    #[test]
+    fn exhausted_silence_still_requires_current_local_authentication() {
+        let mut rig = Rig::roomy();
+        rig.session.state_revision = u64::MAX;
+        let body = Rig::body("panel", 1, EPOCH, None, stop());
+        let forged = ControlRequest::new(
+            body.clone(),
+            compute_proof(b"attacker", &body.signing_bytes()),
+        );
+        assert_eq!(
+            rig.submit(forged),
+            SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::BadProof))
+        );
+        let valid = rig.sign(body);
+        assert!(matches!(rig.submit(valid), SubmitResult::Queued { .. }));
+        rig.channel.authority_mut().revoke(&id("panel"));
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::AuthorityExpired)
+        );
+        assert_eq!(rig.session.last_group_stop(), None);
+        assert!(!rig.session.control_sequence_exhausted());
+    }
+
+    #[test]
+    fn checked_exhaustion_boundary_accounts_for_restored_floor() {
+        let mut rig = Rig::roomy();
+        let base = rig.channel.config.session_seq_base;
+        rig.session.state_revision = u64::MAX - base - 1;
+        assert!(!rig.channel.session_sequence_exhausted(&rig.session));
+        rig.session.state_revision += 1;
+        assert!(rig.channel.session_sequence_exhausted(&rig.session));
+        rig.session.state_revision = 2;
+        rig.channel.restore_high_water(u64::MAX - base).unwrap();
+        assert!(rig.channel.session_sequence_exhausted(&rig.session));
+    }
+
+    #[test]
+    fn last_safe_fence_remains_recorded_when_local_silence_follows() {
+        let mut rig = Rig::roomy();
+        let before = u64::MAX - rig.channel.config.session_seq_base - 1;
+        rig.session.state_revision = before;
+        let volume = rig.req("panel", 1, EPOCH, None, set_group(65));
+        assert!(matches!(rig.submit(volume), SubmitResult::Queued { .. }));
+        assert_eq!(rig.step()[0].outcome, committed(before + 1));
+        assert!(rig.channel.session_sequence_exhausted(&rig.session));
+        let stop = rig.req("panel", 2, EPOCH, None, stop());
+        assert!(matches!(rig.submit(stop), SubmitResult::Queued { .. }));
+        assert_eq!(rig.step()[0].outcome, committed(before + 1));
+        assert_eq!(rig.session.state_revision, before + 1);
+        assert_eq!(rig.session.group_master_volume, 65);
+        assert_eq!(
+            rig.session.apply_command(FencedControlCommand {
+                epoch: EPOCH,
+                command_seq: u64::MAX - 1,
+                payload: GroupCommandPayload::SetGroupVolume {
+                    volume_0_to_100: 90
+                },
+            }),
+            Err(SessionError::DuplicateCommand {
+                epoch: EPOCH,
+                command_seq: u64::MAX - 1
+            })
+        );
+        assert_eq!(rig.session.group_master_volume, 65);
+    }
+
+    #[test]
+    fn unreadable_mark_sentinel_is_not_a_proven_exhausted_sequence() {
+        let mut rig = Rig::roomy();
+        rig.channel.restore_high_water(REFUSING_FLOOR).unwrap();
+        assert!(!rig.channel.session_sequence_exhausted(&rig.session));
+        let local = rig.req("panel", 1, EPOCH, None, set_group(65));
+        assert!(matches!(rig.submit(local), SubmitResult::Queued { .. }));
+        assert!(matches!(rig.step()[0].outcome, Outcome::Committed { .. }));
+        assert_eq!(rig.session.group_master_volume, 65);
+        let remote = rig.req("ctl-a", 1, EPOCH, None, set_group(70));
+        assert!(matches!(rig.submit(remote), SubmitResult::Queued { .. }));
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::StaleRevision {
+                observed: rig.session.state_revision,
+                floor: REFUSING_FLOOR,
+            })
+        );
+        assert_eq!(rig.session.group_master_volume, 65);
     }
 
     // ----------------------------------------------------------------- the basic path

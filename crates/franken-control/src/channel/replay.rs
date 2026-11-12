@@ -160,6 +160,7 @@ fn config_from(doc: &Value, scenario: &Value) -> ChannelConfig {
 
 fn refusal_name(refusal: &Refusal) -> String {
     match refusal {
+        Refusal::SequenceExhausted => "sequence_exhausted".to_string(),
         Refusal::StaleEpoch { .. } => "stale_epoch".to_string(),
         Refusal::EpochAhead { .. } => "epoch_ahead".to_string(),
         Refusal::RevisionMismatch { .. } => "revision_mismatch".to_string(),
@@ -180,11 +181,32 @@ fn refusal_name(refusal: &Refusal) -> String {
 
 fn show_outcome(outcome: &Outcome) -> String {
     match outcome {
+        Outcome::AlreadySilent { revision } => format!("already_silent:{revision}"),
         Outcome::Committed { revision } => format!("committed:{revision}"),
         Outcome::Withdrawn => "withdrawn".to_string(),
         Outcome::CancelApplied { target_seq } => format!("cancel_applied:{target_seq}"),
         Outcome::Refused(refusal) => format!("refused:{}", refusal_name(refusal)),
     }
+}
+
+#[test]
+fn exhausted_and_already_silent_replay_names_are_distinct() {
+    assert_eq!(
+        refusal_name(&Refusal::SequenceExhausted),
+        "sequence_exhausted"
+    );
+    assert_eq!(
+        show_outcome(&Outcome::Refused(Refusal::SequenceExhausted)),
+        "refused:sequence_exhausted"
+    );
+    assert_eq!(
+        show_outcome(&Outcome::AlreadySilent { revision: u64::MAX }),
+        format!("already_silent:{}", u64::MAX)
+    );
+    assert_eq!(
+        show_outcome(&Outcome::Committed { revision: u64::MAX }),
+        format!("committed:{}", u64::MAX)
+    );
 }
 
 fn show_submit(result: &SubmitResult) -> String {

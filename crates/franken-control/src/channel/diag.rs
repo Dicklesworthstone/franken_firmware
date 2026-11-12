@@ -1034,6 +1034,7 @@ fn describe_ack(outcome: &AckOutcome) -> (&'static str, String, Option<&'static 
 /// The vocabulary word for a refusal. Nothing here depends on what a peer sent.
 pub(crate) fn refusal_kind(refusal: &Refusal) -> &'static str {
     match refusal {
+        Refusal::SequenceExhausted => "sequence_exhausted",
         Refusal::StaleEpoch { .. } => "stale_epoch",
         Refusal::EpochAhead { .. } => "epoch_ahead",
         Refusal::RevisionMismatch { .. } => "revision_mismatch",
@@ -1066,6 +1067,10 @@ pub(crate) fn session_error_kind(error: &SessionError) -> &'static str {
 /// `(event kind suffix, message)` for an outcome, from the fixed vocabulary and numbers only.
 fn describe(outcome: &Outcome) -> (String, String) {
     match outcome {
+        Outcome::AlreadySilent { revision } => (
+            "already_silent".to_string(),
+            format!("already silent at revision {revision}"),
+        ),
         Outcome::Committed { revision } => (
             "committed".to_string(),
             format!("committed at revision {revision}"),
@@ -1104,6 +1109,7 @@ fn describe(outcome: &Outcome) -> (String, String) {
 /// The words for the refusals that carry no numbers.
 fn refusal_text(refusal: &Refusal) -> &'static str {
     match refusal {
+        Refusal::SequenceExhausted => "session command sequence exhausted",
         Refusal::UnknownMember { .. } => "the group has no such member",
         Refusal::Session(_) => "the session refused the command",
         Refusal::InternalFault => {
@@ -1435,6 +1441,7 @@ mod tests {
     fn every_refusal_has_a_distinct_vocabulary_word_and_no_text_from_a_peer() {
         let m = || "tok-9f3a1c77e0b2".to_string();
         let refusals = [
+            Refusal::SequenceExhausted,
             Refusal::StaleEpoch {
                 request: 1,
                 current: 2,
@@ -1473,7 +1480,25 @@ mod tests {
             );
             assert!(!kind.contains("tok-"), "{kind}");
         }
-        assert_eq!(seen.len(), 15);
+        assert_eq!(seen.len(), 16);
+    }
+
+    #[test]
+    fn already_silent_is_distinct_from_a_commit_in_the_log() {
+        assert_eq!(
+            describe(&Outcome::AlreadySilent { revision: 7 }),
+            (
+                "already_silent".to_string(),
+                "already silent at revision 7".to_string()
+            )
+        );
+        assert_eq!(
+            describe(&Outcome::Refused(Refusal::SequenceExhausted)),
+            (
+                "refused.sequence_exhausted".to_string(),
+                "session command sequence exhausted".to_string()
+            )
+        );
     }
 
     #[test]

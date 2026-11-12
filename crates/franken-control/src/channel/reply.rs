@@ -51,7 +51,10 @@ use super::request::{ControlRequest, Lane, RequestBody};
 
 /// Magic that opens every signed reply body. It differs from the request and acknowledgement magics.
 pub const REPLY_MAGIC: [u8; 4] = *b"FFCR";
-/// Version of the reply encoding.
+/// Version of the reply encoding. The additive AlreadySilent status uses tag 10,
+/// and SequenceExhausted uses refusal code 17. Status 9 and refusal 16 remain
+/// reserved: the original malformed-wire contract requires rejecting them.
+/// Older decoders reject the new codes rather than misclassify their outcomes.
 pub const REPLY_VERSION: u8 = 1;
 /// Length of the request digest a reply is bound to.
 pub const DIGEST_LEN: usize = 32;
@@ -104,6 +107,7 @@ const fn lane_from_code(code: u64) -> Option<Lane> {
 /// [`ReplyStatus::Refused`] are those named in [`RefusalKind::fields_doc`]; the rest are zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefusalKind {
+    SequenceExhausted,
     StaleEpoch,
     EpochAhead,
     RevisionMismatch,
@@ -122,7 +126,7 @@ pub enum RefusalKind {
 }
 
 impl RefusalKind {
-    pub(crate) const ALL: [Self; 15] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::StaleEpoch,
         Self::EpochAhead,
         Self::RevisionMismatch,
@@ -138,6 +142,7 @@ impl RefusalKind {
         Self::NothingToCancel,
         Self::TargetOutOfWindow,
         Self::NotCancellable,
+        Self::SequenceExhausted,
     ];
 
     /// The code on the wire.
@@ -159,6 +164,7 @@ impl RefusalKind {
             Self::NothingToCancel => 13,
             Self::TargetOutOfWindow => 14,
             Self::NotCancellable => 15,
+            Self::SequenceExhausted => 17,
         }
     }
 
@@ -186,6 +192,7 @@ impl RefusalKind {
             Self::NothingToCancel => "nothing_to_cancel",
             Self::TargetOutOfWindow => "target_out_of_window",
             Self::NotCancellable => "not_cancellable",
+            Self::SequenceExhausted => "sequence_exhausted",
         }
     }
 
@@ -196,6 +203,7 @@ impl RefusalKind {
             }
             Self::TargetOutOfWindow => (Field::Number, Field::Unused),
             Self::UnknownMember
+            | Self::SequenceExhausted
             | Self::Session
             | Self::InternalFault
             | Self::NoLease
@@ -295,6 +303,9 @@ pub enum ReplyStatus {
     AlreadyQueued { lane: Lane },
     /// Applied; `revision` is the session's state revision after it.
     Committed { revision: u64 },
+    /// The requested local silence was already in effect; no new effect or fence was made.
+    /// Older decoders reject this new status rather than treating it as committed.
+    AlreadySilent { revision: u64 },
     /// Removed by a cancel before it was applied.
     Withdrawn,
     /// This command was a cancel, and it withdrew `target_seq`.
@@ -313,6 +324,9 @@ impl ReplyStatus {
     #[must_use]
     pub fn from_outcome(outcome: &Outcome) -> Self {
         match outcome {
+            Outcome::AlreadySilent { revision } => Self::AlreadySilent {
+                revision: *revision,
+            },
             Outcome::Committed { revision } => Self::Committed {
                 revision: *revision,
             },
@@ -326,6 +340,7 @@ impl ReplyStatus {
 
     fn from_refusal(refusal: &Refusal) -> Self {
         let (kind, a, b) = match refusal {
+            Refusal::SequenceExhausted => (RefusalKind::SequenceExhausted, 0, 0),
             Refusal::StaleEpoch { request, current } => {
                 (RefusalKind::StaleEpoch, *request, *current)
             }
@@ -404,6 +419,10 @@ impl ReplyStatus {
 
     fn encode(&self, out: &mut Vec<u8>) {
         match self {
+            Self::AlreadySilent { revision } => {
+                out.push(10);
+                out.extend_from_slice(&revision.to_be_bytes());
+            }
             Self::Queued { lane } => {
                 out.push(1);
                 out.push(lane_code(*lane));
@@ -702,6 +721,9 @@ impl Reply {
                 check_fields(kind.fields(), a, b)?;
                 ReplyStatus::Rejected { kind, a, b }
             }
+            10 => ReplyStatus::AlreadySilent {
+                revision: cursor.u64()?,
+            },
             tag => return Err(ReplyError::UnknownStatus { tag }),
         };
         let raw_tag = cursor.take(PROOF_LEN)?;
@@ -1128,6 +1150,29 @@ mod tests {
     }
 
     #[test]
+    fn silence_extensions_use_fresh_wire_codes_and_preserve_reserved_rejections() {
+        let mut encoded = Vec::new();
+        ReplyStatus::AlreadySilent { revision: 13 }.encode(&mut encoded);
+        assert_eq!(encoded, vec![10, 0, 0, 0, 0, 0, 0, 0, 13]);
+        assert_eq!(RefusalKind::SequenceExhausted.code(), 17);
+        assert!(RefusalKind::from_code(16).is_none());
+        // Preserve the original corpus, rather than relabeling formerly
+        // malformed messages as successful silence or exhaustion outcomes.
+        let doc = vectors();
+        for (id, expected) in [("M016", "unknown_status"), ("M019", "unknown_kind")] {
+            let case = doc["malformed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|case| case["id"] == id)
+                .unwrap();
+            let wire = unhex(case["wire_hex"].as_str().unwrap());
+            let error = Reply::from_bytes(&wire).expect_err("reserved wire code decoded");
+            assert_eq!(error.code(), expected, "{id}");
+        }
+    }
+
+    #[test]
     fn malformed_input_fails_to_decode_with_the_named_error() {
         let doc = vectors();
         for v in doc["replies"].as_array().unwrap() {
@@ -1193,6 +1238,10 @@ mod tests {
     fn every_refusal() -> Vec<(Refusal, ReplyStatus)> {
         let refused = |kind, a, b| ReplyStatus::Refused { kind, a, b };
         vec![
+            (
+                Refusal::SequenceExhausted,
+                refused(RefusalKind::SequenceExhausted, 0, 0),
+            ),
             (
                 Refusal::StaleEpoch {
                     request: 3,
@@ -1288,12 +1337,18 @@ mod tests {
         let codes: Vec<u8> = RefusalKind::ALL.iter().map(|k| k.code()).collect();
         assert_eq!(
             codes,
-            (1..=15).collect::<Vec<u8>>(),
-            "codes are 1 to 15 in order, and unique"
+            (1..=15).chain(std::iter::once(17)).collect::<Vec<u8>>(),
+            "original codes 1 to 15 stay stable; 16 stays reserved; exhaustion uses 17"
         );
         assert!(RefusalKind::from_code(0).is_none() && RefusalKind::from_code(16).is_none());
+        assert!(RefusalKind::from_code(18).is_none());
         assert!(RejectionKind::from_code(0).is_none() && RejectionKind::from_code(6).is_none());
 
+        assert_eq!(
+            ReplyStatus::from_outcome(&Outcome::AlreadySilent { revision: 9 }),
+            ReplyStatus::AlreadySilent { revision: 9 }
+        );
+        assert!(!ReplyStatus::AlreadySilent { revision: 9 }.is_committed());
         assert_eq!(
             ReplyStatus::from_outcome(&Outcome::Committed { revision: 9 }),
             ReplyStatus::Committed { revision: 9 }
@@ -1392,6 +1447,7 @@ mod tests {
                 lane: Lane::Priority,
             },
             ReplyStatus::Committed { revision: u64::MAX },
+            ReplyStatus::AlreadySilent { revision: u64::MAX },
             ReplyStatus::Withdrawn,
             ReplyStatus::CancelApplied { target_seq: 298 },
             ReplyStatus::OutOfWindow { floor: 250 },
