@@ -127,6 +127,30 @@ in `toolchain/results/RESULTS.md`: MIPS o32 syscall numbers are 4000-based
 these targets needs `asm_experimental_arch` with explicit `$N` register
 bindings.
 
+## Finite-source host process path
+
+The normal `franken-speaker` executable includes opt-in
+`--source-loopback-send` and `--source-loopback-receive` modes. They compose
+finite Ogg Vorbis/MP3 decoding, owned source policy, paced authenticated UDP
+and N04 preparation over localhost. The sender bounds presentation lookahead;
+the receiver exports prepared PCM to a file. This path provisions its test
+key through stdin and uses an explicitly bounded same-host clock mapping.
+
+Use an already built executable with the process check:
+
+```bash
+scripts/e2e/run-source-loopback --binary target/debug/franken-speaker \
+  --output-dir build/source-loopback-new-run
+```
+
+The output directory must be new; input copies, captured PCM, diagnostics and
+failure artifacts are retained. The script never invokes Cargo. It checks
+the complete short Vorbis and longer MP3 fixtures against independent scalar
+references, exact frame positions and presentation times, plus a wrong-key
+control. Builds and Rust execution follow the repository's centralized RCH
+workflow. These host fixtures do not qualify Spotify/AirPlay sessions, a
+legacy guest runtime, radio performance, a driver or physical audio.
+
 ## Safety and scope
 
 This repo never touches hardware. Flashing, device experiments and

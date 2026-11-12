@@ -31,6 +31,7 @@ pub mod render;
 pub mod render_log;
 pub mod services;
 pub mod source_media;
+pub mod source_runtime;
 
 #[cfg(any(test, feature = "harness"))]
 mod clock_log;

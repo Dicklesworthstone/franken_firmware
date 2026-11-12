@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+mod source_runtime_cli;
+
 use franken_board_profile::canonical_board_catalog;
 #[cfg(feature = "harness")]
 use franken_speaker::run_virtual_house_campaign;
@@ -98,6 +100,9 @@ fn main() -> ExitCode {
     let mode = args.get(1).map(String::as_str).unwrap_or(default_mode);
 
     match mode {
+        "--source-loopback-send" | "--source-loopback-receive" => {
+            source_runtime_cli::main(mode, &args[2..])
+        }
         "--services" => services(),
         "--catalog" => {
             let catalog = canonical_board_catalog();
