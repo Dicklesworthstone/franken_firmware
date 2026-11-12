@@ -151,6 +151,29 @@ control. Builds and Rust execution follow the repository's centralized RCH
 workflow. These host fixtures do not qualify Spotify/AirPlay sessions, a
 legacy guest runtime, radio performance, a driver or physical audio.
 
+The same sender can decode once and distribute to several explicitly
+provisioned local receiver processes. Use `--peers` instead of the single
+`--media`/`--control` pair: each comma-separated entry is
+`ID@127.0.0.1:MEDIA_PORT@127.0.0.1:CONTROL_PORT`. Start each receiver with its
+matching `--peer-id ID` (the original default is 1). The existing carrier
+admits at most eight peers within one shared pacing and queue budget; peer
+IDs and all endpoints must be distinct. One stalled peer does not stop
+publication to healthy peers, but incomplete group delivery exits nonzero
+with per-peer diagnostics. All receivers use the same admitted presentation
+anchor; this is a host fixture clock mapping, not a distributed clock claim.
+
+The multi-receiver process check uses the same independently checked PCM
+fixtures and retains per-process logs and captures:
+
+```bash
+scripts/e2e/run-source-group --binary target/debug/franken-speaker \
+  --output-dir build/source-group-new-run
+```
+
+This checks two- and three-member local groups and wrong-key member
+isolation. It neither discovers Sonos devices nor establishes physical
+output synchronization, native service support, or production group control.
+
 ## Safety and scope
 
 This repo never touches hardware. Flashing, device experiments and

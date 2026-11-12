@@ -21,7 +21,8 @@ use franken_speaker::source_runtime::{
 };
 use franken_stream::carrier::{
     CarrierError, CarrierLimits, CarrierReceiver, CarrierSender, DatagramPort, Lane, MediaSink,
-    N01PeerDisposition, PRIMARY_GROUP, ReceiverLimits, STALL_PROBE_NS, SinkVerdict,
+    N01IsolatedOutcome, N01IsolatedStatus, N01PeerDisposition, PRIMARY_GROUP, ReceiverLimits,
+    STALL_PROBE_NS, SinkVerdict,
 };
 use franken_stream::playout::{
     Admission, BLOCK_FRAMES, BLOCK_PAYLOAD_BYTES, ClockView, MediaPacket, Outcome, PlayoutConfig,
@@ -35,6 +36,102 @@ const HOST_UNCERTAINTY_NS: u64 = 1_000_000;
 const MAX_SAMPLE_SPAN_NS: u64 = 1_000_000;
 const MAX_TIMEOUT_MS: u64 = 60_000;
 const MAX_CONTROL_LINE: u64 = 256;
+const MAX_PEER_LIST_BYTES: usize = 4096;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoopbackPeer {
+    id: u32,
+    media: SocketAddr,
+    control: SocketAddr,
+}
+
+fn peer_id(text: &str) -> Result<u32, String> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("invalid peer id".into());
+    }
+    let id: u32 = text.parse().map_err(|_| "invalid peer id")?;
+    if id == 0 || id > franken_stream::carrier::MAX_ATTRIBUTABLE_PEER_ID {
+        return Err("peer id outside bound".into());
+    }
+    Ok(id)
+}
+
+fn validate_peers(peers: &[LoopbackPeer]) -> Result<(), String> {
+    if peers.is_empty() || peers.len() > CarrierLimits::baseline().max_peers {
+        return Err("peer count outside bound".into());
+    }
+    for (index, peer) in peers.iter().enumerate() {
+        peer_id(&peer.id.to_string())?;
+        for endpoint in [peer.media, peer.control] {
+            if endpoint.ip() != IpAddr::V4(Ipv4Addr::LOCALHOST) || endpoint.port() == 0 {
+                return Err("peer endpoint must be nonzero IPv4 loopback".into());
+            }
+        }
+        if peer.media == peer.control
+            || peers[..index].iter().any(|other| {
+                other.id == peer.id
+                    || [other.media, other.control].contains(&peer.media)
+                    || [other.media, other.control].contains(&peer.control)
+            })
+        {
+            return Err("duplicate peer id or aliased endpoint".into());
+        }
+    }
+    Ok(())
+}
+
+/// Explicit local provisioning, not discovery or distributed group negotiation.
+/// Every entry is ID@MEDIA@CONTROL; the carrier's existing interface cap applies.
+fn peer_list(text: &str) -> Result<Vec<LoopbackPeer>, String> {
+    if text.is_empty() || text.len() > MAX_PEER_LIST_BYTES {
+        return Err("peer list outside bound".into());
+    }
+    let mut peers = Vec::with_capacity(CarrierLimits::baseline().max_peers);
+    for entry in text.split(',') {
+        if peers.len() == CarrierLimits::baseline().max_peers {
+            return Err("peer count outside bound".into());
+        }
+        let mut fields = entry.split('@');
+        let id = peer_id(fields.next().ok_or("missing peer id")?)?;
+        let media = loopback_addr(fields.next().ok_or("missing peer media endpoint")?)?;
+        let control = loopback_addr(fields.next().ok_or("missing peer control endpoint")?)?;
+        if fields.next().is_some() {
+            return Err("extra peer field".into());
+        }
+        peers.push(LoopbackPeer { id, media, control });
+    }
+    validate_peers(&peers)?;
+    Ok(peers)
+}
+
+/// Traversal is fair carrier order, not provisioning order. Every admitted peer
+/// must be accounted exactly once; one stalled peer need not stop healthy ones.
+fn all_peers_queued(outcome: &N01IsolatedOutcome, peers: &[LoopbackPeer]) -> Result<bool, String> {
+    if peers.is_empty()
+        || outcome.status != N01IsolatedStatus::Published
+        || outcome.peer_count != peers.len()
+        || outcome.peer_count > outcome.peers.len()
+        || outcome.peers[outcome.peer_count..]
+            .iter()
+            .any(Option::is_some)
+    {
+        return Err("incomplete peer admission outcome".into());
+    }
+    let mut all_queued = true;
+    for (index, outcome_peer) in outcome.peers[..outcome.peer_count].iter().enumerate() {
+        let entry = outcome_peer.ok_or("missing peer admission outcome")?;
+        if !peers.iter().any(|peer| peer.id == entry.peer)
+            || outcome.peers[..index]
+                .iter()
+                .flatten()
+                .any(|earlier| earlier.peer == entry.peer)
+        {
+            return Err("unknown or duplicate peer admission outcome".into());
+        }
+        all_queued &= entry.disposition == N01PeerDisposition::Queued;
+    }
+    Ok(all_queued)
+}
 
 struct HostClock {
     instant: Instant,
@@ -225,7 +322,13 @@ impl MediaSink for CaptureSink {
     }
 }
 
-fn receive(output: &str, timeout_ms: u64, stream: StreamId, epoch: u64) -> Result<(), String> {
+fn receive(
+    output: &str,
+    timeout_ms: u64,
+    stream: StreamId,
+    epoch: u64,
+    peer: u32,
+) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     let input = control_input();
     let key = fixture_key(&next_control(&input, deadline)?)?;
@@ -238,11 +341,11 @@ fn receive(output: &str, timeout_ms: u64, stream: StreamId, epoch: u64) -> Resul
         SocketAddr::from((Ipv4Addr::LOCALHOST, 9)),
     )
     .map_err(|e| e.to_string())?
-    .with_peer_id(1)
+    .with_peer_id(peer)
     .map_err(|e| e.to_string())?;
     event(
         serde_json::json!({"event":"ready", "media":carrier.media_addr().map_err(|e| e.to_string())?.to_string(),
-        "control":carrier.control_addr().map_err(|e| e.to_string())?.to_string()}),
+        "control":carrier.control_addr().map_err(|e| e.to_string())?.to_string(), "peer_id":peer}),
     )?;
     let start = next_control(&input, deadline)?;
     let fields: Vec<_> = start.split_whitespace().collect();
@@ -369,7 +472,7 @@ fn receive(output: &str, timeout_ms: u64, stream: StreamId, epoch: u64) -> Resul
         "media_read":carrier.stats().media_read, "media_accepted":carrier.stats().media_accepted,
         "media_rejected":carrier.stats().media_rejected,
         "rejected_authentication":sink.receiver.counters().rejected_authentication,
-        "playout_rejected":sink.rejected_playout}),
+        "playout_rejected":sink.rejected_playout, "peer_id":peer}),
     )?;
     result
 }
@@ -377,8 +480,7 @@ fn receive(output: &str, timeout_ms: u64, stream: StreamId, epoch: u64) -> Resul
 fn send(
     path: &str,
     codec: SourceCodec,
-    media: SocketAddr,
-    control: SocketAddr,
+    peers: Vec<LoopbackPeer>,
     timeout_ms: u64,
     stream: StreamId,
     epoch: u64,
@@ -394,12 +496,15 @@ fn send(
         IpAddr::V4(Ipv4Addr::LOCALHOST),
     )
     .map_err(|e| e.to_string())?;
-    carrier
-        .add_peer(1, media, control, 1500)
-        .map_err(|e| e.to_string())?;
+    for peer in &peers {
+        carrier
+            .add_peer(peer.id, peer.media, peer.control, 1500)
+            .map_err(|e| e.to_string())?;
+    }
     event(
         serde_json::json!({"event":"ready", "control":carrier.port().local_addr(Lane::Control)
-        .map_err(|e| format!("control address: {e:?}"))?.to_string()}),
+        .map_err(|e| format!("control address: {e:?}"))?.to_string(),
+        "peer_ids":peers.iter().map(|peer| peer.id).collect::<Vec<_>>()}),
     )?;
     let command = next_control(&input, deadline)?;
     if command == "STOP" {
@@ -471,7 +576,7 @@ fn send(
                 source,
                 policy_epoch: admitted.epoch,
             },
-            peers: vec![1],
+            peers: peers.iter().map(|peer| peer.id).collect(),
             work_and_lead_ns: 40_000_000,
             // N04 MUSIC holds 94 blocks (about 501 ms). Keep the source
             // comfortably inside that window, including our admitted margin.
@@ -499,6 +604,7 @@ fn send(
         }
         if Instant::now() >= deadline {
             runtime.stop();
+            sender_summary("summary", &runtime, &peers, published_frames, anchor)?;
             return Err("sender timeout".into());
         }
         let mut outcomes = None;
@@ -506,10 +612,8 @@ fn send(
         match step.progress {
             RuntimeProgress::Published { frames } => {
                 let outcome = outcomes.ok_or("missing peer admission outcome")?;
-                if outcome.peer_count != 1
-                    || outcome.peers[0]
-                        .is_none_or(|p| p.peer != 1 || p.disposition != N01PeerDisposition::Queued)
-                {
+                let queued = all_peers_queued(&outcome, &peers)?;
+                if peers.len() == 1 && !queued {
                     runtime.stop();
                     return Err("peer did not accept source frame".into());
                 }
@@ -520,32 +624,42 @@ fn send(
                 return Err("source frame expired".into());
             }
             RuntimeProgress::Incomplete => {
-                let counts = runtime.source_counters();
-                event(
-                    serde_json::json!({"event":"summary", "published_frames":published_frames,
-                    "peer":runtime.peer_view(1), "expired_blocks":counts.expired_blocks,
-                    "skipped_fenced":counts.skipped_fenced, "skipped_mtu":counts.skipped_mtu,
-                    "skipped_stalled":counts.skipped_stalled, "skipped_capacity":counts.skipped_capacity,
-                    "skipped_sequence":counts.skipped_sequence, "saturated":counts.saturated}),
-                )?;
                 runtime.stop();
+                sender_summary("summary", &runtime, &peers, published_frames, anchor)?;
                 return Err("source transport drained with loss".into());
             }
             RuntimeProgress::Drained => {
-                let counts = runtime.source_counters();
-                event(
-                    serde_json::json!({"event":"done", "published_frames":published_frames,
-                    "anchor_ns":anchor, "peer":runtime.peer_view(1), "expired_blocks":counts.expired_blocks,
-                    "skipped_fenced":counts.skipped_fenced, "skipped_mtu":counts.skipped_mtu,
-                    "skipped_stalled":counts.skipped_stalled, "skipped_capacity":counts.skipped_capacity,
-                    "skipped_sequence":counts.skipped_sequence, "saturated":counts.saturated}),
-                )?;
+                sender_summary("done", &runtime, &peers, published_frames, anchor)?;
                 return Ok(());
             }
             RuntimeProgress::Waiting | RuntimeProgress::Draining => {}
         }
         thread::sleep(Duration::from_micros(250));
     }
+}
+
+fn sender_summary<P: DatagramPort, C: RuntimeClock>(
+    event_name: &str,
+    runtime: &SourceRuntime<P, C>,
+    peers: &[LoopbackPeer],
+    published_frames: u64,
+    anchor: u64,
+) -> Result<(), String> {
+    let views: Vec<_> = peers
+        .iter()
+        .map(|peer| runtime.peer_view(peer.id).ok_or("missing peer view"))
+        .collect::<Result<_, _>>()?;
+    let counts = runtime.source_counters();
+    // Keep the original first-peer field for the existing single-peer caller.
+    // A multi-peer success still requires the runtime's complete all-peer drain.
+    event(
+        serde_json::json!({"event":event_name, "published_frames":published_frames,
+        "anchor_ns":anchor, "peer":views.first(), "peers":views,
+        "expired_blocks":counts.expired_blocks,
+        "skipped_fenced":counts.skipped_fenced, "skipped_mtu":counts.skipped_mtu,
+        "skipped_stalled":counts.skipped_stalled, "skipped_capacity":counts.skipped_capacity,
+        "skipped_sequence":counts.skipped_sequence, "saturated":counts.saturated}),
+    )
 }
 
 pub fn main(mode: &str, args: &[String]) -> std::process::ExitCode {
@@ -591,24 +705,33 @@ fn run(mode: &str, args: &[String]) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     let epoch = required("--epoch")?.parse().map_err(|_| "invalid epoch")?;
     match mode {
-        "--source-loopback-receive" if options.len() == 4 => {
-            receive(required("--output")?, timeout, stream, epoch)
+        "--source-loopback-receive"
+            if options.len() == 4 || (options.len() == 5 && options.contains_key("--peer-id")) =>
+        {
+            let peer = peer_id(options.get("--peer-id").copied().unwrap_or("1"))?;
+            receive(required("--output")?, timeout, stream, epoch, peer)
         }
-        "--source-loopback-send" if options.len() == 7 => {
+        "--source-loopback-send"
+            if (options.len() == 6 && options.contains_key("--peers"))
+                || (options.len() == 7 && !options.contains_key("--peers")) =>
+        {
             let codec = match required("--codec")? {
                 "mp3" => SourceCodec::Mp3,
                 "ogg-vorbis" => SourceCodec::OggVorbis,
                 _ => return Err("unsupported local codec".into()),
             };
-            send(
-                required("--input")?,
-                codec,
-                loopback_addr(required("--media")?)?,
-                loopback_addr(required("--control")?)?,
-                timeout,
-                stream,
-                epoch,
-            )
+            let peers = if let Some(list) = options.get("--peers") {
+                peer_list(list)?
+            } else {
+                let peers = vec![LoopbackPeer {
+                    id: 1,
+                    media: loopback_addr(required("--media")?)?,
+                    control: loopback_addr(required("--control")?)?,
+                }];
+                validate_peers(&peers)?;
+                peers
+            };
+            send(required("--input")?, codec, peers, timeout, stream, epoch)
         }
         _ => Err("invalid local source loopback options".into()),
     }
@@ -617,6 +740,135 @@ fn run(mode: &str, args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn three_peers() -> Vec<LoopbackPeer> {
+        peer_list("7@127.0.0.1:11001@127.0.0.1:11002,42@127.0.0.1:11003@127.0.0.1:11004,65535@127.0.0.1:11005@127.0.0.1:11006").unwrap()
+    }
+
+    fn outcome_for(peers: &[LoopbackPeer]) -> N01IsolatedOutcome {
+        let mut result = N01IsolatedOutcome {
+            status: N01IsolatedStatus::Published,
+            peers: [None; 64],
+            peer_count: peers.len(),
+            accounted_overlap_bytes: 0,
+        };
+        // The carrier rotates its fair traversal order; configuration order is
+        // deliberately different from report order in this permitted control.
+        for (slot, peer) in result.peers.iter_mut().zip(peers.iter().rev()) {
+            *slot = Some(franken_stream::carrier::N01PeerOutcome {
+                peer: peer.id,
+                disposition: N01PeerDisposition::Queued,
+            });
+        }
+        result
+    }
+
+    #[test]
+    fn explicit_peer_map_preserves_ids_and_accepts_the_existing_eight_peer_bound() {
+        let peers = three_peers();
+        assert_eq!(
+            peers.iter().map(|p| p.id).collect::<Vec<_>>(),
+            [7, 42, 65535]
+        );
+        assert_eq!(peers[1].control.port(), 11004);
+        let entries: Vec<_> = (0..8)
+            .map(|n| {
+                format!(
+                    "{}@127.0.0.1:{}@127.0.0.1:{}",
+                    n + 1,
+                    12001 + n * 2,
+                    12002 + n * 2
+                )
+            })
+            .collect();
+        assert_eq!(peer_list(&entries.join(",")).unwrap().len(), 8);
+        assert!(
+            peer_list(&format!(
+                "{},9@127.0.0.1:13001@127.0.0.1:13002",
+                entries.join(",")
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn peer_map_rejects_duplicates_cross_lane_aliases_and_nonlocal_endpoints() {
+        for bad in [
+            "1@127.0.0.1:11001@127.0.0.1:11002,1@127.0.0.1:11003@127.0.0.1:11004",
+            "1@127.0.0.1:11001@127.0.0.1:11002,2@127.0.0.1:11001@127.0.0.1:11004",
+            "1@127.0.0.1:11001@127.0.0.1:11002,2@127.0.0.1:11002@127.0.0.1:11004",
+            "1@127.0.0.1:11001@127.0.0.1:11002,2@127.0.0.1:11003@127.0.0.1:11001",
+            "1@127.0.0.1:11001@127.0.0.1:11001",
+            "1@192.0.2.1:11001@127.0.0.1:11002",
+            "1@127.0.0.1:11001@192.0.2.1:11002",
+            "1@[::1]:11001@127.0.0.1:11002",
+            "1@127.0.0.1:0@127.0.0.1:11002",
+        ] {
+            assert!(peer_list(bad).is_err(), "accepted {bad}");
+        }
+        assert!(
+            peer_list("1@127.0.0.1:11001@127.0.0.1:11002,2@127.0.0.1:11003@127.0.0.1:11004")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn peer_ids_and_list_grammar_are_bounded_before_opening_source_or_sockets() {
+        for bad in ["", "0", "+1", " 1", "1 ", "-1", "16777216", "4294967296"] {
+            assert!(peer_id(bad).is_err(), "accepted id {bad:?}");
+        }
+        assert_eq!(peer_id("16777215").unwrap(), 0x00ff_ffff);
+        for bad in [
+            "",
+            "1",
+            "1@127.0.0.1:11001",
+            "1@127.0.0.1:11001@127.0.0.1:11002@extra",
+            "1@127.0.0.1:11001@127.0.0.1:11002,",
+        ] {
+            assert!(peer_list(bad).is_err(), "accepted map {bad:?}");
+        }
+        assert!(peer_list(&"1".repeat(MAX_PEER_LIST_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn all_peer_accounting_accepts_fair_order_and_keeps_a_stalled_member_separate() {
+        let peers = three_peers();
+        let mut outcome = outcome_for(&peers);
+        assert_eq!(all_peers_queued(&outcome, &peers), Ok(true));
+        outcome.peers[1].as_mut().unwrap().disposition = N01PeerDisposition::Stalled;
+        assert_eq!(all_peers_queued(&outcome, &peers), Ok(false));
+        outcome.peers[1].as_mut().unwrap().disposition = N01PeerDisposition::Queued;
+        assert_eq!(all_peers_queued(&outcome, &peers), Ok(true));
+    }
+
+    #[test]
+    fn all_peer_accounting_rejects_missing_duplicate_unknown_and_unexpected_rows() {
+        let peers = three_peers();
+        let good = outcome_for(&peers);
+        let mut bad = good.clone();
+        bad.peer_count = 2;
+        assert!(all_peers_queued(&bad, &peers).is_err());
+        bad = good.clone();
+        bad.peers[1] = None;
+        assert!(all_peers_queued(&bad, &peers).is_err());
+        bad = good.clone();
+        bad.peers[1] = bad.peers[0];
+        assert!(all_peers_queued(&bad, &peers).is_err());
+        bad = good.clone();
+        bad.peers[1].as_mut().unwrap().peer = 99;
+        assert!(all_peers_queued(&bad, &peers).is_err());
+        bad = good.clone();
+        bad.peers[3] = bad.peers[0];
+        assert!(all_peers_queued(&bad, &peers).is_err());
+        bad = good.clone();
+        bad.status = N01IsolatedStatus::Expired;
+        assert!(all_peers_queued(&bad, &peers).is_err());
+        bad = good.clone();
+        bad.peer_count = usize::MAX;
+        assert!(all_peers_queued(&bad, &peers).is_err());
+        assert!(all_peers_queued(&outcome_for(&[]), &[]).is_err());
+        assert_eq!(all_peers_queued(&good, &peers), Ok(true));
+    }
 
     #[test]
     fn host_udp_lost_last_report_recovers_without_replaying_pcm_or_trusting_wrong_address() {
