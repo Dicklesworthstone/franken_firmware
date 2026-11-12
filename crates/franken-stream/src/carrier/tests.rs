@@ -6077,3 +6077,104 @@ fn n07_all_peer_accepted_queue_is_fenced_on_route_and_membership_change() {
         }
     }
 }
+
+#[test]
+fn n07_packed_queue_tag_preserves_lengths_flags_and_slot_bound() {
+    let old_field_model = size_of::<OutboundFrame>() + 2 * size_of::<u64>();
+    assert!(size_of::<QueuedFrame>() <= old_field_model);
+    for length in [WIRE_OVERHEAD_BYTES + 1, MAX_DATAGRAM_BYTES] {
+        for protected in [false, true] {
+            let tagged = QueuedWireLen::new(length, protected).unwrap();
+            assert_eq!(tagged.bytes(), length);
+            assert_eq!(tagged.needs_group_clock(), protected);
+        }
+    }
+    for invalid in [0, WIRE_OVERHEAD_BYTES, MAX_DATAGRAM_BYTES + 1, usize::MAX] {
+        assert!(QueuedWireLen::new(invalid, false).is_none());
+        assert!(QueuedWireLen::new(invalid, true).is_none());
+    }
+}
+
+#[test]
+fn n07_packed_queue_keeps_legacy_and_protected_clock_paths_distinct() {
+    let limits = CarrierLimits {
+        peer_queue_packets: 1,
+        pace_burst_bytes: 65_536,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).unwrap();
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let legacy = long_block(0, 0);
+    let wire_len = WIRE_OVERHEAD_BYTES + legacy.payload.len();
+    assert_eq!(sender.submit_media(1, &legacy, 0).unwrap().queued, 1);
+    assert_eq!(sender.peers[0].media_q_bytes, wire_len);
+    assert!(
+        !sender.peers[0]
+            .media_q
+            .front()
+            .unwrap()
+            .group_clock_required()
+    );
+    assert_eq!(sender.pump(1).media_sent, 1);
+    assert_eq!(sender.port.sent[0].1.len(), wire_len);
+
+    let mut protected = long_block(1, 0);
+    protected.payload.fill(0x62);
+    let cancel = AtomicBool::new(false);
+    attempt_n01(
+        &mut sender,
+        PRIMARY_GROUP,
+        1,
+        &[7],
+        &protected,
+        2,
+        0,
+        usize::MAX,
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(sender.peers[0].media_q_bytes, wire_len);
+    let head = sender.peers[0].media_q.front().unwrap();
+    assert!(head.group_clock_required());
+    assert_eq!(head.wire_len(), wire_len);
+    let report = sender.submit_media(1, &legacy, 3).unwrap();
+    assert_eq!((report.queued, report.evicted), (0, 0));
+    assert_eq!(sender.peers[0].media_q_bytes, wire_len);
+    assert_eq!(sender.pump(4).media_sent, 0);
+    assert_eq!(clocked_n01_pump(&mut sender, 5, 5).media_sent, 1);
+    assert_eq!(sender.port.sent[1].1.len(), wire_len);
+    assert_eq!(sender.peers[0].media_q_bytes, 0);
+    let mut receiver = StreamReceiver::new(key(), stream(), 1);
+    assert_eq!(
+        receiver.accept(&sender.port.sent[0].1).unwrap().payload,
+        legacy.payload
+    );
+    assert_eq!(
+        receiver.accept(&sender.port.sent[1].1).unwrap().payload,
+        protected.payload
+    );
+
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let pending = long_block(2, 0);
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &pending,
+            N01AdmissionInputs {
+                interface_now_ns: 6,
+                trusted_group_now_ns: 5,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    sender.fence_n01_group(PRIMARY_GROUP, 1, &snapshot).unwrap();
+    assert_eq!(clocked_n01_pump(&mut sender, 7, 6).media_sent, 0);
+    assert_eq!(sender.port.sent.len(), 2);
+}

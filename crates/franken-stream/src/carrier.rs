@@ -41,8 +41,8 @@ use std::collections::VecDeque;
 use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+    Arc, OnceLock,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 /// IPv4 header (20) plus UDP header (8).
@@ -265,6 +265,33 @@ pub struct N01GroupSnapshot {
     selection: Option<Arc<()>>,
     group: GroupId,
     epoch: u64,
+}
+
+impl N01GroupSnapshot {
+    /// Backing allocation retained by this snapshot's exclusive selection, if
+    /// any. It is shared with the sender while current and must be counted only
+    /// once; after epoch/removal/sender drop, this handle may retain it alone.
+    /// Caller-retained retired handles are not bounded by the sender's group cap.
+    #[must_use]
+    pub fn selection_identity_allocation_bytes(&self) -> usize {
+        if self.selection.is_some() {
+            arc_identity_allocation_bound::<()>()
+        } else {
+            0
+        }
+    }
+}
+
+// This reflects the pinned standard library's ArcInner<T> layout, not a stable
+// Rust ABI. Real allocator controls must validate it for each gated toolchain.
+fn arc_identity_allocation_bound<T>() -> usize {
+    let (layout, _) = std::alloc::Layout::new::<AtomicUsize>()
+        .extend(std::alloc::Layout::new::<AtomicUsize>())
+        .expect("reference-count layout fits");
+    let (layout, _) = layout
+        .extend(std::alloc::Layout::new::<T>())
+        .expect("identity layout fits");
+    layout.pad_to_align().size()
 }
 
 /// Caller-admitted group clock view for the additive N01 pump.
@@ -1063,11 +1090,51 @@ struct PreparedN01Queues {
     group_members: usize,
 }
 
+// The high bit records the queue's clock domain, never a wire byte.
+const QUEUED_CLOCK_TAG: usize = 1_usize << (usize::BITS - 1);
+const _: () = assert!(MAX_DATAGRAM_BYTES < QUEUED_CLOCK_TAG);
+
+#[derive(Clone, Copy)]
+struct QueuedWireLen(usize);
+
+impl QueuedWireLen {
+    fn new(wire_len: usize, group_clock_required: bool) -> Option<Self> {
+        if wire_len <= WIRE_OVERHEAD_BYTES || wire_len > MAX_DATAGRAM_BYTES {
+            return None;
+        }
+        Some(Self(
+            wire_len
+                | if group_clock_required {
+                    QUEUED_CLOCK_TAG
+                } else {
+                    0
+                },
+        ))
+    }
+
+    fn bytes(self) -> usize {
+        self.0 & !QUEUED_CLOCK_TAG
+    }
+
+    fn needs_group_clock(self) -> bool {
+        self.0 & QUEUED_CLOCK_TAG != 0
+    }
+}
+
 struct QueuedFrame {
     frame: OutboundFrame,
-    wire_len: usize,
+    wire_len: QueuedWireLen,
     enqueued_ns: u64,
-    group_clock_required: bool,
+}
+
+impl QueuedFrame {
+    fn wire_len(&self) -> usize {
+        self.wire_len.bytes()
+    }
+
+    fn group_clock_required(&self) -> bool {
+        self.wire_len.needs_group_clock()
+    }
 }
 
 /// A signed datagram the transport refused, kept whole for another attempt. It is never re-signed: its sequence number is its own.
@@ -1226,13 +1293,17 @@ impl PeerState {
                 add_drop(&mut self.counters, kind, old.wire.len());
             }
         } else if let Some(old) = self.media_q.pop_front() {
-            self.media_q_bytes -= old.wire_len;
-            add_drop(&mut self.counters, kind, old.wire_len);
+            self.media_q_bytes -= old.wire_len();
+            add_drop(&mut self.counters, kind, old.wire_len());
         }
     }
 
     fn has_evictable_media(&self) -> bool {
-        !self.fec_q.is_empty() || self.media_q.iter().any(|entry| !entry.group_clock_required)
+        !self.fec_q.is_empty()
+            || self
+                .media_q
+                .iter()
+                .any(|entry| !entry.group_clock_required())
     }
 
     /// Lossy queue pressure cannot evict a frame already accepted by all-peer admission.
@@ -1240,7 +1311,7 @@ impl PeerState {
         let media_index = self
             .media_q
             .iter()
-            .position(|entry| !entry.group_clock_required);
+            .position(|entry| !entry.group_clock_required());
         let media_time = media_index
             .and_then(|index| self.media_q.get(index))
             .map(|entry| entry.enqueued_ns);
@@ -1252,8 +1323,8 @@ impl PeerState {
             true
         } else if let Some(index) = media_index {
             let old = self.media_q.remove(index).expect("index checked");
-            self.media_q_bytes -= old.wire_len;
-            add_drop(&mut self.counters, kind, old.wire_len);
+            self.media_q_bytes -= old.wire_len();
+            add_drop(&mut self.counters, kind, old.wire_len());
             true
         } else {
             false
@@ -1427,7 +1498,7 @@ pub struct CarrierSender<P: DatagramPort = HostUdp> {
     stats: CarrierStats,
     control_stats: ControlStats,
     faults: PortFaults,
-    stage_owner: Arc<AtomicBool>,
+    stage_owner: OnceLock<Arc<AtomicBool>>,
     stage_generation: u64,
     n01_binding_generation: u64,
 }
@@ -1514,7 +1585,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             stats: CarrierStats::default(),
             control_stats: ControlStats::default(),
             faults: PortFaults::default(),
-            stage_owner: Arc::new(AtomicBool::new(false)),
+            stage_owner: OnceLock::new(),
             stage_generation: 0,
             n01_binding_generation: 0,
         })
@@ -1526,6 +1597,69 @@ impl<P: DatagramPort> CarrierSender<P> {
 
     pub fn control_addr(&self) -> Result<SocketAddr, CarrierError> {
         port_addr(&self.port, Lane::Control)
+    }
+
+    /// Size of the owner-identity Arc allocation under the pinned standard library's
+    /// two-reference-count Arc layout. This is separate from sender tables, queued
+    /// payloads and FEC allowances, and is not an RSS or allocator-metadata bound.
+    /// A toolchain changing that private layout requires revalidation against the
+    /// allocator control; this is not a stable Rust ABI guarantee.
+    #[must_use]
+    pub fn owner_identity_allocation_bound() -> usize {
+        arc_identity_allocation_bound::<AtomicBool>()
+    }
+
+    /// Current separately budgeted owner-identity allocation held by this sender.
+    /// It is zero before first successful snapshot or staged FEC preparation;
+    /// once initialized it remains allocated for the sender's lifetime. A token
+    /// or snapshot can retain the same allocation after the sender is dropped.
+    #[must_use]
+    pub fn owner_identity_allocation_bytes(&self) -> usize {
+        if self.stage_owner.get().is_some() {
+            Self::owner_identity_allocation_bound()
+        } else {
+            0
+        }
+    }
+
+    /// Separately held allocation for one exclusive N01 selection identity,
+    /// independently derived from the pinned standard library's Arc layout.
+    #[must_use]
+    pub fn selection_identity_allocation_bound() -> usize {
+        arc_identity_allocation_bound::<()>()
+    }
+
+    /// Bytes in selection identity allocations currently held by sender groups.
+    /// A current snapshot shares its group's allocation, so do not count twice.
+    /// Retired snapshots retaining identities are caller-owned and excluded.
+    #[must_use]
+    pub fn selection_identity_allocation_bytes(&self) -> usize {
+        self.groups
+            .iter()
+            .filter(|group| group.n01_selection.is_some())
+            .count()
+            .saturating_mul(Self::selection_identity_allocation_bound())
+    }
+
+    /// Maximum selection identity bytes held by current sender groups. The
+    /// number of groups is capped by max_peers. Caller-retained retired
+    /// snapshots are separate and can outlive this bound and the sender.
+    #[must_use]
+    pub fn selection_identity_total_bound(&self) -> usize {
+        self.limits
+            .max_peers
+            .saturating_mul(Self::selection_identity_allocation_bound())
+    }
+
+    fn owner_identity(&self) -> &Arc<AtomicBool> {
+        self.stage_owner
+            .get_or_init(|| Arc::new(AtomicBool::new(false)))
+    }
+
+    fn has_owner_identity(&self, owner: &Arc<AtomicBool>) -> bool {
+        self.stage_owner
+            .get()
+            .is_some_and(|ours| Arc::ptr_eq(ours, owner))
     }
 
     /// Port-level faults and rebinds, apart from the model's counters.
@@ -1725,7 +1859,9 @@ impl<P: DatagramPort> CarrierSender<P> {
             .iter()
             .filter(|peer| peer.group == group)
             .any(|peer| {
-                peer.media_q.iter().any(|frame| frame.group_clock_required)
+                peer.media_q
+                    .iter()
+                    .any(|frame| frame.group_clock_required())
                     || peer
                         .held
                         .as_ref()
@@ -1751,7 +1887,11 @@ impl<P: DatagramPort> CarrierSender<P> {
     }
 
     fn no_target_preparation(&self) -> Result<(), CarrierError> {
-        if self.stage_owner.load(Ordering::Acquire) {
+        if self
+            .stage_owner
+            .get()
+            .is_some_and(|owner| owner.load(Ordering::Acquire))
+        {
             return Err(CarrierError::InvalidLimits(
                 "target preparation unavailable",
             ));
@@ -2429,8 +2569,10 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// must include other users of the same budget. Only one token may exist per sender.
     /// The caller must retain exclusive custody of the port: external mutations through
     /// shared backend aliases cannot be observed reliably, including an address ABA.
-    /// The owner identity Arc backing is a fixed sender allocation, excluded from this FEC
-    /// allowance; account for it in the caller's sender budget. This is not an RSS bound.
+    /// The owner identity Arc backing is lazily initialized and excluded from this FEC
+    /// allowance. Reserve [`Self::owner_identity_allocation_bound`] separately before
+    /// preparing; it may stay live after the sender through outstanding tokens or
+    /// snapshots. This is not an RSS bound.
     pub fn prepare_group_target_fec(
         &mut self,
         group: GroupId,
@@ -2554,7 +2696,8 @@ impl<P: DatagramPort> CarrierSender<P> {
         }
         let local_media = self.media_addr()?;
         let local_control = self.control_addr()?;
-        self.stage_owner.store(true, Ordering::Release);
+        let owner = Arc::clone(self.owner_identity());
+        owner.store(true, Ordering::Release);
         Ok(PreparedTargetFec {
             staged: Some(FecGroup {
                 config: common_config,
@@ -2564,7 +2707,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 last_group_ns: None,
                 clock_failed: false,
             }),
-            owner: Arc::clone(&self.stage_owner),
+            owner,
             generation: self.stage_generation,
             group,
             epoch,
@@ -2585,8 +2728,8 @@ impl<P: DatagramPort> CarrierSender<P> {
         mut prepared: PreparedTargetFec,
         retained_budget_bytes: usize,
     ) -> Result<(), CarrierError> {
-        if !Arc::ptr_eq(&self.stage_owner, &prepared.owner)
-            || !self.stage_owner.load(Ordering::Acquire)
+        if !self.has_owner_identity(&prepared.owner)
+            || !prepared.owner.load(Ordering::Acquire)
             || prepared.generation != self.stage_generation
             || self.stage_generation == u64::MAX
         {
@@ -3040,6 +3183,8 @@ impl<P: DatagramPort> CarrierSender<P> {
             return Err(CarrierError::BadPayload { len });
         }
         let wire_len = WIRE_OVERHEAD_BYTES + len;
+        let queued_wire_len =
+            QueuedWireLen::new(wire_len, false).ok_or(CarrierError::BadPayload { len })?;
         let mut report = SubmitReport::default();
         for idx in 0..self.peers.len() {
             if self.peers[idx].group != group {
@@ -3054,9 +3199,8 @@ impl<P: DatagramPort> CarrierSender<P> {
             }
             let queued = QueuedFrame {
                 frame: frame.clone(),
-                wire_len,
+                wire_len: queued_wire_len,
                 enqueued_ns: now_ns,
-                group_clock_required: false,
             };
             self.enqueue_media(idx, queued, &mut report);
         }
@@ -3075,7 +3219,7 @@ impl<P: DatagramPort> CarrierSender<P> {
         let gi = self
             .group_index(group)
             .map_err(AllPeerAdmissionError::Invalid)?;
-        if !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+        if !self.has_owner_identity(&snapshot.owner)
             || snapshot.fence_generation != self.groups[gi].n01_fence_generation
             || self.groups[gi].n01_fence_generation == u64::MAX
             || !n01_selection_matches(&self.groups[gi], snapshot)
@@ -3096,7 +3240,23 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// validate a snapshot's epoch, generation, membership or control authority.
     #[must_use]
     pub fn owns_n01_snapshot(&self, snapshot: &N01GroupSnapshot) -> bool {
-        Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+        self.has_owner_identity(&snapshot.owner)
+    }
+
+    /// Whether this snapshot's selection allocation is still held by its
+    /// sender group. False includes unselected and retired snapshots.
+    #[must_use]
+    pub fn holds_n01_selection(&self, snapshot: &N01GroupSnapshot) -> bool {
+        self.has_owner_identity(&snapshot.owner)
+            && snapshot.selection.as_ref().is_some_and(|claim| {
+                self.groups.iter().any(|group| {
+                    group.id == snapshot.group
+                        && group
+                            .n01_selection
+                            .as_ref()
+                            .is_some_and(|held| Arc::ptr_eq(held, claim))
+                })
+            })
     }
 
     /// Capture the current exact membership before decoding a frame that might need retry.
@@ -3104,6 +3264,9 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// Link state and MTU are rechecked on every attempt and may recover on the same snapshot.
     /// The caller must retain exclusive custody of the backend: mutations through shared
     /// aliases are not observable by this generation and this is not authentication.
+    /// The first successful capture initializes the owner identity. Reserve
+    /// [`Self::owner_identity_allocation_bound`] separately from sender tables and
+    /// queue/FEC budgets; the snapshot may retain it after sender drop.
     pub fn snapshot_n01_group(
         &self,
         group: GroupId,
@@ -3133,7 +3296,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             return Err(AllPeerAdmissionError::MembershipChanged);
         }
         Ok(N01GroupSnapshot {
-            owner: Arc::clone(&self.stage_owner),
+            owner: Arc::clone(self.owner_identity()),
             generation: self.n01_binding_generation,
             fence_generation: self.groups[gi].n01_fence_generation,
             selection: None,
@@ -3144,6 +3307,10 @@ impl<P: DatagramPort> CarrierSender<P> {
 
     /// Acquire exclusive source custody before decoding. Selection lives until the
     /// next epoch and is not cloneable; any queued, held or cached media forbids it.
+    /// Reserve the separate owner- and selection-identity bounds before this attempt: its internal
+    /// successful snapshot can initialize the identity even if a later claim check
+    /// refuses. The selection allocation is shared with the returned snapshot;
+    /// a retired snapshot can keep it alive after the group or sender releases it.
     pub fn claim_n01_source(
         &mut self,
         group: GroupId,
@@ -3193,7 +3360,7 @@ impl<P: DatagramPort> CarrierSender<P> {
     ) -> Result<bool, AllPeerAdmissionError> {
         use AllPeerAdmissionError::{Invalid, MembershipChanged};
         let gi = self.group_index(group).map_err(Invalid)?;
-        if !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+        if !self.has_owner_identity(&snapshot.owner)
             || !n01_incarnation_matches(&self.groups[gi], snapshot, self.n01_binding_generation)
             || snapshot.group != group
             || snapshot.epoch != epoch
@@ -3309,7 +3476,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 current,
             }));
         }
-        if !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+        if !self.has_owner_identity(&snapshot.owner)
             || !n01_incarnation_matches(&self.groups[gi], snapshot, self.n01_binding_generation)
             || snapshot.group != group
             || snapshot.epoch != epoch
@@ -3480,7 +3647,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 current,
             }));
         }
-        if !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+        if !self.has_owner_identity(&snapshot.owner)
             || !n01_incarnation_matches(&self.groups[gi], snapshot, self.n01_binding_generation)
             || snapshot.group != group
             || snapshot.epoch != epoch
@@ -3692,7 +3859,16 @@ impl<P: DatagramPort> CarrierSender<P> {
         use AllPeerAdmissionError::Retry;
         let group_members = self.peers.iter().filter(|peer| peer.group == group).count();
         let members = selected_peers.len();
-        let wire_len = WIRE_OVERHEAD_BYTES + frame.payload.len();
+        let payload_len = frame.payload.len();
+        let wire_len =
+            WIRE_OVERHEAD_BYTES
+                .checked_add(payload_len)
+                .ok_or(AllPeerAdmissionError::Invalid(CarrierError::BadPayload {
+                    len: payload_len,
+                }))?;
+        let queued_wire_len = QueuedWireLen::new(wire_len, true).ok_or(
+            AllPeerAdmissionError::Invalid(CarrierError::BadPayload { len: payload_len }),
+        )?;
         // Existing allocations remain live throughout preparation; count their actual capacity.
         let live = self.n01_live_allocation_bytes()?;
         let mut minimum = add_all_peer_bytes(live, members, std::mem::size_of::<StagedN01Entry>())?;
@@ -3776,9 +3952,8 @@ impl<P: DatagramPort> CarrierSender<P> {
                 replacement,
                 QueuedFrame {
                     frame: copy,
-                    wire_len,
+                    wire_len: queued_wire_len,
                     enqueued_ns: interface_now_ns,
-                    group_clock_required: true,
                 },
                 peer.media_q.len(),
                 peer.media_q.capacity(),
@@ -3833,7 +4008,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             return Err(Cancelled);
         }
         let gi = self.group_index(group).map_err(Invalid)?;
-        if !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+        if !self.has_owner_identity(&snapshot.owner)
             || !n01_incarnation_matches(&self.groups[gi], snapshot, self.n01_binding_generation)
             || snapshot.group != group
             || snapshot.epoch != epoch
@@ -3862,7 +4037,9 @@ impl<P: DatagramPort> CarrierSender<P> {
         let queued_bytes = prepared
             .entries
             .iter()
-            .try_fold(0_usize, |total, entry| total.checked_add(entry.2.wire_len))
+            .try_fold(0_usize, |total, entry| {
+                total.checked_add(entry.2.wire_len())
+            })
             .ok_or(Retry(AllPeerRetry::Capacity))?;
         if packets
             .checked_add(prepared.entries.len())
@@ -3888,7 +4065,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             if peer.fence.is_some() {
                 return Err(Retry(AllPeerRetry::PeerFenced(peer.id)));
             }
-            if peer.path_mtu < queued.wire_len.saturating_add(peer.overhead()) {
+            if peer.path_mtu < queued.wire_len().saturating_add(peer.overhead()) {
                 return Err(Retry(AllPeerRetry::PathMtu(peer.id)));
             }
             if peer
@@ -3897,7 +4074,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 .is_none_or(|total| total > self.limits.peer_queue_packets)
                 || peer
                     .queued_bytes()
-                    .checked_add(queued.wire_len)
+                    .checked_add(queued.wire_len())
                     .is_none_or(|total| total > self.limits.peer_queue_bytes)
             {
                 return Err(Retry(AllPeerRetry::Capacity));
@@ -3931,7 +4108,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 || peer
                     .counters
                     .media_submitted_bytes
-                    .checked_add(queued.wire_len as u64)
+                    .checked_add(queued.wire_len() as u64)
                     .is_none()
             {
                 return Err(Invalid(CarrierError::InvalidLimits(
@@ -3949,7 +4126,7 @@ impl<P: DatagramPort> CarrierSender<P> {
         let actual = prepared.accounted_bytes;
         for (index, mut replacement, queued, _, _, _) in prepared.entries {
             let peer = &mut self.peers[index];
-            let wire_len = queued.wire_len;
+            let wire_len = queued.wire_len();
             while let Some(old) = peer.media_q.pop_front() {
                 replacement.push_back(old);
             }
@@ -3965,7 +4142,7 @@ impl<P: DatagramPort> CarrierSender<P> {
     }
 
     fn enqueue_media(&mut self, idx: usize, queued: QueuedFrame, report: &mut SubmitReport) {
-        let wire_len = queued.wire_len;
+        let wire_len = queued.wire_len();
         loop {
             let peer = &self.peers[idx];
             let fits = peer.queued_packets() < self.limits.peer_queue_packets
@@ -4072,7 +4249,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             .group_index(clock.group)
             .map_err(AllPeerAdmissionError::Invalid)?;
         if snapshot.selection.is_none()
-            || !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+            || !self.has_owner_identity(&snapshot.owner)
             || !n01_incarnation_matches(&self.groups[gi], snapshot, self.n01_binding_generation)
             || snapshot.group != clock.group
             || snapshot.epoch != clock.epoch
@@ -4706,13 +4883,13 @@ impl<P: DatagramPort> CarrierSender<P> {
             let before = peer.media_q.len();
             let mut late_bytes = Vec::new();
             peer.media_q.retain(|q| {
-                let late = if q.group_clock_required {
+                let late = if q.group_clock_required() {
                     group_now.is_some_and(|time| time >= q.frame.consume_by_ns)
                 } else {
                     now_ns > q.frame.consume_by_ns
                 };
                 if late {
-                    late_bytes.push(q.wire_len);
+                    late_bytes.push(q.wire_len());
                 }
                 !late
             });
@@ -4805,7 +4982,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 || {
                     peer.media_q
                         .front()
-                        .is_some_and(|head| head.group_clock_required)
+                        .is_some_and(|head| head.group_clock_required())
                 },
                 |held| held.group_clock_required,
             );
@@ -4818,7 +4995,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             }
             let wire_len = match (&peer.held, peer.media_q.front()) {
                 (Some(held), _) => held.wire_len,
-                (None, Some(head)) => head.wire_len,
+                (None, Some(head)) => head.wire_len(),
                 (None, None) => continue,
             };
             return Some((idx, wire_len + peer.overhead(), false));
@@ -4910,12 +5087,12 @@ impl<P: DatagramPort> CarrierSender<P> {
                     let Some(queued) = self.peers[idx].media_q.pop_front() else {
                         break;
                     };
-                    self.peers[idx].media_q_bytes -= queued.wire_len;
+                    self.peers[idx].media_q_bytes -= queued.wire_len();
                     let (wire_len, enqueued_ns, consume_by_ns, group_clock_required) = (
-                        queued.wire_len,
+                        queued.wire_len(),
                         queued.enqueued_ns,
                         queued.frame.consume_by_ns,
-                        queued.group_clock_required,
+                        queued.group_clock_required(),
                     );
                     let seq = self.peers[idx].sender.next_seq();
                     match self.peers[idx].sender.send(queued.frame) {

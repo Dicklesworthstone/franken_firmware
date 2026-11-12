@@ -1009,3 +1009,299 @@ fn n07_each_group_heap_check_fails_on_its_own_synthetic_edit_of_a_passing_run() 
     check("G-CAP", &|r: &mut GroupRun| r.refused = false);
     check("G-CAP", &|r: &mut GroupRun| r.groups_end -= 1);
 }
+
+#[test]
+fn n07_lazy_owner_identity_is_counted_once_and_retained_by_live_snapshots() {
+    use franken_stream::carrier::{AllPeerAdmissionError, PRIMARY_GROUP};
+    assert!(heap_is_tracked());
+    let mut rig = Rig::new(&ordinary().limits, 1, false);
+    let bound = CarrierSender::<Wire>::owner_identity_allocation_bound();
+    assert!(bound > 0);
+    assert_eq!(rig.sender.owner_identity_allocation_bytes(), 0);
+    assert!(
+        rig.sender
+            .snapshot_n01_group(PRIMARY_GROUP, 1, &[2])
+            .is_err()
+    );
+    assert_eq!(rig.sender.owner_identity_allocation_bytes(), 0);
+
+    let (snapshot, first) = measure_heap(|| rig.sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[1]));
+    let snapshot = snapshot.expect("the real admitted peer can be snapshotted");
+    assert_eq!(first.net_bytes, isize::try_from(bound).unwrap());
+    assert_eq!(first.peak_above_start, bound);
+    assert_eq!(rig.sender.owner_identity_allocation_bytes(), bound);
+    assert!(rig.sender.owns_n01_snapshot(&snapshot));
+
+    let (again, second) = measure_heap(|| rig.sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[1]));
+    let again = again.expect("a repeated snapshot shares the same identity");
+    assert_eq!(second.net_bytes, 0);
+    assert_eq!(second.peak_above_start, 0);
+    assert!(rig.sender.owns_n01_snapshot(&again));
+    drop(again);
+
+    let foreign = Rig::new(&ordinary().limits, 1, false);
+    assert_eq!(foreign.sender.owner_identity_allocation_bytes(), 0);
+    assert!(!foreign.sender.owns_n01_snapshot(&snapshot));
+    assert_eq!(foreign.sender.owner_identity_allocation_bytes(), 0);
+    let foreign_snapshot = foreign
+        .sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[1])
+        .unwrap();
+    assert!(foreign.sender.owns_n01_snapshot(&foreign_snapshot));
+    assert!(!rig.sender.owns_n01_snapshot(&foreign_snapshot));
+    assert!(!foreign.sender.owns_n01_snapshot(&snapshot));
+
+    // Warm the actual packet/cache/queue path before measuring steady state.
+    for _ in 0..3 {
+        rig.step(false);
+        rig.clear();
+    }
+    let steady_level = rig.meter.level;
+    let sent_before = rig.sender.peer_view(1).unwrap().counters.media_sent_packets;
+    // Exercise actual packet submission/pumping/reporting, not an idle loop.
+    for _ in 0..12 {
+        rig.step(false);
+        rig.clear();
+        assert_eq!(rig.sender.owner_identity_allocation_bytes(), bound);
+        let (ours, check) = measure_heap(|| rig.sender.owns_n01_snapshot(&snapshot));
+        assert!(ours);
+        assert_eq!((check.net_bytes, check.peak_above_start), (0, 0));
+    }
+    assert!(rig.sender.peer_view(1).unwrap().counters.media_sent_packets > sent_before);
+    assert_eq!(rig.meter.level, steady_level);
+    rig.sender.advance_epoch(2).unwrap();
+    assert!(matches!(
+        rig.sender
+            .has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[1], 0),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    ));
+    assert!(rig.sender.owns_n01_snapshot(&snapshot));
+
+    // The snapshot keeps the single backing allocation alive after the sender
+    // drops; releasing the last snapshot returns exactly that allocation.
+    let sender = rig.sender;
+    drop(sender);
+    let (_, released) = measure_heap(|| drop(snapshot));
+    assert_eq!(released.net_bytes, -isize::try_from(bound).unwrap());
+    assert_eq!(released.peak_above_start, 0);
+}
+
+#[test]
+fn n07_fec_first_use_lazily_shares_identity_and_preserves_token_custody() {
+    use franken_stream::carrier::{PRIMARY_GROUP, TargetFecBinding};
+    use franken_stream::fec::SessionConfig;
+    assert!(heap_is_tracked());
+    let mut rig = Rig::new(&ordinary().limits, 1, false);
+    let mut foreign = Rig::new(&ordinary().limits, 1, false);
+    let bound = CarrierSender::<Wire>::owner_identity_allocation_bound();
+    let bindings = [TargetFecBinding {
+        peer_id: 1,
+        config: SessionConfig {
+            stream: stream(),
+            epoch: 2,
+            presentation_origin_ns: 500_000_000,
+            key: key(),
+        },
+    }];
+    assert_eq!(rig.sender.owner_identity_allocation_bytes(), 0);
+    assert!(
+        rig.sender
+            .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, 0)
+            .is_err()
+    );
+    assert_eq!(rig.sender.owner_identity_allocation_bytes(), 0);
+    let (first, window) = measure_heap(|| {
+        rig.sender
+            .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, usize::MAX)
+    });
+    let first = first.expect("valid target FEC preparation");
+    assert!(window.net_bytes >= isize::try_from(bound).unwrap());
+    assert_eq!(rig.sender.owner_identity_allocation_bytes(), bound);
+    assert!(
+        rig.sender
+            .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, usize::MAX)
+            .is_err()
+    );
+
+    // A foreign commit rejects without initializing a foreign owner. Consuming
+    // the token drops the original preparation and permits a new one.
+    assert_eq!(foreign.sender.owner_identity_allocation_bytes(), 0);
+    assert!(
+        foreign
+            .sender
+            .commit_group_target_fec(first, usize::MAX)
+            .is_err()
+    );
+    assert_eq!(foreign.sender.owner_identity_allocation_bytes(), 0);
+    let second = rig
+        .sender
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, usize::MAX)
+        .unwrap();
+    assert_eq!(rig.sender.owner_identity_allocation_bytes(), bound);
+    drop(second);
+    let stale = rig
+        .sender
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, usize::MAX)
+        .unwrap();
+    rig.sender.set_link_up(false);
+    assert!(
+        rig.sender
+            .commit_group_target_fec(stale, usize::MAX)
+            .is_err()
+    );
+    assert_eq!(rig.sender.owner_identity_allocation_bytes(), bound);
+}
+
+#[test]
+fn n07_selection_identity_reports_live_and_retired_group_allocations() {
+    use franken_stream::carrier::PRIMARY_GROUP;
+    assert!(heap_is_tracked());
+    let mut rig = Rig::new(&ordinary().limits, 1, false);
+    let other = rig.sender.add_group(key(), group_stream(1), 1).unwrap();
+    rig.sender
+        .add_peer_in_group(other, 2, peer_media(2), peer_control(2), 1500)
+        .unwrap();
+    let owner_bound = CarrierSender::<Wire>::owner_identity_allocation_bound();
+    let selection_bound = CarrierSender::<Wire>::selection_identity_allocation_bound();
+    assert!(selection_bound > 0);
+    assert_eq!(rig.sender.selection_identity_allocation_bytes(), 0);
+    assert_eq!(
+        rig.sender.selection_identity_total_bound(),
+        ordinary().limits.max_peers * selection_bound
+    );
+
+    // Initialize the shared owner first so each claim measures only the group
+    // selection allocation, not the separate owner allocation.
+    let unselected = rig
+        .sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[1])
+        .unwrap();
+    assert_eq!(unselected.selection_identity_allocation_bytes(), 0);
+    assert!(!rig.sender.holds_n01_selection(&unselected));
+    drop(unselected);
+    assert_eq!(rig.sender.owner_identity_allocation_bytes(), owner_bound);
+    let (first, first_window) =
+        measure_heap(|| rig.sender.claim_n01_source(PRIMARY_GROUP, 1, &[1]));
+    let first = first.unwrap();
+    assert_eq!(
+        first_window.net_bytes,
+        isize::try_from(selection_bound).unwrap()
+    );
+    assert_eq!(first_window.peak_above_start, selection_bound);
+    assert_eq!(first.selection_identity_allocation_bytes(), selection_bound);
+    assert!(rig.sender.holds_n01_selection(&first));
+    assert_eq!(
+        rig.sender.selection_identity_allocation_bytes(),
+        selection_bound
+    );
+
+    let (duplicate, duplicate_window) =
+        measure_heap(|| rig.sender.claim_n01_source(PRIMARY_GROUP, 1, &[1]));
+    assert!(duplicate.is_err());
+    assert_eq!(
+        (
+            duplicate_window.net_bytes,
+            duplicate_window.peak_above_start
+        ),
+        (0, 0)
+    );
+    let (second, second_window) = measure_heap(|| rig.sender.claim_n01_source(other, 1, &[2]));
+    let second = second.unwrap();
+    assert_eq!(
+        second_window.net_bytes,
+        isize::try_from(selection_bound).unwrap()
+    );
+    assert_eq!(second_window.peak_above_start, selection_bound);
+    assert!(rig.sender.holds_n01_selection(&second));
+    assert_eq!(
+        rig.sender.selection_identity_allocation_bytes(),
+        2 * selection_bound
+    );
+    assert!(
+        rig.sender.selection_identity_allocation_bytes()
+            <= rig.sender.selection_identity_total_bound()
+    );
+
+    // Epoch advance releases the group reference, but the old snapshot keeps
+    // that same allocation live and separately visible to its owner.
+    rig.sender.advance_epoch(2).unwrap();
+    assert!(!rig.sender.holds_n01_selection(&first));
+    assert_eq!(
+        rig.sender.selection_identity_allocation_bytes(),
+        selection_bound
+    );
+    assert_eq!(first.selection_identity_allocation_bytes(), selection_bound);
+    let (_, released_first) = measure_heap(|| drop(first));
+    assert_eq!(
+        released_first.net_bytes,
+        -isize::try_from(selection_bound).unwrap()
+    );
+    assert_eq!(released_first.peak_above_start, 0);
+
+    let (renewed, renewed_window) =
+        measure_heap(|| rig.sender.claim_n01_source(PRIMARY_GROUP, 2, &[1]));
+    let renewed = renewed.unwrap();
+    assert_eq!(
+        renewed_window.net_bytes,
+        isize::try_from(selection_bound).unwrap()
+    );
+    assert!(rig.sender.holds_n01_selection(&renewed));
+    assert_eq!(
+        rig.sender.selection_identity_allocation_bytes(),
+        2 * selection_bound
+    );
+    let (_, drop_shared) = measure_heap(|| drop(renewed));
+    assert_eq!(drop_shared.net_bytes, 0);
+    assert_eq!(
+        rig.sender.selection_identity_allocation_bytes(),
+        2 * selection_bound
+    );
+    rig.sender.advance_epoch(3).unwrap();
+    assert_eq!(
+        rig.sender.selection_identity_allocation_bytes(),
+        selection_bound
+    );
+
+    rig.sender.remove_group(other).unwrap();
+    assert!(!rig.sender.holds_n01_selection(&second));
+    assert_eq!(rig.sender.selection_identity_allocation_bytes(), 0);
+    assert_eq!(
+        second.selection_identity_allocation_bytes(),
+        selection_bound
+    );
+    let sender = rig.sender;
+    drop(sender);
+    let (_, released_last) = measure_heap(|| drop(second));
+    assert_eq!(
+        released_last.net_bytes,
+        -isize::try_from(owner_bound + selection_bound).unwrap()
+    );
+    assert_eq!(released_last.peak_above_start, 0);
+}
+
+#[test]
+fn n07_empty_retained_queue_slots_fit_the_original_model_under_allocator() {
+    assert!(heap_is_tracked());
+    let mut rig = Rig::new(&ordinary().limits, 1, false);
+    let before = rig.checkpoint();
+    assert_eq!(before.report.queue_slots, 0);
+    let frame = block_frame(0, 0);
+    assert_eq!(
+        rig.meter
+            .call(|| rig.sender.submit_media(1, &frame, 0))
+            .unwrap()
+            .queued,
+        1
+    );
+    rig.meter.call(|| rig.sender.advance_epoch(2)).unwrap();
+    let after = rig.checkpoint();
+    assert_eq!(after.report.queued, 0);
+    assert!(after.report.queue_slots > 0);
+    let actual = usize::try_from(after.level - before.level).unwrap();
+    let original_bound = after.report.queue_slots * MEDIA_SLOT;
+    assert_eq!(actual, original_bound);
+    assert!(
+        actual > original_bound - 1,
+        "a one-byte tighter bound must fail"
+    );
+}
