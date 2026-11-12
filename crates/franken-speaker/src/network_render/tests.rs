@@ -1141,3 +1141,643 @@ fn queue_accepts_explicit_partial_final_frame() {
     ));
     println!("FFW_NETWORK_RENDER_FINAL: {{\"frames\":293,\"tail\":37}}");
 }
+
+/// A control may change the DSP target/state but not the stream, its next
+/// deadline, resampler phase, owned DMA, or the device's accepted bytes.
+#[derive(Debug, PartialEq)]
+struct ControlContinuity {
+    next: Option<crate::render::RenderSlot>,
+    counters: crate::render::RenderCounters,
+    queued: usize,
+    next_source_frame: u64,
+    real_pulled: u64,
+    concealed_pulled: u64,
+    silence_pulled: u64,
+    padding_pulled: u64,
+    in_flight: usize,
+    pending: Vec<(u16, u32)>,
+    accepted: Vec<Vec<u8>>,
+    calls: Vec<franken_hal::backend::FakeCall>,
+}
+
+fn control_continuity(rig: &RunningFixture) -> ControlContinuity {
+    ControlContinuity {
+        next: rig.owner.render.next_slot(),
+        counters: rig.owner.render_counters(),
+        queued: rig.owner.queued_frames(),
+        next_source_frame: rig.owner.pcm.next_frame,
+        real_pulled: rig.owner.received_frames_pulled(),
+        concealed_pulled: rig.owner.concealed_frames_pulled(),
+        silence_pulled: rig.owner.timeline_silence_pulled(),
+        padding_pulled: rig.owner.final_padding_pulled(),
+        in_flight: rig.owner.in_flight(),
+        pending: rig.probe.pending_slots(),
+        accepted: rig.probe.captured_submissions(),
+        calls: rig.probe.calls(),
+    }
+}
+
+/// Empty the bounded render-event queue before the one synchronous control
+/// call under test. A successful RenderLoop::unmute sets the D02 mute bit and
+/// records Muted -> Running; a subsequent cancel cannot erase that transition.
+fn begin_muted_observation(rig: &mut RunningFixture) -> (u64, u64, u64) {
+    assert_eq!(rig.owner.render_state(), crate::render::RenderState::Muted);
+    assert!(rig.owner.render.dsp().is_muted());
+    while rig.owner.render.take_event().is_some() {}
+    let c = rig.owner.render_counters();
+    (c.events_dropped, c.events_evicted, c.events_lost_critical)
+}
+
+fn finish_muted_observation(
+    rig: &mut RunningFixture,
+    before: (u64, u64, u64),
+    expected: crate::render::RenderEventKind,
+    muted: bool,
+) {
+    let mut events = Vec::new();
+    while let Some(event) = rig.owner.render.take_event() {
+        events.push(event.kind);
+    }
+    let c = rig.owner.render_counters();
+    assert_eq!(
+        (c.events_dropped, c.events_evicted, c.events_lost_critical),
+        before,
+        "the bounded event queue must not hide a control transition"
+    );
+    assert_eq!(
+        events,
+        vec![expected],
+        "unexpected ordered render control transitions"
+    );
+    assert_eq!(rig.owner.render.dsp().is_muted(), muted);
+}
+
+/// A separate D03/D02 chain from the same signed source, changing only the
+/// intended DSP controls at block boundaries. No renderer or adapter state is
+/// copied into the reference.
+fn expected_volume_mute(pcm: &[u8]) -> (Vec<Vec<u8>>, usize) {
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    for frame in pcm.as_chunks::<4>().0 {
+        left.push(f32::from(i16::from_be_bytes([frame[0], frame[1]])) / 32768.0);
+        right.push(f32::from(i16::from_be_bytes([frame[2], frame[3]])) / 32768.0);
+    }
+    left.extend([0.0; 2]);
+    right.extend([0.0; 2]);
+    let mut source = SliceSource::new(&left, &right).unwrap();
+    let mut resampler = DriftResampler::new(ResamplerConfig::default()).unwrap();
+    let mut dsp = dsp();
+    dsp.set_muted(false).unwrap();
+    let mut input = StereoAudioBlock::silence(0);
+    let mut output = ProtectedOutput::new();
+    let mut blocks = Vec::new();
+    let mut frames = 0;
+    for index in 0..(pcm.len() / 4 + 1) {
+        let report = resampler
+            .render(
+                &mut source,
+                &mut input.left[..RENDER_FRAMES],
+                &mut input.right[..RENDER_FRAMES],
+            )
+            .unwrap();
+        if report.produced == 0 {
+            return (blocks, frames);
+        }
+        frames += report.produced;
+        input.left[report.produced..RENDER_FRAMES].fill(0.0);
+        input.right[report.produced..RENDER_FRAMES].fill(0.0);
+        input.frames = RENDER_FRAMES;
+        input.start_frame = (index * RENDER_FRAMES) as u64;
+        match index {
+            4 => {
+                assert_eq!(dsp.set_user_gain(0.25), 0.25);
+            }
+            11 => dsp.set_muted(true).unwrap(),
+            31 => dsp.set_muted(false).unwrap(),
+            _ => {}
+        }
+        dsp.render_into(&input, &mut output);
+        let mut bytes = Vec::with_capacity(RENDER_FRAMES * 4);
+        for frame in 0..RENDER_FRAMES {
+            for lane in output.samples.iter().take(2) {
+                bytes.extend_from_slice(&lane[frame].to_be_bytes());
+            }
+        }
+        blocks.push(bytes);
+        if report.underrun {
+            return (blocks, frames);
+        }
+    }
+    panic!("reference did not reach finite source end");
+}
+
+#[test]
+fn localhost_serialized_volume_and_mute_resume_match_independent_protected_pcm() {
+    use crate::render::RenderState;
+
+    let mut rig = running(4096);
+    for block in 0..16_u64 {
+        let wire = packet(&mut rig.sender, block, rig.start_group_ns, 256);
+        rig.socket.send_to(&wire, rig.address).unwrap();
+        assert_eq!(rig.owner.poll().unwrap().media_accepted, 1);
+    }
+    let mut timing = ScriptedTiming {
+        default_cost: 1,
+        ..ScriptedTiming::default()
+    };
+    let (mut gain_set, mut muted, mut resumed, mut complete) = (false, false, false, false);
+    for step in 0..5000_u64 {
+        rig.now
+            .set(rig.start_local_ns - 15_000_000 + step * 100_000);
+        match rig
+            .owner
+            .step(&mut timing)
+            .expect("live audio and controls stay admitted")
+        {
+            OwnerStep::Tick(report) => {
+                if let Some(index) = report.started {
+                    // Hold the previous block's actual retained DMA across each
+                    // control, then restore normal completion immediately.
+                    if matches!(index, 2 | 9 | 29) {
+                        rig.probe.set_lose_completions(true);
+                    }
+                    if matches!(index, 3 | 10 | 30) {
+                        assert!(
+                            rig.owner.block_in_progress(),
+                            "the current PCM block is already rendered"
+                        );
+                        assert!(
+                            rig.probe.pending() > 0,
+                            "a previous DMA block must still be held"
+                        );
+                        let before = control_continuity(&rig);
+                        match index {
+                            3 => {
+                                assert_eq!(rig.owner.set_gain(0.25).unwrap(), 0.25);
+                                gain_set = true;
+                            }
+                            10 => {
+                                rig.owner.mute().unwrap();
+                                assert_eq!(rig.owner.render_state(), RenderState::Muted);
+                                assert!(rig.owner.render.dsp().is_muted());
+                                muted = true;
+                            }
+                            30 => {
+                                let events_before = begin_muted_observation(&mut rig);
+                                rig.owner.unmute().unwrap();
+                                assert_eq!(rig.owner.render_state(), RenderState::Running);
+                                finish_muted_observation(
+                                    &mut rig,
+                                    events_before,
+                                    crate::render::RenderEventKind::State {
+                                        from: RenderState::Muted,
+                                        to: RenderState::Running,
+                                    },
+                                    false,
+                                );
+                                resumed = true;
+                            }
+                            _ => unreachable!(),
+                        }
+                        assert_eq!(
+                            control_continuity(&rig),
+                            before,
+                            "control changed busy PCM, source/phase or held DMA"
+                        );
+                        rig.probe.set_lose_completions(false);
+                    }
+                }
+            }
+            OwnerStep::Waiting => {}
+            OwnerStep::Complete => {
+                complete = true;
+                break;
+            }
+        }
+    }
+    assert!(complete && gain_set && muted && resumed);
+    let (expected, frames) = expected_volume_mute(&signal(0, 4096));
+    let (untouched, _) = expected_protected(&signal(0, 4096), 0);
+    let actual = rig.probe.captured_submissions();
+    assert_eq!(frames, 4096);
+    assert_eq!(
+        actual, expected,
+        "every post-DSP block must match the independent controlled stages"
+    );
+    assert_ne!(actual[10], untouched[10], "volume must affect real PCM");
+    assert!(
+        actual[25].iter().all(|byte| *byte == 0),
+        "mute ramp must reach silence"
+    );
+    assert!(
+        actual[55].iter().any(|byte| *byte != 0),
+        "unmute must recover real PCM"
+    );
+    assert_eq!(rig.owner.received_frames_pulled(), 4096);
+    assert_eq!(rig.owner.timeline_silence_pulled(), 0);
+    assert_eq!(rig.probe.use_after_free(), 0);
+    assert_eq!(rig.probe.modified_while_owned(), 0);
+    let before = control_continuity(&rig);
+    assert!(matches!(
+        rig.owner.set_gain(1.0),
+        Err(NetworkRenderError::Ended)
+    ));
+    assert!(matches!(rig.owner.mute(), Err(NetworkRenderError::Ended)));
+    assert!(matches!(rig.owner.unmute(), Err(NetworkRenderError::Ended)));
+    assert_eq!(control_continuity(&rig), before);
+    println!(
+        "FFW_NETWORK_RENDER_VOLUME: {{\"frames\":{frames},\"gain\":0.25,\"muted\":true,\"recovered\":true,\"busy_and_dma_preserved\":true}}"
+    );
+}
+
+/// Reach a real, completed protected block and mute in the idle gap. The
+/// caller may then invalidate authority or clock before attempting to unmute.
+fn start_and_mute(rig: &mut RunningFixture, timing: &mut ScriptedTiming) {
+    use crate::render::RenderState;
+
+    for block in 0..2_u64 {
+        let wire = packet(&mut rig.sender, block, rig.start_group_ns, 256);
+        rig.socket.send_to(&wire, rig.address).unwrap();
+        assert_eq!(rig.owner.poll().unwrap().media_accepted, 1);
+    }
+    for step in 0..1000_u64 {
+        rig.now
+            .set(rig.start_local_ns - 15_000_000 + step * 100_000);
+        if let OwnerStep::Tick(report) = rig.owner.step(timing).expect("reach first PCM block")
+            && report.finished.is_some_and(|(index, _)| index == 0)
+        {
+            assert!(!rig.owner.block_in_progress());
+            assert_eq!(rig.probe.captured_submissions().len(), 1);
+            let before = control_continuity(rig);
+            rig.owner.mute().unwrap();
+            assert_eq!(rig.owner.render_state(), RenderState::Muted);
+            assert_eq!(control_continuity(rig), before);
+            return;
+        }
+    }
+    panic!("did not reach a live completed block");
+}
+
+fn fake_unmutes(rig: &RunningFixture) -> usize {
+    use franken_hal::backend::FakeCall;
+    rig.probe
+        .calls()
+        .iter()
+        .filter(|call| matches!(call, FakeCall::SetMute(false)))
+        .count()
+}
+
+#[test]
+fn mute_cannot_be_undone_after_a_clock_fault_and_fresh_owner_recovers() {
+    use crate::render::RenderState;
+
+    let mut rig = running(4096);
+    let mut timing = ScriptedTiming {
+        default_cost: 1,
+        ..ScriptedTiming::default()
+    };
+    start_and_mute(&mut rig, &mut timing);
+    let accepted = rig.probe.captured_submissions();
+    let held = rig.probe.pending_slots();
+    assert!(!held.is_empty(), "the fake must still hold submitted DMA");
+    let unmutes = fake_unmutes(&rig);
+    let events_before = begin_muted_observation(&mut rig);
+    rig.fail.set(true);
+    assert!(matches!(rig.owner.unmute(), Err(NetworkRenderError::Clock)));
+    finish_muted_observation(
+        &mut rig,
+        events_before,
+        crate::render::RenderEventKind::State {
+            from: RenderState::Muted,
+            to: RenderState::Draining,
+        },
+        true,
+    );
+    assert!(matches!(
+        rig.owner.clock.output(rig.now.get()),
+        franken_clock::group::Output::Muted(franken_clock::group::MuteReason::ClockFault)
+    ));
+    assert_eq!(rig.owner.render_state(), RenderState::Draining);
+    assert_eq!(rig.owner.queued_frames(), 0);
+    assert_eq!(
+        rig.probe.captured_submissions(),
+        accepted,
+        "fault must not submit stale audio"
+    );
+    assert_eq!(
+        rig.probe.pending_slots(),
+        held,
+        "unacknowledged DMA remains held"
+    );
+    assert_eq!(rig.probe.kernel_touch_pending(), (held.len(), 0));
+    assert_eq!(
+        fake_unmutes(&rig),
+        unmutes,
+        "fault must not unmute the fake HAL"
+    );
+    rig.fail.set(false);
+    assert!(matches!(rig.owner.unmute(), Err(NetworkRenderError::Ended)));
+    assert!(matches!(
+        rig.owner.set_gain(0.5),
+        Err(NetworkRenderError::Ended)
+    ));
+    assert!(matches!(rig.owner.mute(), Err(NetworkRenderError::Ended)));
+    assert_eq!(rig.probe.captured_submissions(), accepted);
+    assert_eq!(fake_unmutes(&rig), unmutes);
+    assert_eq!(rig.probe.use_after_free(), 0);
+    assert_eq!(rig.probe.modified_while_owned(), 0);
+    let (fresh_frames, _) = exercise_finite_stream(512, 0);
+    assert_eq!(
+        fresh_frames, 512,
+        "a newly admitted owner must render valid PCM"
+    );
+    println!(
+        "FFW_NETWORK_RENDER_CONTROL_CLOCK: {{\"unmute_refused\":true,\"stale_submissions\":0,\"fresh_frames\":{fresh_frames}}}"
+    );
+}
+
+fn start_busy_and_mute(rig: &mut RunningFixture, timing: &mut ScriptedTiming) {
+    use crate::render::RenderState;
+
+    for block in 0..2_u64 {
+        let wire = packet(&mut rig.sender, block, rig.start_group_ns, 256);
+        rig.socket.send_to(&wire, rig.address).unwrap();
+        assert_eq!(rig.owner.poll().unwrap().media_accepted, 1);
+    }
+    for step in 0..1000_u64 {
+        rig.now
+            .set(rig.start_local_ns - 15_000_000 + step * 100_000);
+        if let OwnerStep::Tick(report) = rig.owner.step(timing).expect("live source") {
+            if report.started == Some(0) {
+                rig.probe.set_lose_completions(true);
+            }
+            if report.started == Some(1) {
+                assert!(rig.owner.block_in_progress());
+                assert!(
+                    rig.probe.pending() > 0,
+                    "earlier PCM must still be owned by the fake device"
+                );
+                let before = control_continuity(rig);
+                rig.owner.mute().unwrap();
+                assert_eq!(rig.owner.render_state(), RenderState::Muted);
+                assert_eq!(control_continuity(rig), before);
+                return;
+            }
+        }
+    }
+    panic!("must exercise the busy control with real held PCM");
+}
+
+#[test]
+fn clock_fault_during_busy_control_discards_busy_pcm_but_keeps_held_dma() {
+    use crate::render::RenderState;
+
+    let mut rig = running(4096);
+    let mut timing = ScriptedTiming {
+        default_cost: 1,
+        ..ScriptedTiming::default()
+    };
+    start_busy_and_mute(&mut rig, &mut timing);
+    let accepted = rig.probe.captured_submissions();
+    let held = rig.probe.pending_slots();
+    let unmutes = fake_unmutes(&rig);
+    let events_before = begin_muted_observation(&mut rig);
+    rig.fail.set(true);
+    assert!(matches!(rig.owner.unmute(), Err(NetworkRenderError::Clock)));
+    finish_muted_observation(
+        &mut rig,
+        events_before,
+        crate::render::RenderEventKind::State {
+            from: RenderState::Muted,
+            to: RenderState::Draining,
+        },
+        true,
+    );
+    assert_eq!(rig.owner.render_state(), RenderState::Draining);
+    assert!(
+        !rig.owner.block_in_progress(),
+        "invalidation must discard the rendered busy block"
+    );
+    assert_eq!(rig.owner.queued_frames(), 0);
+    assert_eq!(
+        rig.probe.captured_submissions(),
+        accepted,
+        "busy PCM must not be submitted after fault"
+    );
+    assert_eq!(
+        rig.probe.pending_slots(),
+        held,
+        "already submitted DMA remains owned until acknowledgment"
+    );
+    assert_eq!(rig.probe.kernel_touch_pending(), (held.len(), 0));
+    assert_eq!(fake_unmutes(&rig), unmutes);
+    for _ in 0..2 {
+        rig.owner.drain_tick(&mut timing).unwrap();
+        assert_eq!(rig.probe.pending_slots(), held);
+    }
+    for _ in 0..8 {
+        if rig.owner.render_state() != RenderState::Draining {
+            break;
+        }
+        rig.owner.drain_tick(&mut timing).unwrap();
+    }
+    assert_eq!(rig.owner.render_state(), RenderState::Stopped);
+    assert_eq!(rig.probe.pending(), 0);
+    assert_eq!(rig.probe.captured_submissions(), accepted);
+    assert_eq!(rig.probe.use_after_free(), 0);
+    assert_eq!(rig.probe.modified_while_owned(), 0);
+    println!(
+        "FFW_NETWORK_RENDER_CONTROL_BUSY_FAULT: {{\"held_before_ack\":{},\"stale_submissions\":0}}",
+        held.len()
+    );
+}
+
+#[test]
+fn expired_busy_deadline_refuses_unmute_and_cancels_without_losing_dma() {
+    use crate::render::RenderState;
+
+    let mut rig = running(4096);
+    let mut timing = ScriptedTiming {
+        default_cost: 1,
+        ..ScriptedTiming::default()
+    };
+    start_busy_and_mute(&mut rig, &mut timing);
+    let accepted = rig.probe.captured_submissions();
+    let held = rig.probe.pending_slots();
+    let unmutes = fake_unmutes(&rig);
+    let events_before = begin_muted_observation(&mut rig);
+    let deadline = rig.owner.busy_deadline_ns.expect("active busy deadline");
+    let late_group = deadline.checked_add(2_000_000).unwrap();
+    let late_local = rig
+        .owner
+        .clock
+        .local_for_group(late_group, rig.now.get())
+        .unwrap();
+    assert!(late_local > rig.now.get());
+    rig.now.set(late_local);
+    assert!(
+        matches!(
+            rig.owner.clock.output(rig.now.get()),
+            franken_clock::group::Output::Armed { .. } | franken_clock::group::Output::Audible
+        ),
+        "the clock must remain usable; this is a deadline refusal"
+    );
+    assert!(matches!(
+        rig.owner.unmute(),
+        Err(NetworkRenderError::Timeline)
+    ));
+    finish_muted_observation(
+        &mut rig,
+        events_before,
+        crate::render::RenderEventKind::State {
+            from: RenderState::Muted,
+            to: RenderState::Draining,
+        },
+        true,
+    );
+    assert_eq!(rig.owner.render_state(), RenderState::Draining);
+    assert!(!rig.owner.block_in_progress());
+    assert_eq!(rig.owner.queued_frames(), 0);
+    assert_eq!(rig.probe.captured_submissions(), accepted);
+    assert_eq!(rig.probe.pending_slots(), held);
+    assert_eq!(rig.probe.kernel_touch_pending(), (held.len(), 0));
+    assert_eq!(fake_unmutes(&rig), unmutes);
+    assert!(matches!(rig.owner.unmute(), Err(NetworkRenderError::Ended)));
+    assert_eq!(fake_unmutes(&rig), unmutes);
+    for _ in 0..2 {
+        rig.owner.drain_tick(&mut timing).unwrap();
+        assert_eq!(
+            rig.probe.pending_slots(),
+            held,
+            "DMA must remain held before flush ACK"
+        );
+    }
+    for _ in 0..8 {
+        if rig.owner.render_state() != RenderState::Draining {
+            break;
+        }
+        rig.owner.drain_tick(&mut timing).unwrap();
+    }
+    assert_eq!(rig.owner.render_state(), RenderState::Stopped);
+    assert_eq!(
+        rig.probe.pending(),
+        0,
+        "only the actual flush ACK retires the held DMA"
+    );
+    assert_eq!(rig.probe.captured_submissions(), accepted);
+    assert_eq!(rig.probe.use_after_free(), 0);
+    assert_eq!(rig.probe.modified_while_owned(), 0);
+    println!(
+        "FFW_NETWORK_RENDER_CONTROL_DEADLINE: {{\"refused\":true,\"held_dma\":{},\"stale_submissions\":0}}",
+        held.len()
+    );
+}
+
+#[test]
+fn mute_cannot_be_undone_after_authority_expiry() {
+    use crate::render::RenderState;
+
+    let mut rig = running_with_authority(4096, 0, 10_000_000);
+    let mut timing = ScriptedTiming {
+        default_cost: 1,
+        ..ScriptedTiming::default()
+    };
+    start_and_mute(&mut rig, &mut timing);
+    let accepted = rig.probe.captured_submissions();
+    let held = rig.probe.pending_slots();
+    assert!(!held.is_empty(), "the fake must still hold submitted DMA");
+    let unmutes = fake_unmutes(&rig);
+    let events_before = begin_muted_observation(&mut rig);
+    rig.now.set(rig.start_local_ns + 10_000_000);
+    assert!(matches!(
+        rig.owner.clock.output(rig.now.get()),
+        franken_clock::group::Output::Muted(franken_clock::group::MuteReason::AuthorityExpired)
+    ));
+    assert!(matches!(rig.owner.unmute(), Err(NetworkRenderError::Clock)));
+    finish_muted_observation(
+        &mut rig,
+        events_before,
+        crate::render::RenderEventKind::State {
+            from: RenderState::Muted,
+            to: RenderState::Draining,
+        },
+        true,
+    );
+    assert_eq!(rig.owner.render_state(), RenderState::Draining);
+    assert_eq!(rig.owner.queued_frames(), 0);
+    assert_eq!(rig.probe.captured_submissions(), accepted);
+    assert_eq!(rig.probe.pending_slots(), held);
+    assert_eq!(rig.probe.kernel_touch_pending(), (held.len(), 0));
+    assert_eq!(fake_unmutes(&rig), unmutes);
+    assert!(matches!(rig.owner.unmute(), Err(NetworkRenderError::Ended)));
+    assert_eq!(fake_unmutes(&rig), unmutes);
+    assert_eq!(rig.probe.use_after_free(), 0);
+    assert_eq!(rig.probe.modified_while_owned(), 0);
+    println!(
+        "FFW_NETWORK_RENDER_CONTROL_AUTHORITY: {{\"unmute_refused\":true,\"stale_submissions\":0}}"
+    );
+}
+
+#[test]
+fn exhausted_source_rejects_controls_without_interrupting_scheduled_eof() {
+    use crate::render::RenderState;
+    use franken_hal::backend::FakeCall;
+
+    let mut rig = running(64);
+    let wire = packet(&mut rig.sender, 0, rig.start_group_ns, 64);
+    rig.socket.send_to(&wire, rig.address).unwrap();
+    assert_eq!(rig.owner.poll().unwrap().media_accepted, 1);
+    let mut timing = ScriptedTiming {
+        default_cost: 1,
+        ..ScriptedTiming::default()
+    };
+    let mut boundary = None;
+    for step in 0..1000_u64 {
+        rig.now
+            .set(rig.start_local_ns - 15_000_000 + step * 100_000);
+        let outcome = rig.owner.step(&mut timing).expect("live finite source");
+        assert!(!matches!(outcome, OwnerStep::Complete));
+        if rig.probe.captured_submissions().len() == 1
+            && rig.owner.in_flight() == 0
+            && !rig.owner.block_in_progress()
+        {
+            assert!(earliest_group_time(&rig) < rig.start_group_ns + frames_to_ns(64));
+            let before = control_continuity(&rig);
+            assert!(matches!(
+                rig.owner.set_gain(0.5),
+                Err(NetworkRenderError::Ended)
+            ));
+            assert!(matches!(rig.owner.mute(), Err(NetworkRenderError::Ended)));
+            assert!(matches!(rig.owner.unmute(), Err(NetworkRenderError::Ended)));
+            assert_eq!(control_continuity(&rig), before);
+            assert_eq!(rig.owner.render_state(), RenderState::Running);
+            assert!(
+                !rig.probe
+                    .calls()
+                    .iter()
+                    .any(|call| matches!(call, FakeCall::RequestFlush))
+            );
+            boundary = Some(step);
+            break;
+        }
+    }
+    let start = boundary.expect("observe completed DMA before scheduled EOF");
+    let mut complete = false;
+    for step in start + 1..5000_u64 {
+        rig.now
+            .set(rig.start_local_ns - 15_000_000 + step * 100_000);
+        if matches!(rig.owner.step(&mut timing).unwrap(), OwnerStep::Complete) {
+            complete = true;
+            break;
+        }
+    }
+    assert!(complete);
+    let (expected, frames) = expected_protected(&signal(0, 64), 0);
+    assert_eq!(frames, 64);
+    assert_eq!(rig.probe.captured_submissions(), expected);
+    assert_eq!(rig.probe.use_after_free(), 0);
+    assert_eq!(rig.probe.modified_while_owned(), 0);
+    println!(
+        "FFW_NETWORK_RENDER_CONTROL_EOF: {{\"refused\":3,\"eof_completed\":true,\"frames\":{frames}}}"
+    );
+}

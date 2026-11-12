@@ -78,7 +78,8 @@ pub struct NetworkRenderAdmission {
     pub start: StartPreconditions,
 }
 
-/// Refusals are terminal for this one-epoch owner after admission.
+/// Terminal faults invalidate the owner; source-end refusals leave the admitted
+/// renderer available for its existing completion/drain path.
 #[derive(Debug)]
 pub enum NetworkRenderError {
     Configuration,
@@ -448,6 +449,108 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
         ) {
             let _ = self.render.cancel();
         }
+    }
+
+    // Controls use the same fresh authority, source phase, mapping and
+    // deadline boundary as a subsequent render, without ticking the device.
+    fn control_ready(&mut self) -> Result<(), NetworkRenderError> {
+        if self.terminal {
+            return Err(NetworkRenderError::Ended);
+        }
+        match self.control_ready_inner() {
+            Ok(()) => Ok(()),
+            Err(NetworkRenderError::Ended) => Err(NetworkRenderError::Ended),
+            Err(error) => {
+                self.invalidate();
+                Err(error)
+            }
+        }
+    }
+
+    fn control_ready_inner(&mut self) -> Result<(), NetworkRenderError> {
+        let view = self.fresh_clock()?;
+        if !self.render.presentation_mapping_valid() {
+            return Err(NetworkRenderError::Mapping);
+        }
+        let latest = view
+            .group_ns
+            .checked_add(view.uncertainty_ns)
+            .ok_or(NetworkRenderError::Clock)?;
+        if self
+            .busy_deadline_ns
+            .is_some_and(|deadline| latest > deadline)
+        {
+            return Err(NetworkRenderError::Timeline);
+        }
+        let slot = self.render.next_slot().ok_or(NetworkRenderError::Mapping)?;
+        let pulled = self
+            .pcm
+            .real_pulled
+            .checked_add(self.pcm.concealed_pulled)
+            .and_then(|n| n.checked_add(self.pcm.timeline_silence_pulled))
+            .and_then(|n| n.checked_add(self.pcm.padding_pulled))
+            .ok_or(NetworkRenderError::Timeline)?;
+        let position = position_q32(self.pcm.anchor_frame, pulled, slot.source_phase)
+            .ok_or(NetworkRenderError::Timeline)?;
+        if self.pcm.next_frame == self.pcm.final_frame {
+            let padding = 2_usize.saturating_sub(self.pcm.padding_pulled as usize);
+            let available = self
+                .pcm
+                .len
+                .checked_add(padding)
+                .ok_or(NetworkRenderError::Capacity)?;
+            let first = usize::try_from(slot.first_output_source_frames)
+                .map_err(|_| NetworkRenderError::Capacity)?;
+            if position >= (u128::from(self.pcm.final_frame) << 32) || first > available {
+                return Err(NetworkRenderError::Ended);
+            }
+        }
+        let expected = position_group_ns(
+            self.pcm.anchor_frame,
+            self.schedule.start_group_ns,
+            position,
+        )
+        .ok_or(NetworkRenderError::Mapping)?;
+        let presentation = self
+            .mapping
+            .at(slot.presentation_tick)
+            .ok_or(NetworkRenderError::Mapping)?;
+        if presentation
+            .abs_diff(expected)
+            .checked_add(self.mapping.uncertainty_ns)
+            .is_none_or(|error| error > self.mapping.presentation_tolerance_ns)
+        {
+            return Err(NetworkRenderError::Mapping);
+        }
+        let deadline = self
+            .mapping
+            .at(slot.deadline_tick)
+            .ok_or(NetworkRenderError::Mapping)?;
+        if latest > deadline.saturating_sub(self.mapping.uncertainty_ns) {
+            return Err(NetworkRenderError::Timeline);
+        }
+        Ok(())
+    }
+
+    /// Set the renderer's user gain; D02 clamps it and slews the applied gain.
+    /// Already-rendered or device-submitted blocks are unaffected.
+    pub fn set_gain(&mut self, gain: f32) -> Result<f32, NetworkRenderError> {
+        self.control_ready()?;
+        Ok(self.render.set_gain(gain))
+    }
+
+    /// Request D02's mute ramp on subsequent renders. Submitted device
+    /// and already-rendered buffers remain irrevocable; this does not claim
+    /// immediate hardware mute.
+    pub fn mute(&mut self) -> Result<(), NetworkRenderError> {
+        self.control_ready()?;
+        self.render.mute().map_err(NetworkRenderError::Render)
+    }
+
+    /// Resume protected rendering only while the live authority remains valid.
+    pub fn unmute(&mut self) -> Result<(), NetworkRenderError> {
+        self.control_ready()?;
+        self.render.unmute().map_err(NetworkRenderError::Render)
     }
 
     /// Poll actual carrier ingress, preserving authentication and replay refusals.
