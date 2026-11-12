@@ -3,7 +3,7 @@
 //! The mapping and final source frame are caller-admitted facts, not discovery,
 //! a distributed clock, a hardware deadline measurement, or a DMA completion.
 
-use franken_clock::group::{GroupClock, Output, StartSchedule};
+use franken_clock::group::{ClockStatus, GroupClock, Output, StartSchedule};
 use franken_dsp::resample::{FrameSource, PRIME_FRAMES, PhaseState};
 use franken_hal::backend::DeviceBackend;
 use franken_hal::session::StartPreconditions;
@@ -269,6 +269,8 @@ pub struct NetworkRender<P: DatagramPort, O: KernelOps, B: DeviceBackend> {
     last_presentation_end_ns: Option<u64>,
     terminal: bool,
     complete: bool,
+    software_silent_start: bool,
+    desired_muted: bool,
 }
 
 impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
@@ -373,6 +375,8 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
             last_presentation_end_ns: None,
             terminal: false,
             complete: false,
+            software_silent_start: false,
+            desired_muted: false,
         })
     }
 
@@ -443,11 +447,14 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
     fn invalidate(&mut self) {
         self.pcm.clear();
         self.terminal = true;
-        if matches!(
-            self.render.state(),
-            RenderState::Running | RenderState::Muted
-        ) {
-            let _ = self.render.cancel();
+        match self.render.state() {
+            RenderState::Ready => {
+                let _ = self.render.cancel_prepared();
+            }
+            RenderState::Running | RenderState::Muted => {
+                let _ = self.render.cancel();
+            }
+            _ => {}
         }
     }
 
@@ -528,6 +535,119 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
             .ok_or(NetworkRenderError::Mapping)?;
         if latest > deadline.saturating_sub(self.mapping.uncertainty_ns) {
             return Err(NetworkRenderError::Timeline);
+        }
+        Ok(())
+    }
+
+    /// Seal this renderer into the composed control owner. This rejects unknown
+    /// inherited HAL custody and does not claim a physically muted amplifier.
+    pub(crate) fn arm_software_silent_start(&mut self) -> Result<(), NetworkRenderError> {
+        if !self.render.silent_start_admissible() {
+            return Err(NetworkRenderError::Configuration);
+        }
+        self.software_silent_start = true;
+        self.desired_muted = true;
+        Ok(())
+    }
+
+    /// The existing admitted clock policy permits bounded usable holdover.
+    /// Control remains available after output cancellation while the same owned
+    /// clock is valid; this neither reopens PCM nor starts the renderer.
+    pub(crate) fn usable_clock_view(
+        &mut self,
+    ) -> Result<franken_stream::playout::ClockView, NetworkRenderError> {
+        self.fresh_clock()
+    }
+
+    /// An independently fresh, locked reading from this renderer's owned clock.
+    /// Callers still need to account for its uncertainty at all time fences.
+    pub(crate) fn join_clock_view(
+        &mut self,
+    ) -> Result<franken_stream::playout::ClockView, NetworkRenderError> {
+        if self.terminal
+            || self.clock.epoch() != self.schedule.epoch
+            || self.platform.clock_resolution_ns() > self.clock.config().timer_resolution_ns
+        {
+            return Err(NetworkRenderError::Clock);
+        }
+        let local = match self.platform.now_ns() {
+            Ok(now) => now,
+            Err(_) => {
+                self.clock.report_clock_fault();
+                self.invalidate();
+                return Err(NetworkRenderError::Clock);
+            }
+        };
+        let output = self.clock.tick(local);
+        if matches!(output, Output::Muted(_)) || self.clock.status(local) != ClockStatus::Locked {
+            return Err(NetworkRenderError::Clock);
+        }
+        let view = self.view.at_local(&self.clock, local);
+        if !view.usable {
+            return Err(NetworkRenderError::Clock);
+        }
+        Ok(view)
+    }
+
+    pub(crate) fn stop_report(&self) -> crate::render::StopReport {
+        self.render.stop_report()
+    }
+
+    /// The already-admitted buffer/format path is still prepared and its
+    /// owned backend declares bounded stop/flush protocol support.
+    pub(crate) fn pending_join_ready(&self) -> bool {
+        !self.terminal && self.software_silent_start && self.render.prepared_join_ready()
+    }
+
+    pub(crate) fn bound_epoch(&self) -> u64 {
+        self.schedule.epoch
+    }
+
+    /// A terminal source includes cancellation and faults, not just EOF.
+    pub(crate) fn is_terminal(&self) -> bool {
+        self.terminal
+    }
+
+    /// The leader identity of the owned, provisioned group clock.
+    pub(crate) fn bound_clock_leader(&self) -> u64 {
+        self.clock.leader()
+    }
+
+    pub(crate) fn protection_profile_id(&self) -> &str {
+        self.render.dsp().profile_id()
+    }
+
+    pub(crate) fn protection_status(&self) -> franken_dsp::protection::BoardStatus {
+        self.render.dsp().status()
+    }
+
+    /// Apply policy only after the same live clock and mapping gate used by
+    /// ordinary controls. A prepared renderer records the request for its first
+    /// software-silent start; no audio or hardware transition occurs here.
+    pub(crate) fn apply_owned_policy(
+        &mut self,
+        gain: f32,
+        muted: bool,
+    ) -> Result<(), NetworkRenderError> {
+        self.control_ready()?;
+        if !matches!(
+            self.render.state(),
+            RenderState::Ready | RenderState::Stopped | RenderState::Running | RenderState::Muted
+        ) {
+            return Err(NetworkRenderError::Configuration);
+        }
+        self.render.set_gain(gain);
+        match self.render.state() {
+            RenderState::Ready | RenderState::Stopped => self.desired_muted = muted,
+            RenderState::Running | RenderState::Muted => {
+                if muted {
+                    self.render.mute().map_err(NetworkRenderError::Render)?;
+                } else {
+                    self.render.unmute().map_err(NetworkRenderError::Render)?;
+                }
+                self.desired_muted = muted;
+            }
+            _ => return Err(NetworkRenderError::Configuration),
         }
         Ok(())
     }
@@ -760,9 +880,18 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
             if !available || history_drained {
                 return Ok(OwnerStep::Waiting);
             }
-            self.render
-                .start(self.start)
-                .map_err(NetworkRenderError::Render)?;
+            if self.software_silent_start {
+                self.render
+                    .start_silent(self.start)
+                    .map_err(NetworkRenderError::Render)?;
+                if !self.desired_muted {
+                    self.render.unmute().map_err(NetworkRenderError::Render)?;
+                }
+            } else {
+                self.render
+                    .start(self.start)
+                    .map_err(NetworkRenderError::Render)?;
+            }
         }
         self.pcm.padding_available = if eof && !history_drained {
             required.saturating_sub(self.pcm.len).min(padding_left)
@@ -814,11 +943,15 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
     pub fn cancel(&mut self) -> Result<(), NetworkRenderError> {
         self.pcm.clear();
         self.terminal = true;
-        if matches!(
-            self.render.state(),
-            RenderState::Running | RenderState::Muted
-        ) {
-            self.render.cancel().map_err(NetworkRenderError::Render)?;
+        match self.render.state() {
+            RenderState::Ready => self
+                .render
+                .cancel_prepared()
+                .map_err(NetworkRenderError::Render)?,
+            RenderState::Running | RenderState::Muted => {
+                self.render.cancel().map_err(NetworkRenderError::Render)?;
+            }
+            _ => {}
         }
         Ok(())
     }

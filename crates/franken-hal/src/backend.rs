@@ -123,6 +123,13 @@ pub trait DeviceBackend {
     /// cut to fit and then read.
     fn poll_event(&mut self, record: &mut [u8; EVENT_LEN]) -> Result<Option<usize>, DriverError>;
     fn request_flush(&mut self) -> Result<(), DriverError>;
+    /// Whether this adapter supports the stop/mute and flush-ack protocol under
+    /// its declared normal configuration. This is a capability declaration,
+    /// not an ACK, a guarantee of future success, or physical proof. Unknown
+    /// or unsupported adapters must leave the conservative default unchanged.
+    fn stop_flush_supported(&self) -> bool {
+        false
+    }
     /// Whether an acknowledged reset also discards every previously accepted
     /// playback byte, including copied device FIFO data. This is stronger than
     /// releasing retained buffer custody. Adapters may return true only when

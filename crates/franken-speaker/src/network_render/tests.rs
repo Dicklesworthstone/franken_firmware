@@ -1781,3 +1781,6 @@ fn exhausted_source_rejects_controls_without_interrupting_scheduled_eof() {
         "FFW_NETWORK_RENDER_CONTROL_EOF: {{\"refused\":3,\"eof_completed\":true,\"frames\":{frames}}}"
     );
 }
+
+#[cfg(unix)]
+mod controller_events;

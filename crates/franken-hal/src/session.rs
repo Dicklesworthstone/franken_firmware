@@ -1031,6 +1031,18 @@ impl<B: DeviceBackend> HalSession<B> {
         }
     }
 
+    /// The owned adapter declares the stop/flush protocol supported, and this
+    /// prepared session has the bounded deadline needed to drive it. This is
+    /// not evidence that any particular stop or flush has been acknowledged.
+    #[must_use]
+    pub fn stop_flush_supported(&self) -> bool {
+        self.phase == SessionPhase::Prepared
+            && self.amp == Amp::Muted
+            && self.stop_deadline_ticks.is_some()
+            && !self.device_lost
+            && self.backend.stop_flush_supported()
+    }
+
     /// Whether an acknowledged reset with an explicit playback-discard guarantee
     /// cleared unknown inherited custody and all later Prepared submissions were
     /// silence. This is a software admission condition, not evidence that a
@@ -1758,6 +1770,7 @@ mod tests {
         for cfg in [FakeConfig::retained(), FakeConfig::copying()] {
             let (mut s, _probe, _ledger) = session(cfg);
             s.prepare().unwrap();
+            assert!(!s.stop_flush_supported());
             assert!(!s.silent_prepared_after_reset());
             s.submit(&BLOCK).unwrap();
             assert!(s.abort_mute().unwrap().mute_acknowledged);

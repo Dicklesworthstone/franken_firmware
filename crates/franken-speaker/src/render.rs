@@ -1016,6 +1016,24 @@ impl<B: DeviceBackend> RenderLoop<B> {
         self.start_with_mute(pre, false)
     }
 
+    /// Whether the owned prepared HAL declares bounded stop/flush support.
+    /// This is a capability, not an acknowledgement of a stop.
+    #[must_use]
+    pub fn stop_flush_supported(&self) -> bool {
+        self.state == RenderState::Ready && self.session.stop_flush_supported()
+    }
+
+    /// Current local join readiness after actual format, protected DSP, prime
+    /// and bounded stop/flush capability admission. It is not a stop ACK.
+    #[must_use]
+    pub fn prepared_join_ready(&self) -> bool {
+        self.silent_start_admissible()
+            && self.stop_flush_supported()
+            && self.presentation_mapping_valid()
+            && matches!(self.dsp.status(), BoardStatus::Active)
+            && self.session.primed_silence_blocks() >= self.session.required_silence_blocks()
+    }
+
     /// Admission predicate for the software-silent start path. It does not
     /// prove that the HAL amplifier remains muted after the backend starts.
     #[must_use]
@@ -1061,6 +1079,12 @@ impl<B: DeviceBackend> RenderLoop<B> {
         while self.session.take_event().is_some() {}
         if let Err(error) = self.session.start(pre) {
             let _ = self.dsp.set_muted(true);
+            // A backend failure may already have faulted the HAL and
+            // quarantined retained buffers. Mirror that real state; an
+            // ordinary precondition refusal while Prepared remains retryable.
+            if self.session.phase() == SessionPhase::Faulted {
+                self.fail(FaultReason::SessionFaulted);
+            }
             return Err(RenderError::Session(error));
         }
         if self.started_before {
@@ -1169,6 +1193,24 @@ impl<B: DeviceBackend> RenderLoop<B> {
         }
         if self.admit_faults.cancel {
             self.ordinary_exhausted = true;
+        }
+        let _ = self.dsp.set_muted(true);
+        self.cancel_mode = true;
+        self.begin_stop();
+        match self.session.abort_mute() {
+            Ok(report) => self.last_mute_ack = Some(report.mute_acknowledged),
+            Err(_) => self.last_mute_ack = Some(false),
+        }
+        self.busy = None;
+        Ok(())
+    }
+
+    /// Cancel a prepared loop without ever starting the backend or pulling a
+    /// source. Prepared silence priming can still be in HAL custody; use the
+    /// same acknowledged flush and bounded timeout path as an active cancel.
+    pub fn cancel_prepared(&mut self) -> Result<(), RenderError> {
+        if self.state != RenderState::Ready || self.session.phase() != SessionPhase::Prepared {
+            return Err(RenderError::WrongState(self.state));
         }
         let _ = self.dsp.set_muted(true);
         self.cancel_mode = true;
@@ -1804,6 +1846,75 @@ mod tests {
     }
 
     #[test]
+    fn failed_hal_start_or_unmute_faults_loop_and_preserves_retained_silence() {
+        use franken_hal::backend::{DriverError, Op};
+        for fail_start in [true, false] {
+            let mut cfg = fake_config();
+            cfg.completion_delay_ticks = 100;
+            cfg.unmute_ack = fail_start;
+            let (mut render, probe, _) = build(cfg, RenderConfig::standard(BLOCK));
+            probe.capture_submissions(4);
+            render.session.prime_silence().unwrap();
+            let held = probe.pending_slots();
+            let captured = probe.captured_submissions();
+            assert_eq!(held.len(), 1);
+            assert_eq!(captured, vec![vec![0; BLOCK * 4]]);
+            if fail_start {
+                probe.fail_next(Op::Start, DriverError::Errno(5));
+            }
+            assert!(matches!(render.start(READY), Err(RenderError::Session(_))));
+            assert_eq!(render.session.phase(), SessionPhase::Faulted);
+            assert_eq!(render.state(), RenderState::Faulted);
+            assert_eq!(render.fault(), Some(FaultReason::SessionFaulted));
+            assert!(!render.stop_report().acknowledged);
+            assert!(
+                render
+                    .session
+                    .slot_states()
+                    .contains(&SlotState::Quarantined)
+            );
+            assert_eq!(probe.pending_slots(), held);
+            assert_eq!(probe.kernel_touch_pending(), (1, 0));
+            assert_eq!(probe.captured_submissions(), captured);
+            assert_eq!(
+                probe
+                    .calls()
+                    .iter()
+                    .filter(|call| **call == FakeCall::Start)
+                    .count(),
+                1
+            );
+            let mut source = ToneSource::new();
+            let mut timing = ScriptedTiming::default();
+            let tick = render.tick(&mut source, &mut timing);
+            assert_eq!(tick.started, None);
+            assert_eq!(source.pos, 0);
+            assert_eq!(probe.captured_submissions(), captured);
+            assert_eq!(probe.use_after_free(), 0);
+            assert_eq!(probe.modified_while_owned(), 0);
+        }
+    }
+
+    #[test]
+    fn start_precondition_refusal_stays_prepared_and_valid_retry_starts() {
+        let (mut render, probe, _) = standard();
+        let refusal = StartPreconditions {
+            presentation_mapping_installed: true,
+            safe_gain_installed: false,
+        };
+        assert!(matches!(
+            render.start(refusal),
+            Err(RenderError::Session(_))
+        ));
+        assert_eq!(render.session.phase(), SessionPhase::Prepared);
+        assert_eq!(render.state(), RenderState::Ready);
+        assert!(!probe.calls().contains(&FakeCall::Start));
+        render.start(READY).unwrap();
+        assert_eq!(render.state(), RenderState::Running);
+        assert!(probe.calls().contains(&FakeCall::Start));
+    }
+
+    #[test]
     fn next_slot_projects_the_schedule_without_advancing_source_or_device() {
         let (mut l, probe, _) = standard();
         let phase = l.resampler.phase_state();
@@ -1968,6 +2079,102 @@ mod tests {
         assert_eq!(finished.started, None);
         assert_eq!(probe.captured_submissions().len(), 2);
         assert_eq!(l.counters().cpu_miss_blocks, 0);
+    }
+
+    #[test]
+    fn prepared_cancel_waits_for_flush_ack_without_start_or_source_pull() {
+        let mut cfg = fake_config();
+        cfg.flush_ack_delay_ticks = Some(3);
+        cfg.completion_delay_ticks = 100;
+        let (mut l, probe, _) = build(cfg, RenderConfig::standard(BLOCK));
+        probe.capture_submissions(4);
+        assert_eq!(l.session.prime_silence().unwrap().accepted_bytes, BLOCK * 4);
+        assert_eq!(probe.pending(), 1);
+        let before = probe.calls().len();
+        l.cancel_prepared().unwrap();
+        assert_eq!(l.state(), RenderState::Draining);
+        assert_eq!(
+            &probe.calls()[before..],
+            &[FakeCall::SetMute(true), FakeCall::RequestFlush]
+        );
+        let mut source = ToneSource::new();
+        let mut timing = ScriptedTiming::default();
+        for _ in 0..16 {
+            if l.state() != RenderState::Draining {
+                break;
+            }
+            let tick = l.tick(&mut source, &mut timing);
+            assert_eq!(tick.started, None);
+            assert_eq!(source.pos, 0);
+        }
+        assert_eq!(l.state(), RenderState::Stopped);
+        assert!(l.stop_report().acknowledged);
+        assert_eq!(probe.pending(), 0);
+        assert_eq!(probe.captured_submissions(), vec![vec![0; BLOCK * 4]]);
+        assert_eq!(probe.use_after_free(), 0);
+        assert_eq!(probe.modified_while_owned(), 0);
+        assert!(!probe.calls().contains(&FakeCall::Start));
+        assert!(!probe.calls().contains(&FakeCall::SetMute(false)));
+    }
+
+    #[test]
+    fn prepared_copying_cancel_reports_ack_and_timeout_without_start() {
+        for ack in [true, false] {
+            let mut cfg = fake_config();
+            cfg.abi = FakeConfig::copying().abi;
+            cfg.flush_ack_delay_ticks = if ack { Some(2) } else { None };
+            let (mut l, probe, _) = build(cfg, RenderConfig::standard(BLOCK));
+            assert_eq!(l.session.prime_silence().unwrap().accepted_bytes, BLOCK * 4);
+            assert_eq!(probe.written_bytes(), BLOCK * 4);
+            l.cancel_prepared().unwrap();
+            let mut source = ToneSource::new();
+            let mut timing = ScriptedTiming::default();
+            for _ in 0..16 {
+                if l.state() != RenderState::Draining {
+                    break;
+                }
+                l.tick(&mut source, &mut timing);
+            }
+            assert_eq!(l.stop_report().acknowledged, ack);
+            assert_eq!(
+                l.state(),
+                if ack {
+                    RenderState::Stopped
+                } else {
+                    RenderState::Faulted
+                }
+            );
+            assert_eq!(source.pos, 0);
+            assert!(!probe.calls().contains(&FakeCall::Start));
+            assert!(!probe.calls().contains(&FakeCall::SetMute(false)));
+        }
+    }
+
+    #[test]
+    fn prepared_cancel_timeout_keeps_priming_custody_without_ack() {
+        let mut cfg = fake_config();
+        cfg.flush_ack_delay_ticks = None;
+        cfg.completion_delay_ticks = 100;
+        let (mut l, probe, _) = build(cfg, RenderConfig::standard(BLOCK));
+        l.session.prime_silence().unwrap();
+        assert_eq!(probe.kernel_touch_pending(), (1, 0));
+        l.cancel_prepared().unwrap();
+        let mut source = ToneSource::new();
+        let mut timing = ScriptedTiming::default();
+        for _ in 0..16 {
+            if l.state() != RenderState::Draining {
+                break;
+            }
+            l.tick(&mut source, &mut timing);
+        }
+        assert_eq!(l.state(), RenderState::Faulted);
+        assert!(!l.stop_report().acknowledged);
+        assert_eq!(source.pos, 0);
+        assert_eq!(probe.kernel_touch_pending(), (1, 0));
+        assert_eq!(probe.use_after_free(), 0);
+        assert_eq!(probe.modified_while_owned(), 0);
+        assert!(!probe.calls().contains(&FakeCall::Start));
+        assert!(!probe.calls().contains(&FakeCall::SetMute(false)));
     }
 
     #[test]
