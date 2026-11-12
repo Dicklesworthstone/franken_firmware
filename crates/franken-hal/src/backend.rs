@@ -123,7 +123,17 @@ pub trait DeviceBackend {
     /// cut to fit and then read.
     fn poll_event(&mut self, record: &mut [u8; EVENT_LEN]) -> Result<Option<usize>, DriverError>;
     fn request_flush(&mut self) -> Result<(), DriverError>;
-    /// Returns whether the device acknowledged a full reset.
+    /// Whether an acknowledged reset also discards every previously accepted
+    /// playback byte, including copied device FIFO data. This is stronger than
+    /// releasing retained buffer custody. Adapters may return true only when
+    /// that property is established and the session has exclusive playback
+    /// submission authority until start: no other handle or autonomous source
+    /// may enqueue audio after reset. Unknown defaults false.
+    fn reset_ack_discards_playback(&self) -> bool {
+        false
+    }
+    /// Returns whether the device acknowledged a full reset. An ACK alone
+    /// does not imply the stronger playback-discard property above.
     fn reset(&mut self) -> Result<bool, DriverError>;
     /// Let one tick pass: block for it on a real device, advance the virtual clock on the fake.
     fn wait_tick(&mut self);

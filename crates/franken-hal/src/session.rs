@@ -480,6 +480,8 @@ pub struct HalSession<B: DeviceBackend> {
     events: EventQueue,
     required_silence_blocks: u32,
     primed_silence_blocks: u32,
+    // True only after an acknowledged reset and while every later Prepared submit was silent.
+    silent_prepared_after_reset: bool,
 }
 
 impl<B: DeviceBackend> HalSession<B> {
@@ -611,6 +613,7 @@ impl<B: DeviceBackend> HalSession<B> {
             events,
             required_silence_blocks: config.required_silence_blocks,
             primed_silence_blocks: 0,
+            silent_prepared_after_reset: false,
         })
     }
 
@@ -1017,6 +1020,7 @@ impl<B: DeviceBackend> HalSession<B> {
             Ok(true) => {
                 self.amp = Amp::Unmuted;
                 self.phase = SessionPhase::Running;
+                self.silent_prepared_after_reset = false;
                 // The priming is spent by this unmute.
                 self.primed_silence_blocks = 0;
                 self.emit(SessionEventKind::Started);
@@ -1025,6 +1029,17 @@ impl<B: DeviceBackend> HalSession<B> {
             Ok(false) => Err(self.fail_muted(FaultCode::UnmuteNotAcknowledged)),
             Err(error) => Err(self.driver_failed(Op::SetMute, error)),
         }
+    }
+
+    /// Whether an acknowledged reset with an explicit playback-discard guarantee
+    /// cleared unknown inherited custody and all later Prepared submissions were
+    /// silence. This is a software admission condition, not evidence that a
+    /// physical amplifier stays muted after start.
+    #[must_use]
+    pub const fn silent_prepared_after_reset(&self) -> bool {
+        matches!(self.phase, SessionPhase::Prepared)
+            && matches!(self.amp, Amp::Muted)
+            && self.silent_prepared_after_reset
     }
 
     /// Hand a block to the device. `bytes` must be a whole number of frames and fit one block.
@@ -1053,6 +1068,11 @@ impl<B: DeviceBackend> HalSession<B> {
         // becomes `Unmuted` also makes the phase `Running`), so the amplifier needs no check of its own.
         // This is a comparison, so a running session's submit pays nothing for it.
         let priming = self.phase == SessionPhase::Prepared;
+        // Conservatively invalidate even on an error or short write: the backend may have
+        // accepted bytes before reporting an ambiguous failure.
+        if priming && bytes.iter().any(|&byte| byte != 0) {
+            self.silent_prepared_after_reset = false;
+        }
         let result = if self.abi == AbiKind::RetainedBuffer {
             self.submit_retained(bytes, geometry)
         } else {
@@ -1451,6 +1471,7 @@ impl<B: DeviceBackend> HalSession<B> {
                 self.stop_requested = false;
                 self.saturated_reported = false;
                 self.primed_silence_blocks = 0;
+                self.silent_prepared_after_reset = self.backend.reset_ack_discards_playback();
                 self.phase = SessionPhase::Prepared;
                 self.generation = self.generation.saturating_add(1);
                 self.emit(SessionEventKind::ResetAcknowledged);
@@ -1730,6 +1751,36 @@ mod tests {
         assert_eq!(s.primed_silence_blocks(), 0);
         assert_eq!(s.start(READY), refused(0, 1));
         assert_eq!(unmute_calls(&probe), 0);
+    }
+
+    #[test]
+    fn reset_ack_without_playback_discard_evidence_is_not_silent_admission() {
+        for cfg in [FakeConfig::retained(), FakeConfig::copying()] {
+            let (mut s, _probe, _ledger) = session(cfg);
+            s.prepare().unwrap();
+            assert!(!s.silent_prepared_after_reset());
+            s.submit(&BLOCK).unwrap();
+            assert!(s.abort_mute().unwrap().mute_acknowledged);
+            s.reset_device().unwrap();
+            assert!(!s.silent_prepared_after_reset());
+            s.submit(&SILENCE).unwrap();
+            assert!(!s.silent_prepared_after_reset());
+        }
+    }
+
+    #[test]
+    fn refused_reset_is_not_silent_admission() {
+        let mut cfg = FakeConfig::retained();
+        cfg.reset_ack = false;
+        let (mut s, _probe, _ledger) = session(cfg);
+        s.prepare().unwrap();
+        s.submit(&BLOCK).unwrap();
+        assert!(s.abort_mute().unwrap().mute_acknowledged);
+        assert!(matches!(
+            s.reset_device(),
+            Err(SessionError::ResetNotAcknowledged)
+        ));
+        assert!(!s.silent_prepared_after_reset());
     }
 
     #[test]

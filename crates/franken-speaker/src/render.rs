@@ -234,6 +234,10 @@ pub enum RenderError {
     StopDeadlineUnknown,
     #[error("the protection DSP is not active, so audible output is refused")]
     ProtectionNotActive,
+    #[error(
+        "silent start requires an acknowledged empty reset, silence-only priming and zero applied gain"
+    )]
+    SilentStartUnproven,
     #[error("no ordinary render capacity is left after the cleanup reserve")]
     NoOrdinaryCapacity,
     #[error("admission failed at {0:?}")]
@@ -1009,6 +1013,34 @@ impl<B: DeviceBackend> RenderLoop<B> {
     /// `Ready` or `Stopped` -> `Running`. Refused, with nothing touched, unless the protection DSP is
     /// active and admission succeeds; an injected start failure is such a refusal.
     pub fn start(&mut self, pre: StartPreconditions) -> Result<(), RenderError> {
+        self.start_with_mute(pre, false)
+    }
+
+    /// Admission predicate for the software-silent start path. It does not
+    /// prove that the HAL amplifier remains muted after the backend starts.
+    #[must_use]
+    pub fn silent_start_admissible(&self) -> bool {
+        matches!(self.state, RenderState::Ready | RenderState::Stopped)
+            && self.session.silent_prepared_after_reset()
+            && self.dsp.applied_gain() == 0.0
+    }
+
+    /// Software-silent start: the HAL still calls its normal backend unmute. The
+    /// owned prepared queue must have been reset and contain only silence, and
+    /// the protection ramp must already be at zero. No source is pulled here.
+    pub fn start_silent(&mut self, pre: StartPreconditions) -> Result<(), RenderError> {
+        self.start_with_mute(pre, true)
+    }
+
+    fn start_with_mute(
+        &mut self,
+        pre: StartPreconditions,
+        silent: bool,
+    ) -> Result<(), RenderError> {
+        if silent && (!self.session.silent_prepared_after_reset() || self.dsp.applied_gain() != 0.0)
+        {
+            return Err(RenderError::SilentStartUnproven);
+        }
         if !matches!(self.state, RenderState::Ready | RenderState::Stopped) {
             return Err(RenderError::WrongState(self.state));
         }
@@ -1022,7 +1054,7 @@ impl<B: DeviceBackend> RenderLoop<B> {
             return Err(RenderError::ProtectionNotActive);
         }
         self.dsp
-            .set_muted(false)
+            .set_muted(silent)
             .map_err(|_| RenderError::ProtectionNotActive)?;
         // Events from an earlier run are not news: a fault left over from one would otherwise fault
         // this run on its first tick.
@@ -1049,7 +1081,11 @@ impl<B: DeviceBackend> RenderLoop<B> {
         self.dry_latched = false;
         self.cancel_mode = false;
         self.fault = None;
-        self.set_state(RenderState::Running);
+        self.set_state(if silent {
+            RenderState::Muted
+        } else {
+            RenderState::Running
+        });
         Ok(())
     }
 
@@ -1747,6 +1783,24 @@ mod tests {
         let (mut l, probe, ledger) = standard();
         l.start(READY).unwrap();
         (l, probe, ledger)
+    }
+
+    #[test]
+    fn silent_start_refuses_reset_without_playback_discard_evidence() {
+        for copying in [false, true] {
+            let mut cfg = fake_config();
+            if copying {
+                cfg.abi = FakeConfig::copying().abi;
+            }
+            let (mut l, probe, _) = build(cfg, RenderConfig::standard(BLOCK));
+            assert!(l.session.abort_mute().unwrap().mute_acknowledged);
+            l.session.reset_device().unwrap();
+            l.session.prime_silence().unwrap();
+            let before = probe.calls().len();
+            assert_eq!(l.start_silent(READY), Err(RenderError::SilentStartUnproven));
+            assert_eq!(l.state(), RenderState::Ready);
+            assert_eq!(probe.calls().len(), before);
+        }
     }
 
     #[test]
