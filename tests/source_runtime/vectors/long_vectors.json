@@ -1,0 +1,72 @@
+{
+  "tracks": [
+    {
+      "bytes": 37485,
+      "channels": 2,
+      "codec": "mp3",
+      "commands": [
+        [
+          "ffmpeg",
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-n",
+          "-f",
+          "s16le",
+          "-ar",
+          "48000",
+          "-ac",
+          "2",
+          "-i",
+          "loop-input.s16",
+          "-map_metadata",
+          "-1",
+          "-c:a",
+          "libmp3lame",
+          "-b:a",
+          "192k",
+          "-threads",
+          "1",
+          "mp3_48000_long.mp3"
+        ],
+        [
+          "ffmpeg",
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-n",
+          "-cpuflags",
+          "0",
+          "-i",
+          "mp3_48000_long.mp3",
+          "-map_metadata",
+          "-1",
+          "-f",
+          "s16le",
+          "-c:a",
+          "pcm_s16le",
+          "mp3_48000_long.ref.s16"
+        ]
+      ],
+      "expected_frames": 72000,
+      "file": "mp3_48000_long.mp3",
+      "generator_version": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+      "id": "mp3_48000_long",
+      "rate_hz": 48000,
+      "reference": {
+        "bytes": 288000,
+        "decoder": "scalar FFmpeg",
+        "file": "mp3_48000_long.ref.s16",
+        "frames": 72000,
+        "sha256": "fb30800e4f9414a33392b3ffaab0a5e0be2f2919604753ffc19726da929974d1"
+      },
+      "sha256": "7785255f947a50fde36ddcaf9227a9dcbc0cac1516c562d2ffbb91038805065b",
+      "source_reference_sha256": "4e20de020e5cbc629e58d92097a6f46934160f1f68f9eb4619b073947d35a90b",
+      "source_repetitions": 3,
+      "tolerance": {
+        "max_abs_lsb": 4,
+        "rms_lsb": 1.5
+      }
+    }
+  ]
+}
