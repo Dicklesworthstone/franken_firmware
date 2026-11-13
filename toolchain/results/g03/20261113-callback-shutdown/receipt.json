@@ -1,0 +1,395 @@
+{
+  "schema": "ffw.native-qualification.v1",
+  "baseline_commit": "3ee61d106601f6dec6dff76846233b0bc180654a",
+  "code_commit": "0617afc1b9937bc8647df14a944d01b9491549c6",
+  "code_tree": "3facf7e204046e8aa6c303139cb0048f4557a010",
+  "qualified_source": {
+    "manifest_sha256": "428f75db491ddb8ade784ef477772f8bd3f051c9b65fb14c8fc8b9aac430e14e",
+    "committed_files": 1644,
+    "all_committed_blobs_lengths_executable_bits_match": true,
+    "changed_files": [
+      {
+        "path": "crates/franken-speaker/src/fsonos_loopback/callback.rs",
+        "sha256": "9f24d774e9572bdf0fac79ca76006bbbe153e55074e1f93f36f90994d53e4911",
+        "bytes": 24291
+      },
+      {
+        "path": "crates/franken-speaker/src/fsonos_loopback/callback/tests.rs",
+        "sha256": "aa2dfc3c25c915ccf6c2d0982837ef9c09854182c1a957262503284208758cdd",
+        "bytes": 37215
+      }
+    ],
+    "sibling_commit": "8f422c333269073a256fe59c6f50e7e8429a1bf9"
+  },
+  "formatting": {
+    "toolchain": "1.99.0",
+    "edition": 2024,
+    "skip_children": true,
+    "changed_rust_inputs": 2,
+    "exit": 0
+  },
+  "runs": [
+    {
+      "native_id": "30107136981729312",
+      "exit": 0,
+      "transfer_files": 1642,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1642,
+          "content_root": "e6ba8294e6baf91cf10e1be0c2182250ff31f4f85d01bdb92b4c88204af4ac5f"
+        }
+      ],
+      "receipt_root": "fe4274343b4b7821744ae77a4029d15100922607de7266aa118456a5e6b0d67a",
+      "command_sha256": "eab08515760cdd1c65668e96f9e53be4b89995c0c3d31944281e965185b87633",
+      "raw_log_sha256": "94ff62e2655dbb23dfa968b998684f6e775be9c63252e10580c79762d9a7826a",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": null,
+      "footer_count": 0
+    },
+    {
+      "native_id": "30107136981729313",
+      "exit": 0,
+      "transfer_files": 1642,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1642,
+          "content_root": "1a1dcf15fcb38aa94614ebe0b5c1e04c6af1307d00ab5737794539eb833bd427"
+        }
+      ],
+      "receipt_root": "d00ffa6aeb66a191f65487847d83337ee9651c2185c2a8f6b39cbf73d8924e1b",
+      "command_sha256": "7990c424a3e076319542a3ce24f30c5815045217571a118080315097ef63991a",
+      "raw_log_sha256": "a11c56973b8888057923c88aadd5eb434ca337fd77b7067d0c45af5f37978feb",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": {
+        "passed": 2963,
+        "failed": 0,
+        "ignored": 2,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 81
+    },
+    {
+      "native_id": "30107136981729314",
+      "exit": 0,
+      "transfer_files": 1701,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1642,
+          "content_root": "639eba2b6b9736b78c71a3d4c0bf48a7608f113b325ffd4d0df6d3f58e5a8ed0"
+        },
+        {
+          "relative_root": "frankensonos",
+          "mode": "workspace_metadata",
+          "files": 4,
+          "content_root": "edc577319ebc1cb686dd487d0ef68009869c3f28a219a1c09c0dbd17355725df"
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-proto",
+          "mode": "full",
+          "files": 51,
+          "content_root": "56d33920e0eb2591ece03c8447e9494fb53a8c18a587877c40c6538fb4779839"
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-types",
+          "mode": "full",
+          "files": 4,
+          "content_root": "d2befda6395ea7fff039a976ee45801eea66aa7075a05af073e4be6751f5f35d"
+        }
+      ],
+      "receipt_root": "a19266d0fbc5ed98bb531cdac7596cef5f364351510fe4f54825d722bb0202e5",
+      "command_sha256": "4638cb1adf0a3cbce41f9375b2e29d18e886ec586e108e1d17620143fa3832ae",
+      "raw_log_sha256": "2655063cfbdf82f4876868847c67e302c3c7f059472f002de8520844b3e40c84",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": null,
+      "footer_count": 0
+    },
+    {
+      "native_id": "30107136981729315",
+      "exit": 0,
+      "transfer_files": 1701,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1642,
+          "content_root": "d803f0aec523c8e75c6d5d6d25af59dec367333fff74d1d99e33c3a1a70e2918"
+        },
+        {
+          "relative_root": "frankensonos",
+          "mode": "workspace_metadata",
+          "files": 4,
+          "content_root": "edc577319ebc1cb686dd487d0ef68009869c3f28a219a1c09c0dbd17355725df"
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-proto",
+          "mode": "full",
+          "files": 51,
+          "content_root": "56d33920e0eb2591ece03c8447e9494fb53a8c18a587877c40c6538fb4779839"
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-types",
+          "mode": "full",
+          "files": 4,
+          "content_root": "d2befda6395ea7fff039a976ee45801eea66aa7075a05af073e4be6751f5f35d"
+        }
+      ],
+      "receipt_root": "9fbbc911059debb9e0492f81c0b0a8b7650706197f42621d2db1450e693f9686",
+      "command_sha256": "2bf2f26b65dc201d8e61a15393dd78ab23ba2d0a7b8b49a6247110bd26f1b562",
+      "raw_log_sha256": "92fc56cf79931417babff165ab06e146f6950624b7ee49543c41675aa7bdff5c",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": {
+        "passed": 20,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 7
+    }
+  ],
+  "required_new_cases": [
+    {
+      "name": "orderly_shutdown_closes_queue_before_returning_reconciled_accounting",
+      "path": "crates/franken-speaker/src/fsonos_loopback/callback/tests.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "orderly_shutdown_serializes_live_offers_with_final_drain_and_disconnect",
+      "path": "crates/franken-speaker/src/fsonos_loopback/callback/tests.rs",
+      "gate": "workspace"
+    }
+  ],
+  "required_previous_workspace_cases": [
+    "consumed_reply_does_not_count_notifications_as_lost",
+    "queued_reply_abandoned_after_successful_send_counts_both_vectors_once",
+    "begun_handler_outliving_caller_counts_actual_reply_loss_without_replay",
+    "reply_loss_with_no_notifications_and_counter_saturation_are_explicit",
+    "eventing_attachment_fences_raw_clones_and_releases_for_normal_use",
+    "attachment_refuses_queued_and_executing_work_but_reclaims_cancelled_queue",
+    "attachment_and_raw_publication_never_both_succeed",
+    "owner_and_mailbox_association_is_two_sided_and_generic_service_cannot_bypass",
+    "generic_mailbox_cannot_be_adopted_and_unbound_cleanup_is_refused",
+    "detached_eventing_stays_fenced_until_matching_cleanup_with_no_inflight_work",
+    "cleanup_panic_keeps_mailbox_fenced_instead_of_reopening_stale_subscriptions",
+    "detached_http_worker_is_not_delivery_terminal_and_cleanup_does_not_guess",
+    "transport_invalidation_removes_old_sids_without_reusing_the_namespace",
+    "eventing_opt_in_without_outbox_still_refuses_without_mailbox_work",
+    "plain_mailbox_with_real_outbox_is_refused_at_startup",
+    "opted_in_outbox_delivers_real_core_initial_notification",
+    "owner_eventing_delivers_real_callbacks_and_excludes_other_ingress_until_release",
+    "slow_callback_and_full_outbox_do_not_block_owner_control_or_acknowledged_stop",
+    "unavailable_callback_is_counted_without_blocking_local_mute_or_stop",
+    "committed_owner_response_after_http_timeout_counts_actual_undelivered_event",
+    "live_subscription_detach_fences_until_real_owner_cleanup_and_new_target",
+    "natural_http_exit_keeps_live_callback_fenced_until_actual_delivery_thread_exits",
+    "idle_owner_polling_does_not_refuse_sequential_publications",
+    "poisoned_unpublished_mailbox_is_unavailable_instead_of_idle"
+  ],
+  "required_actual_client_cases": [
+    {
+      "file": "composed.rs",
+      "name": "the_real_client_finds_describes_controls_and_hears_one_server"
+    },
+    {
+      "file": "composed.rs",
+      "name": "on_the_tailnet_the_composed_server_describes_nothing_subscribes_nobody_and_sends_nothing"
+    },
+    {
+      "file": "composed.rs",
+      "name": "the_composed_client_reaches_nothing_but_the_one_fixture_player"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "the_real_client_finds_reads_and_cross_checks_the_device_over_loopback"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "only_the_zone_player_answer_is_a_player_for_the_client_and_other_services_are_silent"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "malformed_searches_get_no_answer_and_the_clients_own_search_still_finds_the_device"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "a_restarted_device_keeps_its_identity_and_a_different_identity_is_a_different_device"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "a_tailnet_connection_is_refused_the_description_and_control_that_the_local_link_gets"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "the_confined_client_refuses_any_host_or_url_but_the_fixture_player"
+    },
+    {
+      "file": "eventing.rs",
+      "name": "the_real_client_subscribes_and_a_real_listener_receives_ordered_events"
+    },
+    {
+      "file": "eventing.rs",
+      "name": "a_subscribe_naming_any_other_callback_is_answered_412_and_never_contacted"
+    },
+    {
+      "file": "eventing.rs",
+      "name": "a_restarted_shim_never_honours_an_old_sid_before_or_after_a_fresh_subscription"
+    },
+    {
+      "file": "eventing.rs",
+      "name": "a_stalled_callback_is_bounded_and_counted_while_control_keeps_answering"
+    },
+    {
+      "file": "eventing.rs",
+      "name": "a_shim_not_started_eventing_still_grants_the_subscription_and_delivers_nothing"
+    },
+    {
+      "file": "owned_eventing.rs",
+      "name": "real_fsonos_eventing_changes_same_owner_protected_pcm_and_stops_with_ack"
+    },
+    {
+      "file": "real_client.rs",
+      "name": "the_real_client_reads_and_sets_volume_and_mute_on_the_real_endpoint_over_loopback"
+    },
+    {
+      "file": "real_client.rs",
+      "name": "the_real_client_reports_each_refusal_as_the_error_it_is_and_nothing_changes"
+    },
+    {
+      "file": "real_client.rs",
+      "name": "the_real_client_is_refused_on_an_unauthenticated_tailnet_connection"
+    },
+    {
+      "file": "real_client.rs",
+      "name": "with_no_listener_the_real_client_reports_a_network_error_and_never_a_success"
+    },
+    {
+      "file": "real_client.rs",
+      "name": "the_test_client_can_reach_only_the_fixture_player_and_has_no_discovery"
+    }
+  ],
+  "negative_control": {
+    "native_id": "30107136981729311",
+    "exit": 101,
+    "transfer_files": 1642,
+    "roots": [
+      {
+        "relative_root": "franken_firmware",
+        "mode": "full",
+        "files": 1642,
+        "content_root": "50a532e7a227a952b337d8075bee7471f3a038d7e85f35945db834dcb5b2609e"
+      }
+    ],
+    "receipt_root": "4dc944cd3dd2fa230408902c4a88f1d6298931f24111ef58ef205fd494909b42",
+    "command_sha256": "aa3f9da530648e087b24ed7cdfb5d84320d0ab21606c93f2554f095054ba96cd",
+    "raw_log_sha256": "73e5edaf31416591c9f76053d302bb9d4927472063d4e7484ddedb80cc03ad45",
+    "terminal_acknowledged": true,
+    "wrapper_alive": false,
+    "strict_remote": true,
+    "custody": {
+      "execution_started": true,
+      "sources_released": true,
+      "pair_released": true,
+      "tree_retired": true,
+      "retired": true,
+      "staging_released": "not_applicable_no_owned_staging_record"
+    },
+    "staging_applicability": {
+      "ownership_present": false,
+      "release_field_present": false,
+      "retrieval_stage_configured": false,
+      "all_phases_incomplete_without_pending_or_published": true,
+      "deployed_source_commit": "3c4e10fa5aff0f63c975f5283891287d4f1f5766",
+      "source": "rch/src/hook/retrieval_recovery.rs:60-67,483-485",
+      "physical_directory_absence_not_claimed": true
+    },
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 629
+    },
+    "footer_count": 1,
+    "observed_counter": "callback-shutdown: boundary_locked=false offered=3 queued=3 abandoned=2 dropped=0 delivered=0 failed=0 reconciled=false",
+    "intended_failure": true,
+    "source_manifest_sha256": "40605c4018b44f614438962cb1529c6eb86be13b741d7eab9478bbfc79b7fbea",
+    "source_mutation": "Move shared retirement-helper report lock from before final drain to after the final-drain synchronization point; identical test source",
+    "untouched_baseline": false,
+    "attempts": 1,
+    "reruns": 0,
+    "intended_assertion": "admission was unlocked after the final drain",
+    "passing_gate": false
+  },
+  "fixed_counter": "callback-shutdown: boundary_locked=true offered=3 queued=2 abandoned=2 dropped=1 delivered=0 failed=0 reconciled=true",
+  "prior_source_nogo": {
+    "message": 32459,
+    "meaning": "v1 synchronous post-return case did not discriminate the causal interleaving; retained and augmented with real live-offer boundary case before any native execution",
+    "native_execution": false
+  },
+  "source_preparation": {
+    "v1_original_hashes_restored_and_preserved": true,
+    "v2_unique_readonly_inputs": true,
+    "full_candidates_rehashed_files": 8783,
+    "mismatches": 0
+  },
+  "review_scope": "Independent source and same-execution receipt inspection; not a second runtime replication",
+  "limitations": [
+    "Host localhost harness and modeled retained HAL only; TCP adapter remains harness/test gated",
+    "Normal orderly callback shutdown only; panic-path queue accounting remains unqualified",
+    "Retirement mutex work scales with configured finite queue; no universal fairness or fixed latency bound",
+    "Producer entered signal immediately precedes offer; it does not prove fixed producer blocked before disconnect. Locked-boundary probe plus source serialization establish exclusion",
+    "No retry or delivery guarantee is added; queued notifications at shutdown are counted abandoned, later offers dropped",
+    "Full G03 discovery/group/reconnect and production listener/multi-ingress/nonHTTP notification routing remain open",
+    "No hardware, target ABI/resource, provider, physical output or native Tailnet qualification",
+    "Two preexisting ignored workspace tests did not run"
+  ],
+  "observed_sha256": "5081b3241ec8bf2a6d8a7dc2babc4705569690a937349a5069209e7c77f280fa",
+  "previous_qualification": "../20261113-owned-eventing/RUN.md"
+}
