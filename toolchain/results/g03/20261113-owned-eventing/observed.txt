@@ -1,0 +1,150 @@
+# Final firmware-workspace execution: 30107136981729306
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.34s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.19s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 95 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test result: ok. 102 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.30s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.09s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+test result: ok. 681 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.41s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 179 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.64s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 163 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.94s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.50s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.02s
+test result: ok. 248 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 119 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.24s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test result: ok. 628 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 65.72s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.27s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.30s
+test result: ok. 258 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.72s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.08s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.73s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+# All 24 required new workspace cases
+test settled_http::tests::consumed_reply_does_not_count_notifications_as_lost ... ok
+test settled_http::tests::queued_reply_abandoned_after_successful_send_counts_both_vectors_once ... ok
+test settled_http::tests::begun_handler_outliving_caller_counts_actual_reply_loss_without_replay ... ok
+test settled_http::tests::reply_loss_with_no_notifications_and_counter_saturation_are_explicit ... ok
+test settled_http::tests::eventing_attachment_fences_raw_clones_and_releases_for_normal_use ... ok
+test settled_http::tests::attachment_refuses_queued_and_executing_work_but_reclaims_cancelled_queue ... ok
+test settled_http::tests::attachment_and_raw_publication_never_both_succeed ... ok
+test settled_http::tests::owner_and_mailbox_association_is_two_sided_and_generic_service_cannot_bypass ... ok
+test settled_http::tests::generic_mailbox_cannot_be_adopted_and_unbound_cleanup_is_refused ... ok
+test settled_http::tests::detached_eventing_stays_fenced_until_matching_cleanup_with_no_inflight_work ... ok
+test settled_http::tests::cleanup_panic_keeps_mailbox_fenced_instead_of_reopening_stale_subscriptions ... ok
+test settled_http::tests::detached_http_worker_is_not_delivery_terminal_and_cleanup_does_not_guess ... ok
+test fsonos::gena::tests::transport_invalidation_removes_old_sids_without_reusing_the_namespace ... ok
+test fsonos_loopback::mailbox_eventing_tests::eventing_opt_in_without_outbox_still_refuses_without_mailbox_work ... ok
+test fsonos_loopback::mailbox_eventing_tests::plain_mailbox_with_real_outbox_is_refused_at_startup ... ok
+test fsonos_loopback::mailbox_eventing_tests::opted_in_outbox_delivers_real_core_initial_notification ... ok
+test network_render::tests::controller_events::http_eventing::owner_eventing_delivers_real_callbacks_and_excludes_other_ingress_until_release ... ok
+test network_render::tests::controller_events::http_eventing::slow_callback_and_full_outbox_do_not_block_owner_control_or_acknowledged_stop ... ok
+test network_render::tests::controller_events::http_eventing::unavailable_callback_is_counted_without_blocking_local_mute_or_stop ... ok
+test network_render::tests::controller_events::http_eventing::committed_owner_response_after_http_timeout_counts_actual_undelivered_event ... ok
+test network_render::tests::controller_events::http_eventing::live_subscription_detach_fences_until_real_owner_cleanup_and_new_target ... ok
+test network_render::tests::controller_events::http_eventing::natural_http_exit_keeps_live_callback_fenced_until_actual_delivery_thread_exits ... ok
+test settled_http::tests::idle_owner_polling_does_not_refuse_sequential_publications ... ok
+test settled_http::tests::poisoned_unpublished_mailbox_is_unavailable_instead_of_idle ... ok
+
+test convert::soft_float_tests::f32_to_s16_and_the_clamp_match_the_original_over_all_four_billion_bit_patterns ... ignored, exhaustive 2^32 sweep: run in release mode with --ignored
+idle-publication attempts=5000 accepted=5000 busy=0 failure=None serviced=Ok(5000)
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+
+# Final actual-client execution: 30107136981729310
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.70s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.99s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.35s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+# All 20 required actual-client cases
+test the_real_client_finds_describes_controls_and_hears_one_server ... ok
+test on_the_tailnet_the_composed_server_describes_nothing_subscribes_nobody_and_sends_nothing ... ok
+test the_composed_client_reaches_nothing_but_the_one_fixture_player ... ok
+test the_real_client_finds_reads_and_cross_checks_the_device_over_loopback ... ok
+test only_the_zone_player_answer_is_a_player_for_the_client_and_other_services_are_silent ... ok
+test malformed_searches_get_no_answer_and_the_clients_own_search_still_finds_the_device ... ok
+test a_restarted_device_keeps_its_identity_and_a_different_identity_is_a_different_device ... ok
+test a_tailnet_connection_is_refused_the_description_and_control_that_the_local_link_gets ... ok
+test the_confined_client_refuses_any_host_or_url_but_the_fixture_player ... ok
+test the_real_client_subscribes_and_a_real_listener_receives_ordered_events ... ok
+test a_subscribe_naming_any_other_callback_is_answered_412_and_never_contacted ... ok
+test a_restarted_shim_never_honours_an_old_sid_before_or_after_a_fresh_subscription ... ok
+test a_stalled_callback_is_bounded_and_counted_while_control_keeps_answering ... ok
+test a_shim_not_started_eventing_still_grants_the_subscription_and_delivers_nothing ... ok
+test real_fsonos_eventing_changes_same_owner_protected_pcm_and_stops_with_ack ... ok
+test the_real_client_reads_and_sets_volume_and_mute_on_the_real_endpoint_over_loopback ... ok
+test the_real_client_reports_each_refusal_as_the_error_it_is_and_nothing_changes ... ok
+test the_real_client_is_refused_on_an_unauthenticated_tailnet_connection ... ok
+test with_no_listener_the_real_client_reports_a_network_error_and_never_a_success ... ok
+test the_test_client_can_reach_only_the_fixture_player_and_has_no_discovery ... ok
+
+# Preregistered old-code negative control: 30107136981729304 (expected FAILED, not a passing gate)
+idle-publication attempts=5000 accepted=3413 busy=1587 failure=None serviced=Ok(3413)
+assertion `left == right` failed: idle owner polling must not cause a false Busy
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 626 filtered out; finished in 0.11s
+
+# Strict workspace Clippy305: exit0; strict client Clippy309: exit0

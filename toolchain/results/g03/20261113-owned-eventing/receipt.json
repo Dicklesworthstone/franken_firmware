@@ -1,0 +1,641 @@
+{
+  "schema": "ffw.native-qualification.v1",
+  "baseline_commit": "2c5784bcd36e5f9e2a8a4cfc59843bab285663dd",
+  "qualified_source": {
+    "file_count": 1641,
+    "primary_transfer_file_count": 1639,
+    "excluded_primary_files": [
+      ".beads/.gitignore",
+      ".beads/config.yaml"
+    ],
+    "changed_files": [
+      {
+        "path": "crates/franken-speaker/src/settled_http.rs",
+        "sha256": "be76608d90bd910c0ee042eed9e1a4ee14378174135bed923e23d3a60bc577ea",
+        "bytes": 49767
+      },
+      {
+        "path": "crates/franken-speaker/src/fsonos_loopback.rs",
+        "sha256": "152ee4cd45e7dbe87d38760c4dd1ba895f0e2f8e77fa8fda897e532dbe35d0af",
+        "bytes": 62653
+      },
+      {
+        "path": "crates/franken-speaker/src/network_render/tests/controller_events.rs",
+        "sha256": "a046897f341f3cf743ee3190aa04fb7a61b8e9160100e1fd380f4405b743b1dd",
+        "bytes": 86391
+      },
+      {
+        "path": "crates/franken-speaker/src/settled_render.rs",
+        "sha256": "9d47e29766356d1678f989897fffcc6c300ba03ae2c10f216911d4b8cab864bd",
+        "bytes": 37135
+      },
+      {
+        "path": "crates/franken-control/src/fsonos/gena.rs",
+        "sha256": "85986ad03d735c19bfb6a99dfcc1ae6e33de32c4953ac9a0aac29b8b5a1f626c",
+        "bytes": 57206
+      },
+      {
+        "path": "crates/franken-control/src/fsonos/server.rs",
+        "sha256": "62aa63102efd3687d683f8efdb2da1e7d4f9e1a97334d0dfb4d270abd4c241b1",
+        "bytes": 167723
+      },
+      {
+        "path": "crates/franken-speaker/src/fsonos_loopback/callback.rs",
+        "sha256": "3ccce57c043236c769423379b468df4d3c277e12a680a3578c4cd5544cf467c8",
+        "bytes": 23611
+      },
+      {
+        "path": "crates/franken-speaker/src/fsonos_loopback/mailbox_eventing_tests.rs",
+        "sha256": "7abe677319c605aa2462caeffc9019c0014d2d68864a18c8635bf765e098f25a",
+        "bytes": 11206
+      },
+      {
+        "path": "crates/franken-speaker/src/network_render/tests/controller_events/http_eventing.rs",
+        "sha256": "6394c54cf8999e366396bb639ce1ed84b5d7d0a64c5ecdb19f858a04d2dc44c8",
+        "bytes": 50954
+      },
+      {
+        "path": "tests/g03/fsonos-client/tests/owned_eventing.rs",
+        "sha256": "c16643eae20298e184bd9e97d1b070b1af026be10b666dbc15ec0b7106b90311",
+        "bytes": 28819
+      },
+      {
+        "path": "tests/g03/fsonos-client/Cargo.toml",
+        "sha256": "22549921587becada52f74dfb2333962d46f5f0a1defb64546990841ade01043",
+        "bytes": 1538
+      },
+      {
+        "path": "tests/g03/fsonos-client/Cargo.lock",
+        "sha256": "c00ab318f55b1a351aba57eec225317ca5a104ccb333de4f14def598ddd4c3aa",
+        "bytes": 59936
+      }
+    ],
+    "sibling_commit": "8f422c333269073a256fe59c6f50e7e8429a1bf9",
+    "full_candidate_mismatches": 0,
+    "workspace_lineage": {
+      "workspace_native_ids": [
+        "30107136981729305",
+        "30107136981729306"
+      ],
+      "v5_freeze_sha256": "660beaf16b1b2962c8e50c409efd9cd38a2dc4e53fde54f49ef5ad26b6d7e5da",
+      "v7_freeze_sha256": "3c9e4e2c080ae26f522c593e7e37eb762cdcf2753172e245011a45c9a5a24d1d",
+      "unchanged_file_count": 1639,
+      "changed_paths": [
+        "tests/g03/fsonos-client/Cargo.lock",
+        "tests/g03/fsonos-client/tests/owned_eventing.rs"
+      ],
+      "all_firmware_workspace_rust_manifests_root_lock_unchanged": true,
+      "separate_client_workspace": true,
+      "statement": "Workspace receipts retain v5 full source; the two changed standalone-client inputs are not firmware-workspace inputs. Final client gates qualify v7."
+    }
+  },
+  "formatting": {
+    "toolchain": "1.99.0",
+    "edition": 2024,
+    "command": "rustfmt --check --edition 2024 --config skip_children=true",
+    "paths": [
+      "crates/franken-speaker/src/settled_http.rs",
+      "crates/franken-speaker/src/fsonos_loopback.rs",
+      "crates/franken-speaker/src/network_render/tests/controller_events.rs",
+      "crates/franken-speaker/src/settled_render.rs",
+      "crates/franken-control/src/fsonos/gena.rs",
+      "crates/franken-control/src/fsonos/server.rs",
+      "crates/franken-speaker/src/fsonos_loopback/callback.rs",
+      "crates/franken-speaker/src/fsonos_loopback/mailbox_eventing_tests.rs",
+      "crates/franken-speaker/src/network_render/tests/controller_events/http_eventing.rs",
+      "tests/g03/fsonos-client/tests/owned_eventing.rs"
+    ],
+    "exit": 0
+  },
+  "limits": [
+    "Offline host qualification only; no live Sonos/device/provider, target ABI/resource, physical audio, QEMU or production listener admission.",
+    "Mailbox and owner control are default library paths; isolated TCP/GENA adapter remains test/harness gated.",
+    "Exactly one exclusive HTTP eventing worker; other raw/cloned HTTP adapters are fenced while attached. Concurrent multi-ingress delivery and non-HTTP owner notification routing are not qualified.",
+    "Callback terminal means the old delivery thread can perform no further socket I/O; bytes already received cannot be retracted. Callback-thread panic may bypass queued-abandonment accounting.",
+    "The older generic plain shim still grants a logical SID without an outbox and delivers no events; this existing test path is unchanged. The new mailbox path explicitly refuses it.",
+    "Full original G03 discover/subscribe/group/volume/reconnect and comprehensive case/log acceptance remain open, as do native Tailnet, Spotify/AirPlay/Alexa and target/physical/provider qualification.",
+    "Two existing ignored workspace tests (exhaustive 2^32 DSP sweep and D03 25.5 virtual-hour soak) did not run."
+  ],
+  "required_new_cases": [
+    {
+      "name": "consumed_reply_does_not_count_notifications_as_lost",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "queued_reply_abandoned_after_successful_send_counts_both_vectors_once",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "begun_handler_outliving_caller_counts_actual_reply_loss_without_replay",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "reply_loss_with_no_notifications_and_counter_saturation_are_explicit",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "eventing_attachment_fences_raw_clones_and_releases_for_normal_use",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "attachment_refuses_queued_and_executing_work_but_reclaims_cancelled_queue",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "attachment_and_raw_publication_never_both_succeed",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "owner_and_mailbox_association_is_two_sided_and_generic_service_cannot_bypass",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "generic_mailbox_cannot_be_adopted_and_unbound_cleanup_is_refused",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "detached_eventing_stays_fenced_until_matching_cleanup_with_no_inflight_work",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "cleanup_panic_keeps_mailbox_fenced_instead_of_reopening_stale_subscriptions",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "detached_http_worker_is_not_delivery_terminal_and_cleanup_does_not_guess",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "transport_invalidation_removes_old_sids_without_reusing_the_namespace",
+      "path": "crates/franken-control/src/fsonos/gena.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "eventing_opt_in_without_outbox_still_refuses_without_mailbox_work",
+      "path": "crates/franken-speaker/src/fsonos_loopback/mailbox_eventing_tests.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "plain_mailbox_with_real_outbox_is_refused_at_startup",
+      "path": "crates/franken-speaker/src/fsonos_loopback/mailbox_eventing_tests.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "opted_in_outbox_delivers_real_core_initial_notification",
+      "path": "crates/franken-speaker/src/fsonos_loopback/mailbox_eventing_tests.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "owner_eventing_delivers_real_callbacks_and_excludes_other_ingress_until_release",
+      "path": "crates/franken-speaker/src/network_render/tests/controller_events/http_eventing.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "slow_callback_and_full_outbox_do_not_block_owner_control_or_acknowledged_stop",
+      "path": "crates/franken-speaker/src/network_render/tests/controller_events/http_eventing.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "unavailable_callback_is_counted_without_blocking_local_mute_or_stop",
+      "path": "crates/franken-speaker/src/network_render/tests/controller_events/http_eventing.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "committed_owner_response_after_http_timeout_counts_actual_undelivered_event",
+      "path": "crates/franken-speaker/src/network_render/tests/controller_events/http_eventing.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "live_subscription_detach_fences_until_real_owner_cleanup_and_new_target",
+      "path": "crates/franken-speaker/src/network_render/tests/controller_events/http_eventing.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "natural_http_exit_keeps_live_callback_fenced_until_actual_delivery_thread_exits",
+      "path": "crates/franken-speaker/src/network_render/tests/controller_events/http_eventing.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "real_fsonos_eventing_changes_same_owner_protected_pcm_and_stops_with_ack",
+      "path": "tests/g03/fsonos-client/tests/owned_eventing.rs",
+      "gate": "actual_client"
+    },
+    {
+      "name": "idle_owner_polling_does_not_refuse_sequential_publications",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    },
+    {
+      "name": "poisoned_unpublished_mailbox_is_unavailable_instead_of_idle",
+      "path": "crates/franken-speaker/src/settled_http.rs",
+      "gate": "workspace"
+    }
+  ],
+  "runtime_commit": "bacd9526f57f15fc19357bb855b105241a7d9eb9",
+  "code_commit": "2c40aa88c3de4a1ec07a690dc30716a7b2939f67",
+  "code_tree": "a8e7a74f4b9eec5ba4740d2e6bfd44e9ccd0674f",
+  "runs": [
+    {
+      "native_id": "30107136981729305",
+      "exit": 0,
+      "transfer_files": 1639,
+      "mismatch_paths": [],
+      "receipt_root": "3c1e13172e4978b8b12f682ef90a18f3183205e23fe1d954002a1f155acc90ed",
+      "content_root": "aab72b451021bf49d45667bf0f231c69dab5066d1c55b2dffddd967b27234ca4",
+      "command_sha256": "eab08515760cdd1c65668e96f9e53be4b89995c0c3d31944281e965185b87633",
+      "raw_log_sha256": "a749713dc39e8a2cecd2af350b0107dfb450a5c96cbdef7d0b37518d152326e9",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": null,
+      "footer_count": 0,
+      "role": "workspace_clippy",
+      "toolchain": "1.99.0",
+      "source_manifest_sha256": "660beaf16b1b2962c8e50c409efd9cd38a2dc4e53fde54f49ef5ad26b6d7e5da"
+    },
+    {
+      "native_id": "30107136981729306",
+      "exit": 0,
+      "transfer_files": 1639,
+      "mismatch_paths": [],
+      "receipt_root": "66518fb38786af8e5f82252f51c9cdc010c1f51077b2befbf7081b5681f52177",
+      "content_root": "8dbb52c6333ef0cb9cd400059fd5262932eec30b2087f7e523f6dccc368a459c",
+      "command_sha256": "7990c424a3e076319542a3ce24f30c5815045217571a118080315097ef63991a",
+      "raw_log_sha256": "9650482a9d09dc208ee7bf6022ba36f8dc6f1a565f9f1120d5f8d5c97bb3b5a7",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": {
+        "passed": 2961,
+        "failed": 0,
+        "ignored": 2
+      },
+      "footer_count": 81,
+      "role": "workspace_tests",
+      "toolchain": "1.99.0",
+      "source_manifest_sha256": "660beaf16b1b2962c8e50c409efd9cd38a2dc4e53fde54f49ef5ad26b6d7e5da"
+    },
+    {
+      "native_id": "30107136981729309",
+      "exit": 0,
+      "transfer_files": 1698,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1639,
+          "content_root": "f8fbdffbae6ab752b9116b5739ac896bbcc20222b2c76becf9043417b41a966c",
+          "mismatches": []
+        },
+        {
+          "relative_root": "frankensonos",
+          "mode": "workspace_metadata",
+          "files": 4,
+          "content_root": "d19117e28c5181a76001b623ef0d89d68f1e64700e28fba4465849e302919113",
+          "mismatches": []
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-proto",
+          "mode": "full",
+          "files": 51,
+          "content_root": "9a5b0fb0c4e5ea8838a0062fdd9710a70127b6e0a9a2a5955fe01dbacdf18b45",
+          "mismatches": []
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-types",
+          "mode": "full",
+          "files": 4,
+          "content_root": "acae2b462ecf4aacaf5b749be9ab4ee574324e2be35f979b97c45cc16e0b8247",
+          "mismatches": []
+        }
+      ],
+      "receipt_root": "e7c05d3ee1c705f53df1766c26bc79e638b105b437be16b2ebea5b554a0e1527",
+      "command_sha256": "4638cb1adf0a3cbce41f9375b2e29d18e886ec586e108e1d17620143fa3832ae",
+      "raw_log_sha256": "0f3761ca2804392953d6b064ba9d0de15d00929e481cc587b9b481b9e3fff3a3",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": null,
+      "footer_count": 0,
+      "role": "client_clippy",
+      "toolchain": "nightly-2026-08-31",
+      "source_manifest_sha256": "3c9e4e2c080ae26f522c593e7e37eb762cdcf2753172e245011a45c9a5a24d1d"
+    },
+    {
+      "native_id": "30107136981729310",
+      "exit": 0,
+      "transfer_files": 1698,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1639,
+          "content_root": "df33109777c0ae50ebb05ba53e63ef1b0d3eb2a3d58ce5ca56dca61415b75d44",
+          "mismatches": []
+        },
+        {
+          "relative_root": "frankensonos",
+          "mode": "workspace_metadata",
+          "files": 4,
+          "content_root": "d19117e28c5181a76001b623ef0d89d68f1e64700e28fba4465849e302919113",
+          "mismatches": []
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-proto",
+          "mode": "full",
+          "files": 51,
+          "content_root": "9a5b0fb0c4e5ea8838a0062fdd9710a70127b6e0a9a2a5955fe01dbacdf18b45",
+          "mismatches": []
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-types",
+          "mode": "full",
+          "files": 4,
+          "content_root": "acae2b462ecf4aacaf5b749be9ab4ee574324e2be35f979b97c45cc16e0b8247",
+          "mismatches": []
+        }
+      ],
+      "receipt_root": "ab16c1965b48dd5d81cc54f20a25c85074918955da175305db4fb3cd0e39ad2a",
+      "command_sha256": "2bf2f26b65dc201d8e61a15393dd78ab23ba2d0a7b8b49a6247110bd26f1b562",
+      "raw_log_sha256": "de44478af27c350c7495598e104cabffc3c4a671229f00b55a8252f899ad759a",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": {
+        "passed": 20,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0
+      },
+      "footer_count": 7,
+      "role": "client_tests",
+      "toolchain": "nightly-2026-08-31",
+      "source_manifest_sha256": "3c9e4e2c080ae26f522c593e7e37eb762cdcf2753172e245011a45c9a5a24d1d"
+    }
+  ],
+  "required_actual_client_cases": [
+    {
+      "file": "composed.rs",
+      "name": "the_real_client_finds_describes_controls_and_hears_one_server"
+    },
+    {
+      "file": "composed.rs",
+      "name": "on_the_tailnet_the_composed_server_describes_nothing_subscribes_nobody_and_sends_nothing"
+    },
+    {
+      "file": "composed.rs",
+      "name": "the_composed_client_reaches_nothing_but_the_one_fixture_player"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "the_real_client_finds_reads_and_cross_checks_the_device_over_loopback"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "only_the_zone_player_answer_is_a_player_for_the_client_and_other_services_are_silent"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "malformed_searches_get_no_answer_and_the_clients_own_search_still_finds_the_device"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "a_restarted_device_keeps_its_identity_and_a_different_identity_is_a_different_device"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "a_tailnet_connection_is_refused_the_description_and_control_that_the_local_link_gets"
+    },
+    {
+      "file": "discovery.rs",
+      "name": "the_confined_client_refuses_any_host_or_url_but_the_fixture_player"
+    },
+    {
+      "file": "eventing.rs",
+      "name": "the_real_client_subscribes_and_a_real_listener_receives_ordered_events"
+    },
+    {
+      "file": "eventing.rs",
+      "name": "a_subscribe_naming_any_other_callback_is_answered_412_and_never_contacted"
+    },
+    {
+      "file": "eventing.rs",
+      "name": "a_restarted_shim_never_honours_an_old_sid_before_or_after_a_fresh_subscription"
+    },
+    {
+      "file": "eventing.rs",
+      "name": "a_stalled_callback_is_bounded_and_counted_while_control_keeps_answering"
+    },
+    {
+      "file": "eventing.rs",
+      "name": "a_shim_not_started_eventing_still_grants_the_subscription_and_delivers_nothing"
+    },
+    {
+      "file": "owned_eventing.rs",
+      "name": "real_fsonos_eventing_changes_same_owner_protected_pcm_and_stops_with_ack"
+    },
+    {
+      "file": "real_client.rs",
+      "name": "the_real_client_reads_and_sets_volume_and_mute_on_the_real_endpoint_over_loopback"
+    },
+    {
+      "file": "real_client.rs",
+      "name": "the_real_client_reports_each_refusal_as_the_error_it_is_and_nothing_changes"
+    },
+    {
+      "file": "real_client.rs",
+      "name": "the_real_client_is_refused_on_an_unauthenticated_tailnet_connection"
+    },
+    {
+      "file": "real_client.rs",
+      "name": "with_no_listener_the_real_client_reports_a_network_error_and_never_a_success"
+    },
+    {
+      "file": "real_client.rs",
+      "name": "the_test_client_can_reach_only_the_fixture_player_and_has_no_discovery"
+    }
+  ],
+  "negative_control": {
+    "native_id": "30107136981729304",
+    "exit": 101,
+    "transfer_files": 1639,
+    "mismatch_paths": [],
+    "receipt_root": "9990de6bd077fbaed0ba2d233d3e08f791c5f2408d6dcbc70589ff2be49074a1",
+    "content_root": "2fe91c605a76fbde8fb6f93459d7bd016c78c66a5501a4a9542e53b787e06765",
+    "command_sha256": "d01cc78a7865cf654107cafbc68a4a2bf93a344962b47f08f3e752b4de243fc1",
+    "raw_log_sha256": "c73d0da64374d7b07cbe253955f959f089d6dd361cfccbb013e68730e89e0ff4",
+    "terminal_acknowledged": true,
+    "wrapper_alive": false,
+    "strict_remote": true,
+    "custody": {
+      "execution_started": true,
+      "staging_released": null,
+      "sources_released": true,
+      "pair_released": true,
+      "tree_retired": true,
+      "retired": true
+    },
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0
+    },
+    "footer_count": 1,
+    "classification": "Expected assertion failure demonstrating old-code false Busy; not a passing final gate or proof of native303 cause.",
+    "attempts": 5000,
+    "accepted": 3413,
+    "busy": 1587,
+    "unexpected_failure": null,
+    "serviced": 3413,
+    "filtered": 626,
+    "parameters_retuned": false,
+    "repeated": false
+  },
+  "fixed_regression": {
+    "attempts": 5000,
+    "accepted": 5000,
+    "busy": 0,
+    "unexpected_failure": null,
+    "serviced": 5000,
+    "case": "idle_owner_polling_does_not_refuse_sequential_publications",
+    "native_id": "30107136981729306",
+    "claim_scope": "This preregistered no-overlap stress workload only; not production throughput or a stock-firmware dropout rate."
+  },
+  "prior_failures": [
+    {
+      "native_id": "30107136981729297",
+      "kind": "Publication directory preflight permission refusal",
+      "wrapper_exit": 103,
+      "execution_started": false,
+      "tests": "NOT RUN",
+      "source_receipt": false,
+      "raw_log_sha256": "3bb8d6961615a68f46ecefa2db661f7019a85f1b552e0ddcb7cfff2a21d1c9bb"
+    },
+    {
+      "native_id": "30107136981729298",
+      "kind": "Deprecated atomic API, compilation failed; tests NOT RUN",
+      "exit": 101,
+      "counts": null,
+      "raw_log_sha256": "68971e414d00b8f497bccd33aaf630a43b816c8d916d641d3ecaa4853bda5652",
+      "source_tuples_matched": 1639,
+      "source_mismatches": 0
+    },
+    {
+      "native_id": "30107136981729299",
+      "kind": "Unused integration-test import, compilation failed; tests NOT RUN",
+      "exit": 101,
+      "counts": null,
+      "raw_log_sha256": "a31efb767435a47afad898d0f00df498616ce3a9e179f2d949f4bf28d7d1c021",
+      "source_tuples_matched": 1639,
+      "source_mismatches": 0
+    },
+    {
+      "native_id": "30107136981729301",
+      "kind": "Nested conditional Clippy failure",
+      "exit": 101,
+      "counts": null,
+      "raw_log_sha256": "afbc362aa49ab51984b423315d350fbf4460fd843994027a4858d118f004da2b",
+      "source_tuples_matched": 1639,
+      "source_mismatches": 0
+    },
+    {
+      "native_id": "30107136981729303",
+      "kind": "Teardown case Idle until deadline; actual failed call/cause not captured",
+      "exit": 101,
+      "counts": {
+        "passed": 2958,
+        "failed": 1,
+        "ignored": 2
+      },
+      "raw_log_sha256": "03818f1092e6f8bc06d785006ac25f6efe5762cab5f18dcff106daaf6f5cb9a3",
+      "source_tuples_matched": 1639,
+      "source_mismatches": 0
+    },
+    {
+      "native_id": "30107136981729307",
+      "kind": "Standalone codec lock graph stale; all20 client tests NOT RUN",
+      "exit": 101,
+      "counts": null,
+      "raw_log_sha256": "c593f0d1c6681af7d8915f6bf77a528fe7d35ac5cc9b8f06d00ea920f6d620fc",
+      "source_tuples_matched": 1698,
+      "source_mismatches": 0
+    },
+    {
+      "native_id": "30107136981729308",
+      "kind": "Lock accepted; unused client test import, all20 client tests NOT RUN",
+      "exit": 101,
+      "counts": null,
+      "raw_log_sha256": "543ee93735078ca4ca0a2c088da8745d12b1feb7394f49c947ffaa706a86a10e",
+      "source_tuples_matched": 1698,
+      "source_mismatches": 0
+    }
+  ],
+  "historical_nonfinal_pass": {
+    "native_id": "30107136981729300",
+    "counts": {
+      "passed": 2959,
+      "failed": 0,
+      "ignored": 2
+    },
+    "qualification": "Earlier v3 runtime only; requested worker RUSTFLAGS not directly established from displayed inner command. Not counted as a final gate.",
+    "raw_log_sha256": "37a9c8de3ccc9b325ed7b436d0eb40af189323214bc9e51c0bd626e3c9398fc4"
+  },
+  "qualification": {
+    "original_bead": "ffw-xvv",
+    "status": "open",
+    "proof_class": "Offline host execution, real loopback TCP and actual fsonos-proto client; modeled retained HAL, not physical output.",
+    "review": "Independent inspection of the same executions and source; not independent runtime replication.",
+    "consumer": "Supervisor/operator deciding admission of this exact owner-eventing prototype.",
+    "retires_on": "Any change to the relevant source, build profile or dependency inputs; prior workspace gates have the explicit standalone-input lineage above.",
+    "no_existing_assertion_or_deadline_relaxed": true,
+    "no_new_ignored_tests": true,
+    "no_golden_or_ci_change": true,
+    "registry_existing_records_preserved": 226,
+    "registry_records_final": 238
+  },
+  "observed_sha256": "f2c4b8e95777490fd285124e783568b58ef3fd9fbb182656fab93291e2376f3b"
+}
