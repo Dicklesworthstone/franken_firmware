@@ -1,0 +1,811 @@
+{
+  "schema": "ffw.finite-capture.host-evidence.v1",
+  "scope": "Offline and confined localhost host execution only; not firmware or physical playback qualification",
+  "baseline": "9634a5da426d843f8b1195bb0113ef90f29bc0c0",
+  "code_revision": "57e955fda59cc2dbe1ba56daa2b84730d516340b",
+  "native_source": {
+    "freeze_sha256": "c9a30ca030a63d553e5defec08f0033840aa68ace18fcc333355ade9a25cca76",
+    "inventory_sha256": "18ec9c2aaf01ca17bfc2d9a3e10857949532e8f7f538e0cd1465e9230c20be5a",
+    "inventory_files": 1659,
+    "transferred_files": 1657,
+    "excluded_paths": [
+      ".beads/.gitignore",
+      ".beads/config.yaml"
+    ]
+  },
+  "consumer_source": {
+    "freeze_sha256": "aa1f5e9629a66fee5e910ee6b2a96c654f31fc09ef34cfb121a61e2bf8d20a81",
+    "inventory_sha256": "66343516fcb7d00dd35932ab201b0ae7e6156feaca7732de00af11fd372534f7",
+    "inventory_files": 1659,
+    "unchanged_native_tuples": 1658,
+    "delta": [
+      {
+        "path": "tests/g03/cases.json",
+        "old_sha256": "822fd191544926f068584655a712cbc49a1078b0bd97de9eb589a5807d684c61",
+        "new_sha256": "4a01e676aab3a9f0ec8b36abf57c3a8b2d733a589b30af8319f62015a3067fb8"
+      }
+    ],
+    "git_blobs_and_modes_compared": 1659
+  },
+  "changed_inputs": [
+    {
+      "path": "crates/franken-speaker/src/source_runtime_cli.rs",
+      "sha256": "81c4f09220be9fab0fde0247694345c671b167a0ebd26a6c3f93379574ed8758",
+      "bytes": 68890
+    },
+    {
+      "path": "tests/source_runtime/run_group.py",
+      "sha256": "cb36e5768f2b75eeb7593a7fe1720a4775321f9a96a8b41929b7e03019758478",
+      "bytes": 15572
+    },
+    {
+      "path": "tests/source_runtime/run_loopback.py",
+      "sha256": "8b7b8399ff262e19e6d1f052598b3465ff791c6ffac14fca3fe830b9a3d4a197",
+      "bytes": 33769
+    },
+    {
+      "path": "tests/source_runtime/test_oracle.py",
+      "sha256": "e0bfc67fb353d1b7ca0dd55439cbb4cdf029d8acd37bfa006e882475e35d8d7a",
+      "bytes": 23432
+    },
+    {
+      "path": "tests/source_runtime/test_group_oracle.py",
+      "sha256": "4dbf475dea0595a3dd844398e8583f0cbcdf2b0d36d16d6b060a965c380e99a4",
+      "bytes": 6172
+    },
+    {
+      "path": "crates/franken-stream/src/carrier.rs",
+      "sha256": "2f6b9a3adcc17a16af99ec51f9bbbedba0f3173fb3dfb6eee1ef6ec9351406fc",
+      "bytes": 241264
+    },
+    {
+      "path": "crates/franken-stream/src/carrier/tests.rs",
+      "sha256": "e18fbc855b5ad1f004731b3d4a1445a980447e7a21a5d110af709b1cd8c858fb",
+      "bytes": 225699
+    },
+    {
+      "path": "tests/n07/run_cases.py",
+      "sha256": "91894b8928afbab1d1c0a1720bd8bba4b1b271b90fdac7bbca6d34045ca17d26",
+      "bytes": 40273
+    },
+    {
+      "path": "crates/franken-speaker/src/source_media.rs",
+      "sha256": "80c907759d781a4f59fdaa00c734f1040ff8bdc31fc8e40b7cf8f97e15d687bf",
+      "bytes": 129613
+    },
+    {
+      "path": "crates/franken-speaker/src/source_runtime.rs",
+      "sha256": "3849bae5661138225ae4555a7dd987aa0d04c2aa30c1bd5c33820e603473b78f",
+      "bytes": 49829
+    },
+    {
+      "path": "docs/contracts/n07.md",
+      "sha256": "0d4de81a6b151fd497486b5b88aa8c0b64cdd10d562f6f8853708c503554a748",
+      "bytes": 51014
+    },
+    {
+      "path": "tests/n07/test_judge.py",
+      "sha256": "39138b878c74985a20cd6d236dcd87215b5e200a354e7cb9e33f005d9a2c619f",
+      "bytes": 59253
+    },
+    {
+      "path": "crates/franken-control/src/fsonos/server.rs",
+      "sha256": "e603af6b784b4cf57937db324112c2cd7a32fbe947c7d07afd235f0028823cba",
+      "bytes": 184827
+    },
+    {
+      "path": "docs/contracts/g03.md",
+      "sha256": "47848ab326d457b3fdf4f82caf783c54385f6f1f8140241e0b78b4af540a8e9e",
+      "bytes": 55617
+    },
+    {
+      "path": "tests/g03/cases.json",
+      "sha256": "4a01e676aab3a9f0ec8b36abf57c3a8b2d733a589b30af8319f62015a3067fb8",
+      "bytes": 36536
+    }
+  ],
+  "workspace_clippy": {
+    "native_id": "30107136981729341",
+    "exit": 0,
+    "transfer_files": 1657,
+    "receipt_root": "c6a41acf366eb41cfdcf0a28f314ecda01b2a2fa900f569d0d3c4c683656d482",
+    "command_sha256": "eab08515760cdd1c65668e96f9e53be4b89995c0c3d31944281e965185b87633",
+    "content_root": "d7ba7f0306ad65f25180281d23dfa8151dbfb4baad91d42e9f4d22b3227c3e11",
+    "raw_log_sha256": "43c7ab65137a570d93475d38c71b9e36804fe6c625a212bc9480c5f5b0aaca71",
+    "terminal_acknowledged": true,
+    "strict_remote": true,
+    "wrapper_alive": false,
+    "custody": {
+      "execution_started": true,
+      "staging_released": true,
+      "sources_released": true,
+      "pair_released": true,
+      "tree_retired": true,
+      "retired": true
+    },
+    "counts": null,
+    "footer_count": 0
+  },
+  "workspace_tests": {
+    "native_id": "30107136981729342",
+    "exit": 0,
+    "transfer_files": 1657,
+    "receipt_root": "df7b671c28e2b11bff00014ac3f6790855a4c71a7b9ebe2de4b2059a245fa056",
+    "command_sha256": "7990c424a3e076319542a3ce24f30c5815045217571a118080315097ef63991a",
+    "content_root": "1a8ec0aef6f9b65266ffde477c5007df763afd452f51a5de3f675fc85648e5ff",
+    "raw_log_sha256": "02d70c861d00369eb180a89740201093c6a1853889c4f833840eef4edf64b058",
+    "terminal_acknowledged": true,
+    "strict_remote": true,
+    "wrapper_alive": false,
+    "custody": {
+      "execution_started": true,
+      "staging_released": true,
+      "sources_released": true,
+      "pair_released": true,
+      "tree_retired": true,
+      "retired": true
+    },
+    "counts": {
+      "passed": 3000,
+      "failed": 0,
+      "ignored": 2,
+      "measured": 0,
+      "filtered": 0
+    },
+    "footer_count": 81
+  },
+  "required_cases": {
+    "required": [
+      {
+        "name": "finite_capture_prevents_real_engine_post_end_concealment_without_trimming_pcm",
+        "ok": 1
+      },
+      {
+        "name": "finite_capture_keeps_actual_missing_middle_and_final_partial_as_failures",
+        "ok": 1
+      },
+      {
+        "name": "finite_capture_rejects_invalid_declarations_and_mismatched_or_duplicate_end",
+        "ok": 1
+      },
+      {
+        "name": "finite_capture_rejects_authenticated_extra_and_short_blocks_without_hiding_credit",
+        "ok": 1
+      },
+      {
+        "name": "host_udp_lost_last_report_recovers_without_replaying_pcm_or_trusting_wrong_address",
+        "ok": 1
+      },
+      {
+        "name": "source_loopback_processes_match_independent_pcm_and_reject_wrong_key",
+        "ok": 1
+      },
+      {
+        "name": "source_group_processes_match_pcm_and_isolate_wrong_key",
+        "ok": 1
+      },
+      {
+        "name": "finite_source_eof_waits_for_real_receiver_credit",
+        "ok": 1
+      },
+      {
+        "name": "n07_buffered_credit_window_delivers_retained_pcm_after_real_report",
+        "ok": 1
+      },
+      {
+        "name": "n07_buffered_slow_peer_capacity_preserves_healthy_progress_and_deadlines",
+        "ok": 1
+      },
+      {
+        "name": "n07_buffered_credit_mode_still_respects_sequence_and_cooldown_guards",
+        "ok": 1
+      },
+      {
+        "name": "buffered_credit_profile_retains_pcm_and_reader_at_capacity",
+        "ok": 1
+      },
+      {
+        "name": "finite_capture_defers_stalling_writer_until_actual_n04_decisions_finish",
+        "ok": 1
+      },
+      {
+        "name": "finite_capture_partial_error_serializes_once_without_duplicate_retry",
+        "ok": 1
+      },
+      {
+        "name": "player_relative_retry_returns_current_volume_then_expires",
+        "ok": 1
+      },
+      {
+        "name": "group_relative_retry_returns_current_volume_then_expires",
+        "ok": 1
+      },
+      {
+        "name": "player_relative_retry_returns_current_volume_then_restart_is_unknown",
+        "ok": 1
+      },
+      {
+        "name": "group_relative_retry_returns_current_volume_then_restart_is_unknown",
+        "ok": 1
+      },
+      {
+        "name": "relative_retry_returns_current_volume_after_later_command_in_same_step",
+        "ok": 1
+      },
+      {
+        "name": "current_relative_reply_is_unknown_after_capacity_eviction_and_not_reapplied",
+        "ok": 1
+      },
+      {
+        "name": "a_tailnet_replay_reports_the_volume_as_it_is_now_not_as_it_was_committed",
+        "ok": 1
+      }
+    ],
+    "process_cases": [
+      {
+        "family": "FFW_SOURCE_LOOPBACK",
+        "case": "vorbis_48000-pcm",
+        "status": "passed",
+        "frames": 24000,
+        "blocks": 94,
+        "peak_lsb": 1,
+        "rms_lsb": 0.04587119648174295,
+        "group_peers": null,
+        "comparisons": null
+      },
+      {
+        "family": "FFW_SOURCE_LOOPBACK",
+        "case": "mp3_48000_long-pcm",
+        "status": "passed",
+        "frames": 72000,
+        "blocks": 282,
+        "peak_lsb": 1,
+        "rms_lsb": 0.04579543888011362,
+        "group_peers": null,
+        "comparisons": null
+      },
+      {
+        "family": "FFW_SOURCE_LOOPBACK",
+        "case": "vorbis_48000-wrong-key",
+        "status": "passed",
+        "frames": null,
+        "blocks": null,
+        "peak_lsb": null,
+        "rms_lsb": null,
+        "group_peers": null,
+        "comparisons": null
+      },
+      {
+        "family": "FFW_SOURCE_GROUP",
+        "case": "vorbis-two",
+        "status": "passed",
+        "frames": null,
+        "blocks": null,
+        "peak_lsb": null,
+        "rms_lsb": null,
+        "group_peers": [
+          1,
+          2
+        ],
+        "comparisons": {
+          "1": {
+            "blocks": 94,
+            "capture_sha256": "8747e9c0e03d5ca91e2df9a41b0478d6b1ac7ef35e92896a189658e255fe8ea4",
+            "frames": 24000,
+            "peak_lsb": 1,
+            "rms_lsb": 0.04587119648174295,
+            "samples": 48000
+          },
+          "2": {
+            "blocks": 94,
+            "capture_sha256": "8747e9c0e03d5ca91e2df9a41b0478d6b1ac7ef35e92896a189658e255fe8ea4",
+            "frames": 24000,
+            "peak_lsb": 1,
+            "rms_lsb": 0.04587119648174295,
+            "samples": 48000
+          }
+        }
+      },
+      {
+        "family": "FFW_SOURCE_GROUP",
+        "case": "mp3-long-three",
+        "status": "passed",
+        "frames": null,
+        "blocks": null,
+        "peak_lsb": null,
+        "rms_lsb": null,
+        "group_peers": [
+          1,
+          2,
+          3
+        ],
+        "comparisons": {
+          "1": {
+            "blocks": 282,
+            "capture_sha256": "05fb48e0922295a694670f80f6e5f856e872fac811a3693ddaf81f61cfcadf70",
+            "frames": 72000,
+            "peak_lsb": 1,
+            "rms_lsb": 0.04579543888011362,
+            "samples": 144000
+          },
+          "2": {
+            "blocks": 282,
+            "capture_sha256": "05fb48e0922295a694670f80f6e5f856e872fac811a3693ddaf81f61cfcadf70",
+            "frames": 72000,
+            "peak_lsb": 1,
+            "rms_lsb": 0.04579543888011362,
+            "samples": 144000
+          },
+          "3": {
+            "blocks": 282,
+            "capture_sha256": "05fb48e0922295a694670f80f6e5f856e872fac811a3693ddaf81f61cfcadf70",
+            "frames": 72000,
+            "peak_lsb": 1,
+            "rms_lsb": 0.04579543888011362,
+            "samples": 144000
+          }
+        }
+      },
+      {
+        "family": "FFW_SOURCE_GROUP",
+        "case": "wrong-key-three",
+        "status": "passed",
+        "frames": null,
+        "blocks": null,
+        "peak_lsb": null,
+        "rms_lsb": null,
+        "group_peers": [
+          1,
+          2,
+          3
+        ],
+        "comparisons": {
+          "1": {
+            "blocks": 94,
+            "capture_sha256": "660d6dfb98db513719beae981fed00bd1e64b2e06fb0142449d7533dd89f2762",
+            "frames": 24000,
+            "peak_lsb": 1,
+            "rms_lsb": 0.04587119648174295,
+            "samples": 48000
+          },
+          "2": {
+            "blocks": 94,
+            "capture_sha256": "660d6dfb98db513719beae981fed00bd1e64b2e06fb0142449d7533dd89f2762",
+            "frames": 24000,
+            "peak_lsb": 1,
+            "rms_lsb": 0.04587119648174295,
+            "samples": 48000
+          }
+        }
+      }
+    ],
+    "scope": "Same-execution review of actual independently computed process-oracle results; not a new PCM replica or physical playout proof."
+  },
+  "local_checks": {
+    "rustfmt": {
+      "toolchain": "1.99.0",
+      "paths": 6,
+      "exit": 0
+    },
+    "py_compile": {
+      "paths": 6,
+      "exit": 0
+    },
+    "source_runner_units": {
+      "passed": 34,
+      "failed": 0,
+      "exit": 0,
+      "raw_log_sha256": "145eeddc3b7ea4046af8e9ba3c68ed1fd0ad1c3ad556608028bde1d2c631b459"
+    },
+    "n07_judge_units": {
+      "passed": 44,
+      "failed": 0,
+      "exit": 0,
+      "raw_log_sha256": "762f9f1da2e0075a9116a3d9918ad917376ef70915200bbf5de736920c8bd243"
+    },
+    "reuse": "Six Python inputs are byte-identical to the earlier tested v8 inputs; no claim of a repeated run on renamed snapshots."
+  },
+  "n07_consumer": {
+    "native_source_freeze": "c9a30ca030a63d553e5defec08f0033840aa68ace18fcc333355ade9a25cca76",
+    "input_log_sha256": "02d70c861d00369eb180a89740201093c6a1853889c4f833840eef4edf64b058",
+    "exit": 0,
+    "cases": 25,
+    "passed": 25,
+    "failed": 0,
+    "meta_checks": 7,
+    "meta_failed": 0,
+    "raw_log_sha256": "157421d3c4235bad73192f34c5da27da8716340f729bf41626b95cf122445497",
+    "receipt_sha256": "2d57dbddbda48a736f96ff865c59ab5622d1abf203be698d2f2139c26fc1fead"
+  },
+  "g03_consumer": {
+    "consumer_source_freeze": "aa1f5e9629a66fee5e910ee6b2a96c654f31fc09ef34cfb121a61e2bf8d20a81",
+    "input_native_source_freeze": "c9a30ca030a63d553e5defec08f0033840aa68ace18fcc333355ade9a25cca76",
+    "input_log_sha256": "02d70c861d00369eb180a89740201093c6a1853889c4f833840eef4edf64b058",
+    "exit": 0,
+    "cases": 52,
+    "passed": 52,
+    "failed": 0,
+    "blocked": 0,
+    "rust_tests": 195,
+    "rust_ok": 195,
+    "artifacts_checked": 28,
+    "raw_log_sha256": "0e958bc4a34a2ff6cef2727a2ae93b1fab0f22d9f56a8549a2aeff56b96ad7c5",
+    "receipt_sha256": "e4ae8b6b454872f863d53ed9524754b3c60537ef598923d424e4434879abe558",
+    "diagnostics": {
+      "bytes": 36085,
+      "critical_lost": false,
+      "dropped": 0,
+      "events": 105,
+      "sha256": "48750418c351c832b91b576c5ef6145e0884b7bcbe2191f63db128746557e0ae",
+      "truncated": false
+    }
+  },
+  "sdk_source": {
+    "baseline": "8f422c333269073a256fe59c6f50e7e8429a1bf9",
+    "selected_inventory_sha256": "6333d7d5e67cce995402500c19768abdc55a976c3fa4c3a0da8e4f48e50f6549",
+    "files": 59,
+    "phase_sha256": "2bbe642b5de25b57ae04f3a8fd4a89ad82648589ae39ebfc28e2d6f8d78f84c8",
+    "expected_transfer_total": 1716
+  },
+  "sdk_clippy": {
+    "native_id": "30107136981729343",
+    "exit": 0,
+    "transfer_files": 1716,
+    "roots": [
+      {
+        "kind": "firmware",
+        "mode": "full",
+        "files": 1657,
+        "content_root": "998997b60b11dcffc0e814bb7ade1f08af0cd0ab289e8d71dbb3d9305e48eb0c"
+      },
+      {
+        "kind": "sdk_workspace",
+        "mode": "workspace_metadata",
+        "files": 4,
+        "content_root": "b79083f8b488dc6f210c8b5e598af83c1c9e880fc02d54336eee5644a748c1db"
+      },
+      {
+        "kind": "fsonos-proto",
+        "mode": "full",
+        "files": 51,
+        "content_root": "56cb0b201f2ad122b1f472ba3a9ffae020d37601a90af450df916199e2bfbbd5"
+      },
+      {
+        "kind": "fsonos-types",
+        "mode": "full",
+        "files": 4,
+        "content_root": "8f25bb782dfe4677b9021c277b1210a593122c4a942213f11be1c6a27b80e54b"
+      }
+    ],
+    "receipt_root": "076acf993bcd307c480d4ae958c3ecdf55cdb143a96b062f324d0d4e0d0e7a9a",
+    "command_sha256": "4638cb1adf0a3cbce41f9375b2e29d18e886ec586e108e1d17620143fa3832ae",
+    "raw_log_sha256": "e8bb82d770fa297b1cda0c334c1369d4a86e04777724eec331456f41d223be7f",
+    "terminal_acknowledged": true,
+    "strict_remote": true,
+    "wrapper_alive": false,
+    "custody": {
+      "execution_started": true,
+      "staging_released": true,
+      "sources_released": true,
+      "pair_released": true,
+      "tree_retired": true,
+      "retired": true
+    },
+    "counts": null,
+    "footer_count": 0
+  },
+  "earlier_failed_native_runs": [
+    {
+      "native_id": "30107136981729331",
+      "exit": 101,
+      "counts": {
+        "passed": 2987,
+        "failed": 1,
+        "ignored": 2,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 81,
+      "raw_log_sha256": "86b81a8ed76a5292a96651dc762e147c586933bdc34a1bd4153c1bad94125019",
+      "receipt_root": "81bfebe0a4e0156e78b5db694f55c60704869562ee359e7f0f26dde2bb6bb403",
+      "strict_remote": true,
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "staging_disposition": "N/A: failed execution did not record staging ownership/release; no true release claimed",
+      "source_pair_tree_record_released": true
+    },
+    {
+      "native_id": "30107136981729334",
+      "exit": 101,
+      "counts": {
+        "passed": 2987,
+        "failed": 1,
+        "ignored": 2,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 81,
+      "raw_log_sha256": "dadb3c8818de620e0df3fc2225ac14baa2da4ab9ee84de341177e082e68669cf",
+      "receipt_root": "29a763916fe5ae7c87b988065f655813c62489e83e35c402bd969c6d904cf4f0",
+      "strict_remote": true,
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "staging_disposition": "N/A: no recorded staging ownership for failed execution",
+      "source_pair_tree_record_released": true,
+      "failed_case": "source_group_processes_match_pcm_and_isolate_wrong_key",
+      "observed": {
+        "published_frames": 24000,
+        "expected_packets_per_peer": 94,
+        "peer1_sent_submitted_reported": 85,
+        "peer2_sent_submitted_reported": 94,
+        "skipped_stalled": 9,
+        "expired_blocks": 0
+      }
+    },
+    {
+      "native_id": "30107136981729336",
+      "exit": 101,
+      "counts": {
+        "passed": 2991,
+        "failed": 1,
+        "ignored": 2,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 81,
+      "raw_log_sha256": "74785c19c64dc3c05d699fc1da7c7ee4c01e0b3c1ea8d0d25a8136855fd3034a",
+      "receipt_root": "dccd012327ca8dc4a64fa23c925aea2f708495d364b9fdb21f4067272b457764",
+      "strict_remote": true,
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "staging_disposition": "N/A: no recorded staging ownership for failed execution",
+      "source_pair_tree_record_released": true,
+      "failed_case": "source_runtime::tests::buffered_credit_profile_retains_pcm_and_reader_at_capacity",
+      "observed": "new test expected queued_packets0 after stop, actual1. Existing terminal private-custody contract retains bounded queue until owner drop; no production bug inferred."
+    },
+    {
+      "native_id": "30107136981729338",
+      "exit": 101,
+      "counts": {
+        "passed": 2991,
+        "failed": 1,
+        "ignored": 2,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 81,
+      "raw_log_sha256": "0b01863984748d25ffedbe8cf60005130457cdb200bd77a38df4bcd44b972406",
+      "receipt_root": "e30017bc57f90831392b10d268582d0e9495d1421b5c822f06144ff75e9a3ce7",
+      "strict_remote": true,
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "staging_disposition": "N/A: no recorded staging ownership for failed execution",
+      "source_pair_tree_record_released": true,
+      "failed_case": "source_group_processes_match_pcm_and_isolate_wrong_key",
+      "observed": {
+        "case": "vorbis-two",
+        "receiver": 2,
+        "first_block": 6,
+        "start_frame": 1536,
+        "outcome": "muted_overdue",
+        "late_by_ns": 42237305,
+        "captured_frames": 23744,
+        "expected_frames": 24000,
+        "real_blocks": 93,
+        "muted_blocks": 1,
+        "peer1_real_blocks": 94,
+        "sender_packets_each": 94,
+        "sender_skipped_stalled": 0,
+        "sender_expired": 0,
+        "sender_drops": 0
+      },
+      "cause": "Specific host scheduling delay cause unknown; separate source inspection identifies synchronous serialization/filesystem IO on capture deadline path. No attribution to disk or earlier failures."
+    },
+    {
+      "native_id": "30107136981729340",
+      "exit": 101,
+      "counts": {
+        "passed": 2999,
+        "failed": 1,
+        "ignored": 2,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 81,
+      "raw_log_sha256": "7f5e75f4d41a43d11589eb159bcc8044c0f9a7bb0cffd663f49a6dfb8f468e99",
+      "receipt_root": "648b491d97154c68b5f279cb38bfd07c4e08d2f5ba58ce3ed22edd6ba0e1d359",
+      "strict_remote": true,
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "staging_disposition": "N/A: no recorded staging ownership for failed execution",
+      "source_pair_tree_record_released": true,
+      "failed_case": "control_adapter::tests::a_tailnet_replay_reports_the_volume_as_it_is_now_not_as_it_was_committed",
+      "observed": "Proposed new retained-result behavior returned60, existing consumer requires current70 with no duplicate state mutation. Original contract explicit in old test/comment; proposed runtime change rejected, not old assertion."
+    }
+  ],
+  "earlier_failed_consumer": {
+    "exit": 1,
+    "cases": 52,
+    "passed": 51,
+    "failed": 1,
+    "rust_tests": 195,
+    "rust_ok": 195,
+    "raw_log_sha256": "f7300d40e762cabecd95e1d3bf8fdca5fd61569062c936805bf92e60bd51102d",
+    "failed_case": "G03-META-UNIT-REFERENCE-MODEL",
+    "cause": "Six additive Rust tests had no explicit invariant binding; added only names to G03-I29, preserving unclaimed<=8."
+  },
+  "independent_reviews": {
+    "workspace_clippy": 33383,
+    "workspace_tests": 33404,
+    "sdk_clippy": 33422,
+    "consumer_source": 33421,
+    "g03_consumer": 33431
+  },
+  "not_qualified": [
+    "production authenticated finite EOF/ACK protocol",
+    "arbitrary premature trusted END/STOP recovery",
+    "target ISA/ABI execution of these changes",
+    "32 MiB allocation/RSS/CPU/deadline fit",
+    "hardware drivers or physical DAC output",
+    "distributed clock mapping or acoustic synchronization",
+    "Wi-Fi loss performance",
+    "Spotify, AirPlay, Alexa or native tailnet sessions",
+    "full N07, N02 or G03 original acceptance"
+  ],
+  "sdk_tests": {
+    "native_id": "30107136981729344",
+    "exit": 0,
+    "transfer_files": 1716,
+    "roots": [
+      {
+        "kind": "firmware",
+        "mode": "full",
+        "files": 1657,
+        "content_root": "bd2a5e4b926c31d56e7156d701288bc9ca205808479a9f7bcd79938fd43e4dde"
+      },
+      {
+        "kind": "sdk_workspace",
+        "mode": "workspace_metadata",
+        "files": 4,
+        "content_root": "b79083f8b488dc6f210c8b5e598af83c1c9e880fc02d54336eee5644a748c1db"
+      },
+      {
+        "kind": "fsonos-proto",
+        "mode": "full",
+        "files": 51,
+        "content_root": "56cb0b201f2ad122b1f472ba3a9ffae020d37601a90af450df916199e2bfbbd5"
+      },
+      {
+        "kind": "fsonos-types",
+        "mode": "full",
+        "files": 4,
+        "content_root": "8f25bb782dfe4677b9021c277b1210a593122c4a942213f11be1c6a27b80e54b"
+      }
+    ],
+    "receipt_root": "a154103250106fa7d5f38590dd9aece3bed3f168a97b8c081b19fcbe443c615b",
+    "command_sha256": "2bf2f26b65dc201d8e61a15393dd78ab23ba2d0a7b8b49a6247110bd26f1b562",
+    "raw_log_sha256": "a90deb6838a988a9b0e1cde2d6a59021dda9c355f70e3f571de1228ea530d3a4",
+    "terminal_acknowledged": true,
+    "strict_remote": true,
+    "wrapper_alive": false,
+    "custody": {
+      "execution_started": true,
+      "staging_released": true,
+      "sources_released": true,
+      "pair_released": true,
+      "tree_retired": true,
+      "retired": true
+    },
+    "counts": {
+      "passed": 24,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    "footer_count": 7
+  },
+  "sdk_required_cases": {
+    "required": [
+      {
+        "name": "the_real_client_finds_describes_controls_and_hears_one_server",
+        "ok": 1
+      },
+      {
+        "name": "on_the_tailnet_the_composed_server_describes_nothing_subscribes_nobody_and_sends_nothing",
+        "ok": 1
+      },
+      {
+        "name": "the_composed_client_reaches_nothing_but_the_one_fixture_player",
+        "ok": 1
+      },
+      {
+        "name": "the_real_client_finds_reads_and_cross_checks_the_device_over_loopback",
+        "ok": 1
+      },
+      {
+        "name": "only_the_zone_player_answer_is_a_player_for_the_client_and_other_services_are_silent",
+        "ok": 1
+      },
+      {
+        "name": "malformed_searches_get_no_answer_and_the_clients_own_search_still_finds_the_device",
+        "ok": 1
+      },
+      {
+        "name": "a_restarted_device_keeps_its_identity_and_a_different_identity_is_a_different_device",
+        "ok": 1
+      },
+      {
+        "name": "a_tailnet_connection_is_refused_the_description_and_control_that_the_local_link_gets",
+        "ok": 1
+      },
+      {
+        "name": "the_confined_client_refuses_any_host_or_url_but_the_fixture_player",
+        "ok": 1
+      },
+      {
+        "name": "the_real_client_subscribes_and_a_real_listener_receives_ordered_events",
+        "ok": 1
+      },
+      {
+        "name": "a_subscribe_naming_any_other_callback_is_answered_412_and_never_contacted",
+        "ok": 1
+      },
+      {
+        "name": "a_restarted_shim_never_honours_an_old_sid_before_or_after_a_fresh_subscription",
+        "ok": 1
+      },
+      {
+        "name": "a_stalled_callback_is_bounded_and_counted_while_control_keeps_answering",
+        "ok": 1
+      },
+      {
+        "name": "a_shim_not_started_eventing_still_grants_the_subscription_and_delivers_nothing",
+        "ok": 1
+      },
+      {
+        "name": "real_fsonos_eventing_changes_same_owner_protected_pcm_and_stops_with_ack",
+        "ok": 1
+      },
+      {
+        "name": "the_real_client_reads_and_sets_volume_and_mute_on_the_real_endpoint_over_loopback",
+        "ok": 1
+      },
+      {
+        "name": "the_real_client_reports_each_refusal_as_the_error_it_is_and_nothing_changes",
+        "ok": 1
+      },
+      {
+        "name": "the_real_client_is_refused_on_an_unauthenticated_tailnet_connection",
+        "ok": 1
+      },
+      {
+        "name": "with_no_listener_the_real_client_reports_a_network_error_and_never_a_success",
+        "ok": 1
+      },
+      {
+        "name": "the_test_client_can_reach_only_the_fixture_player_and_has_no_discovery",
+        "ok": 1
+      },
+      {
+        "name": "actual_client_discovers_same_protected_owner_across_restart_and_new_subscription",
+        "ok": 1
+      },
+      {
+        "name": "failed_owner_discovery_preflight_fences_until_real_owner_cleanup_then_succeeds",
+        "ok": 1
+      },
+      {
+        "name": "two_owner_client_rejects_unconfined_routes_and_requests_before_delegation",
+        "ok": 1
+      },
+      {
+        "name": "two_real_standalone_owners_are_discovered_controlled_and_rendered_independently",
+        "ok": 1
+      }
+    ],
+    "expected_negative_canary": "FFW_TWO_OWNER_ISOLATION_CANARY observed=[true,true] expected=[true,false] message=\"assertion `left == right` failed: owner service mask mismatch\\n  left: [true, true]\\n right: [true, false]\"",
+    "matched": true
+  },
+  "observed_sha256": "9bf9f7060ade531222a995803c22eaf3490e8a3ff01dce8059e47cbf9d637fc9"
+}
