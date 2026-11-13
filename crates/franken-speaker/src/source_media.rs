@@ -526,6 +526,28 @@ impl SourceMedia {
         peers: &[u32],
         inputs: SourceInputs<'_>,
     ) -> Result<PrepareProgress, SourceError> {
+        self.prepare_with_credit_policy(carrier, peers, inputs, false)
+    }
+
+    /// Prepare only if the buffered isolated policy can retain a full block
+    /// within its existing protected budgets, even when transmission must wait
+    /// for receiver credit. No additional read or decode occurs on retry.
+    pub fn prepare_buffered<P: DatagramPort>(
+        &mut self,
+        carrier: &mut CarrierSender<P>,
+        peers: &[u32],
+        inputs: SourceInputs<'_>,
+    ) -> Result<PrepareProgress, SourceError> {
+        self.prepare_with_credit_policy(carrier, peers, inputs, true)
+    }
+
+    fn prepare_with_credit_policy<P: DatagramPort>(
+        &mut self,
+        carrier: &mut CarrierSender<P>,
+        peers: &[u32],
+        inputs: SourceInputs<'_>,
+        buffer_credit: bool,
+    ) -> Result<PrepareProgress, SourceError> {
         self.check_observation(carrier, &inputs)?;
         if inputs.cancelled.load(Ordering::Acquire) {
             return Err(SourceError::Admission(AllPeerAdmissionError::Cancelled));
@@ -547,8 +569,20 @@ impl SourceMedia {
                     .map_err(SourceError::Admission)?,
             );
         }
-        if !self.boundary
-            && !carrier
+        let eligible = if self.boundary {
+            true
+        } else if buffer_credit {
+            carrier
+                .has_n01_buffered_eligible_peer(
+                    self.epoch.group,
+                    self.epoch.epoch,
+                    self.snapshot.as_ref().expect("source claim"),
+                    peers,
+                    inputs.interface_now_ns,
+                )
+                .map_err(SourceError::Admission)?
+        } else {
+            carrier
                 .has_n01_eligible_peer(
                     self.epoch.group,
                     self.epoch.epoch,
@@ -557,7 +591,8 @@ impl SourceMedia {
                     inputs.interface_now_ns,
                 )
                 .map_err(SourceError::Admission)?
-        {
+        };
+        if !eligible {
             return Err(SourceError::Admission(AllPeerAdmissionError::Retry(
                 AllPeerRetry::NoEligiblePeers,
             )));
@@ -655,6 +690,30 @@ impl SourceMedia {
         inputs: Option<SourceInputs<'_>>,
         report: &mut Option<N01IsolatedOutcome>,
     ) -> Result<IsolatedProgress, SourceError> {
+        self.publish_isolated_with_credit_policy(carrier, peers, inputs, report, false)
+    }
+
+    /// Retain an already decoded frame for a temporarily credit-blocked peer
+    /// within the carrier's existing protected queue and byte budgets. This
+    /// does not wait on that peer or bypass send-time deadline/credit checks.
+    pub fn publish_buffered_isolated<P: DatagramPort>(
+        &mut self,
+        carrier: &mut CarrierSender<P>,
+        peers: &[u32],
+        inputs: Option<SourceInputs<'_>>,
+        report: &mut Option<N01IsolatedOutcome>,
+    ) -> Result<IsolatedProgress, SourceError> {
+        self.publish_isolated_with_credit_policy(carrier, peers, inputs, report, true)
+    }
+
+    fn publish_isolated_with_credit_policy<P: DatagramPort>(
+        &mut self,
+        carrier: &mut CarrierSender<P>,
+        peers: &[u32],
+        inputs: Option<SourceInputs<'_>>,
+        report: &mut Option<N01IsolatedOutcome>,
+        buffer_credit: bool,
+    ) -> Result<IsolatedProgress, SourceError> {
         let inputs = inputs.ok_or(SourceError::ObservationRequired)?;
         self.check_observation(carrier, &inputs)?;
         let pending = self.pending.as_ref().ok_or(SourceError::NotPrepared)?;
@@ -662,21 +721,32 @@ impl SourceMedia {
             .sent_frames
             .checked_add(pending.frames as u64)
             .ok_or(SourceError::Timeline)?;
-        let outcome = carrier
-            .try_submit_group_media_isolated(
+        let admission = N01AdmissionInputs {
+            interface_now_ns: inputs.interface_now_ns,
+            trusted_group_now_ns: inputs.group_clock.group_ns,
+            overlap_budget_bytes: inputs.overlap_budget_bytes,
+            cancelled: inputs.cancelled,
+        };
+        let outcome = if buffer_credit {
+            carrier.try_submit_group_media_buffered_isolated(
                 self.epoch.group,
                 self.epoch.epoch,
                 self.snapshot.as_ref().expect("snapshot before decoding"),
                 peers,
                 &pending.frame,
-                N01AdmissionInputs {
-                    interface_now_ns: inputs.interface_now_ns,
-                    trusted_group_now_ns: inputs.group_clock.group_ns,
-                    overlap_budget_bytes: inputs.overlap_budget_bytes,
-                    cancelled: inputs.cancelled,
-                },
+                admission,
             )
-            .map_err(SourceError::Admission)?;
+        } else {
+            carrier.try_submit_group_media_isolated(
+                self.epoch.group,
+                self.epoch.epoch,
+                self.snapshot.as_ref().expect("snapshot before decoding"),
+                peers,
+                &pending.frame,
+                admission,
+            )
+        }
+        .map_err(SourceError::Admission)?;
         let frames = pending.frames;
         self.ready.drain(..frames * CHANNELS);
         self.sent_frames = next_sent;

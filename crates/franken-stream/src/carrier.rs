@@ -317,6 +317,12 @@ pub struct N01AdmissionInputs<'a> {
     pub cancelled: &'a AtomicBool,
 }
 
+struct N01IsolatedSelection<'a> {
+    snapshot: &'a N01GroupSnapshot,
+    required_peers: &'a [u32],
+    buffer_credit_window: bool,
+}
+
 /// Atomic all-peer N01 queue admission outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AllPeerAdmissionError {
@@ -3358,6 +3364,46 @@ impl<P: DatagramPort> CarrierSender<P> {
         required_peers: &[u32],
         interface_now_ns: u64,
     ) -> Result<bool, AllPeerAdmissionError> {
+        self.has_n01_eligible_peer_inner(
+            group,
+            epoch,
+            snapshot,
+            required_peers,
+            interface_now_ns,
+            false,
+        )
+    }
+
+    /// Conservative pre-decode advisory for buffered isolated admission. A full
+    /// send window does not prevent bounded queue admission, but a spent N01
+    /// sequence budget or active I/O cooldown still blocks that peer.
+    pub fn has_n01_buffered_eligible_peer(
+        &self,
+        group: GroupId,
+        epoch: u64,
+        snapshot: &N01GroupSnapshot,
+        required_peers: &[u32],
+        interface_now_ns: u64,
+    ) -> Result<bool, AllPeerAdmissionError> {
+        self.has_n01_eligible_peer_inner(
+            group,
+            epoch,
+            snapshot,
+            required_peers,
+            interface_now_ns,
+            true,
+        )
+    }
+
+    fn has_n01_eligible_peer_inner(
+        &self,
+        group: GroupId,
+        epoch: u64,
+        snapshot: &N01GroupSnapshot,
+        required_peers: &[u32],
+        interface_now_ns: u64,
+        buffer_credit_window: bool,
+    ) -> Result<bool, AllPeerAdmissionError> {
         use AllPeerAdmissionError::{Invalid, MembershipChanged};
         let gi = self.group_index(group).map_err(Invalid)?;
         if !self.has_owner_identity(&snapshot.owner)
@@ -3416,7 +3462,8 @@ impl<P: DatagramPort> CarrierSender<P> {
                         .next_seq()
                         .checked_add(ahead)
                         .is_some_and(|seq| seq != u64::MAX)
-                    && !peer.waiting(self.limits.window_packets)
+                    && !peer.sequence_blocked()
+                    && (buffer_credit_window || !peer.stalled(self.limits.window_packets))
                     && peer
                         .queued_packets()
                         .checked_add(1)
@@ -3629,7 +3676,59 @@ impl<P: DatagramPort> CarrierSender<P> {
         frame: &OutboundFrame,
         inputs: N01AdmissionInputs<'_>,
     ) -> Result<N01IsolatedOutcome, AllPeerAdmissionError> {
+        self.try_submit_group_media_isolated_inner(
+            group,
+            epoch,
+            N01IsolatedSelection {
+                snapshot,
+                required_peers,
+                buffer_credit_window: false,
+            },
+            frame,
+            inputs,
+        )
+    }
+
+    /// Like isolated admission, but an otherwise eligible peer with a full
+    /// credit window can retain the frame in its existing bounded queue. The
+    /// clocked pump still waits for authenticated credit before sending it;
+    /// cooldown, sequence headroom, deadlines and all queue caps still apply.
+    pub fn try_submit_group_media_buffered_isolated(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        snapshot: &N01GroupSnapshot,
+        required_peers: &[u32],
+        frame: &OutboundFrame,
+        inputs: N01AdmissionInputs<'_>,
+    ) -> Result<N01IsolatedOutcome, AllPeerAdmissionError> {
+        self.try_submit_group_media_isolated_inner(
+            group,
+            epoch,
+            N01IsolatedSelection {
+                snapshot,
+                required_peers,
+                buffer_credit_window: true,
+            },
+            frame,
+            inputs,
+        )
+    }
+
+    fn try_submit_group_media_isolated_inner(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        selection: N01IsolatedSelection<'_>,
+        frame: &OutboundFrame,
+        inputs: N01AdmissionInputs<'_>,
+    ) -> Result<N01IsolatedOutcome, AllPeerAdmissionError> {
         use AllPeerAdmissionError::{Cancelled, Invalid, MembershipChanged, Retry};
+        let N01IsolatedSelection {
+            snapshot,
+            required_peers,
+            buffer_credit_window,
+        } = selection;
         let N01AdmissionInputs {
             interface_now_ns,
             trusted_group_now_ns,
@@ -3736,7 +3835,8 @@ impl<P: DatagramPort> CarrierSender<P> {
                 .is_none_or(|seq| seq == u64::MAX)
             {
                 N01PeerDisposition::SequenceExhausted
-            } else if peer.waiting(self.limits.window_packets)
+            } else if peer.sequence_blocked()
+                || (!buffer_credit_window && peer.stalled(self.limits.window_packets))
                 || peer
                     .send_hold_until_ns
                     .is_some_and(|until| interface_now_ns < until)

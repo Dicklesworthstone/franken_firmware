@@ -119,6 +119,27 @@ class SampleOracleTests(unittest.TestCase):
 
 
 class ProcessSupervisorTests(unittest.TestCase):
+    def test_peer_delivery_events_are_bounded_distinct_and_not_global_done(self):
+        script = ('import json;'
+                  '[print(json.dumps({"event":"peer_drained","peer_id":p}),flush=True) for p in (1,2)];'
+                  'print(json.dumps({"event":"capture_state","captured_frames":600}),flush=True);'
+                  'print(json.dumps({"event":"summary"}),flush=True)')
+        with Children(self.directory(), 2) as supervisor:
+            child = supervisor.spawn("partial-group", [sys.executable, "-c", script])
+            self.assertEqual(supervisor.event(child, "peer_drained", 1)["peer_id"], 1)
+            self.assertEqual(supervisor.event(child, "peer_drained", 2)["peer_id"], 2)
+            self.assertEqual(supervisor.event(child, "capture_state")["captured_frames"], 600)
+            supervisor.event(child, "summary")
+            supervisor.completed(child)
+            self.assertFalse(any(row["event"] == "done" for row in child["events"]))
+        for ids in ([1, 1], list(range(1, 10)), [0], [True]):
+            with self.subTest(ids=ids), self.assertRaises(OracleError):
+                with Children(self.directory(), 2) as supervisor:
+                    script = ('import json;'
+                              f'[print(json.dumps({{"event":"peer_drained","peer_id":p}}),flush=True) for p in {ids!r}]')
+                    child = supervisor.spawn("invalid-delivery", [sys.executable, "-c", script])
+                    supervisor.completed(child)
+
     """Real tiny Python children test supervision, not the audio implementation."""
 
     def directory(self):
@@ -275,6 +296,8 @@ class FailureDiagnosticTests(unittest.TestCase):
     @staticmethod
     def failing_child(supervisor, *_args, **_kwargs):
         script = ('import json,sys;'
+                  'print(json.dumps({"event":"capture_state","peer_id":1,"decided_blocks":3,'
+                  '"first_non_real":{"block":2,"outcome":"concealed","presentation_ns":123,"late_by_ns":4,"secret":"omit"}}),flush=True);'
                   'print(json.dumps({"event":"summary","peer_id":1,"captured_frames":256,'
                   '"real_blocks":1,"concealed_blocks":2,"playout_rejected":3}),flush=True);'
                   'print("actual child failure",file=sys.stderr,flush=True);sys.exit(7)')
@@ -294,8 +317,43 @@ class FailureDiagnosticTests(unittest.TestCase):
         self.assertEqual(child["post_teardown_returncode"], 7)
         self.assertEqual(child["terminal_events"][0]["concealed_blocks"], 2)
         self.assertEqual(child["terminal_events"][0]["playout_rejected"], 3)
+        self.assertEqual(child["capture_states"], [{"event": "capture_state", "peer_id": 1,
+                         "decided_blocks": 3, "first_non_real": {"block": 2, "outcome": "concealed",
+                         "presentation_ns": 123, "late_by_ns": 4}}])
+        self.assertEqual(child["capture_states_omitted"], 0)
         self.assertIn("actual child failure", child["stderr"])
         self.assertEqual(child["stderr_omitted_chars"], 0)
+
+    def test_capture_outcome_retains_only_actual_bounded_codes(self):
+        permitted = ("real", "concealed", "muted_gap", "muted_nohistory", "muted_overdue", "skipped")
+        for outcome in (*permitted, "arbitrary private text", 1, [], None):
+            with self.subTest(outcome=outcome):
+                row = {"event": "capture_state", "decided_blocks": 1,
+                       "first_non_real": {"block": 0, "outcome": outcome, "secret": "omit"}}
+                script = "print(" + repr(json.dumps(row)) + ",flush=True)"
+                with Children(self.directory(), 3) as supervisor:
+                    child = supervisor.spawn("receiver", [sys.executable, "-c", script])
+                    supervisor.completed(child)
+                actual = supervisor.failure_diagnostics()["children"][0]["capture_states"][0]
+                expected = {"block": 0}
+                if type(outcome) is str and outcome in permitted:
+                    expected["outcome"] = outcome
+                self.assertEqual(actual["first_non_real"], expected)
+                self.assertEqual(actual["decided_blocks"], 1)
+
+    def test_capture_failure_distinguishes_absent_null_and_malformed_decision(self):
+        for fields, expected in (({}, {}), ({"first_non_real": None}, {"first_non_real": None}),
+                                 ({"first_non_real": "unknown private text"}, {}),
+                                 ({"first_non_real": []}, {}), ({"first_non_real": 1}, {}),
+                                 ({"first_non_real": {}}, {"first_non_real": {}})):
+            with self.subTest(fields=fields):
+                source = {"event": "capture_state", "decided_blocks": 1, **fields}
+                script = "print(" + repr(json.dumps(source)) + ",flush=True)"
+                with Children(self.directory(), 3) as supervisor:
+                    child = supervisor.spawn("receiver", [sys.executable, "-c", script])
+                    supervisor.completed(child)
+                actual = supervisor.failure_diagnostics()["children"][0]["capture_states"][0]
+                self.assertEqual(actual, {"event": "capture_state", "decided_blocks": 1, **expected})
 
     def test_permitted_success_records_done_and_zero_exit(self):
         with Children(self.directory(), 3) as supervisor:

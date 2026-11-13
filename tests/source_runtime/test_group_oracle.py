@@ -1,15 +1,46 @@
 """Planted controls for the group capture oracle; no speaker binary is run."""
 import json
+import copy
 import struct
 import tempfile
 import unittest
 from pathlib import Path
 
-from run_group import compare_group, sender_views
+from run_group import compare_group, require_peer_drained, sender_views
 from run_loopback import OracleError, track_spec
 
 
 class GroupOracleTests(unittest.TestCase):
+    def test_final_peer_credit_is_required_before_early_group_end_permission(self):
+        blocks = (600 + 255) // 256
+        counts = {"reports_accepted": 2, "media_submitted_packets": blocks, "media_sent_packets": blocks,
+                  "media_dropped_overflow_packets": 0, "media_dropped_aggregate_packets": 0,
+                  "media_dropped_late_packets": 0, "media_dropped_fenced_packets": 0,
+                  "media_dropped_send_error_packets": 0}
+        event = {"event": "peer_drained", "peer_id": 1, "published_frames": 600,
+                 "anchor_ns": 1_000_000_000,
+                 "peer": {"peer": 1, "fence": None, "queued_packets": 0, "queued_bytes": 0,
+                          "in_flight": 0, "sent_next": blocks, "reported_next": blocks, "counters": counts}}
+        require_peer_drained(event, 1, 600, 1_000_000_000)
+        lost_last = copy.deepcopy(event)
+        lost_last["peer"].update(in_flight=1, reported_next=blocks - 1)
+        # Earlier valid reports are still present: that cannot authorize END.
+        with self.assertRaisesRegex(OracleError, "unacknowledged final media"):
+            require_peer_drained(lost_last, 1, 600, 1_000_000_000)
+        for field, bad in (("queued_packets", 1), ("queued_bytes", 1), ("reported_next", blocks + 1),
+                           ("fence", "mtu"), ("peer", 2)):
+            broken = copy.deepcopy(event)
+            broken["peer"][field] = bad
+            with self.subTest(field=field), self.assertRaises(OracleError):
+                require_peer_drained(broken, 1, 600, 1_000_000_000)
+        for field, bad in (("media_sent_packets", blocks - 1), ("reports_accepted", 0),
+                           ("media_dropped_late_packets", 1)):
+            broken = copy.deepcopy(event)
+            broken["peer"]["counters"][field] = bad
+            with self.subTest(field=field), self.assertRaises(OracleError):
+                require_peer_drained(broken, 1, 600, 1_000_000_000)
+        require_peer_drained(event, 1, 600, 1_000_000_000)
+
     def setUp(self):
         self.directory = Path(tempfile.mkdtemp(prefix="ffw-group-oracle-"))
         self.track = track_spec("vorbis_48000")

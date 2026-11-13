@@ -17,7 +17,8 @@ import sys
 import time
 from pathlib import Path
 
-from run_loopback import Children, OracleError, compare_capture, loopback_address, read_bounded, track_spec
+from run_loopback import (Children, OracleError, compare_capture, delay_end_permission,
+                          loopback_address, read_bounded, track_spec)
 
 
 def compare_group(captures: dict[int, Path], expected_ids: tuple[int, ...], track: dict, anchor: int) -> dict:
@@ -101,10 +102,13 @@ def provision(children: Children, binary: Path, directory: Path, track: dict,
         raise OracleError("sender ready did not bind the intended group")
     anchor = time.time_ns() + 2_000_000_000
     for receiver in receivers.values():
-        children.command(receiver, f"START {sender_control} {anchor}\n")
+        # The trusted local manifest supplies the finite preparation horizon;
+        # END is independent controller permission, not a guessed media EOF.
+        children.command(receiver, f"START {sender_control} {anchor} {track['expected_frames']}\n")
     for receiver in receivers.values():
         started = children.event(receiver, "started")
         if (started.get("anchor_ns") != anchor
+                or started.get("expected_frames") != track["expected_frames"]
                 or type(started.get("host_ns")) is not int or not 0 < started["host_ns"] < anchor
                 or type(started.get("uncertainty_ns")) is not int
                 or not 0 < started["uncertainty_ns"] <= 2_000_000):
@@ -122,6 +126,37 @@ def good_receiver(children: Children, receiver: dict, peer_id: int, frames: int)
             or final.get("concealed_blocks") != 0 or final.get("playout_rejected") != 0):
         raise OracleError("healthy receiver did not capture every real block")
     return final
+
+
+def require_peer_drained(event: dict, peer_id: int, frames: int, anchor: int):
+    """Controller permission must follow the actual good peer's final credit.
+
+    A wrong-key member can prevent global drain. Earlier reports from a good
+    peer cannot stand in for its last report, even when its PCM is complete.
+    This is sender-side credit evidence, not packet-by-packet receipt or playback.
+    """
+    view = event.get("peer")
+    blocks = (frames + 255) // 256
+    if (event.get("event") != "peer_drained" or type(event.get("peer_id")) is not int
+            or event["peer_id"] != peer_id or type(event.get("published_frames")) is not int
+            or event["published_frames"] != frames or event.get("anchor_ns") != anchor
+            or not isinstance(view, dict) or type(view.get("peer")) is not int or view["peer"] != peer_id
+            or "fence" not in view or view["fence"] is not None):
+        raise OracleError("peer completion does not identify the admitted finite stream")
+    expected = {"queued_packets": 0, "queued_bytes": 0, "in_flight": 0,
+                "sent_next": blocks, "reported_next": blocks}
+    if any(type(view.get(key)) is not int or view[key] != value for key, value in expected.items()):
+        raise OracleError("peer still has queued or unacknowledged final media")
+    counts = view.get("counters")
+    if (not isinstance(counts, dict) or type(counts.get("reports_accepted")) is not int
+            or counts["reports_accepted"] <= 0):
+        raise OracleError("peer has no authenticated delivery feedback")
+    expected_counts = {"media_submitted_packets": blocks, "media_sent_packets": blocks,
+                       "media_dropped_overflow_packets": 0, "media_dropped_aggregate_packets": 0,
+                       "media_dropped_late_packets": 0, "media_dropped_fenced_packets": 0,
+                       "media_dropped_send_error_packets": 0}
+    if any(type(counts.get(key)) is not int or counts[key] != value for key, value in expected_counts.items()):
+        raise OracleError("peer sender counters do not account for the admitted finite stream")
 
 
 def bad_receiver(children: Children, receiver: dict, peer_id: int, capture: Path):
@@ -143,6 +178,7 @@ def run_case(binary: Path, directory: Path, track_id: str, count: int, bad_peer:
     peer_ids = tuple(range(1, count + 1))
     good_ids = tuple(peer_id for peer_id in peer_ids if peer_id != bad_peer)
     result = {"case": directory.name, "status": "failed", "peers": list(peer_ids),
+              "capture_states": {},
               "wrong_key_peer": bad_peer, "input_sha256": track["sha256"],
               "reference_sha256": track["reference"]["sha256"],
               "manifest_sha256": track["_manifest_sha256"]}
@@ -156,16 +192,25 @@ def run_case(binary: Path, directory: Path, track_id: str, count: int, bad_peer:
                 children.completed(sender)
                 views = sender_views(sent, peer_ids, frames, anchor)
                 for peer_id in good_ids:
+                    result["capture_states"][str(peer_id)] = children.event(receivers[peer_id], "capture_state")
+                delay_end_permission(children, list(receivers.values()))
+                prepared = compare_group(captures, good_ids, track, anchor)
+                for peer_id in good_ids:
+                    require_peer_drained(children.event(sender, "peer_drained", peer_id), peer_id, frames, anchor)
                     children.command(receivers[peer_id], f"END {frames}\n")
             else:
-                # Healthy receivers must be allowed to finish while the bad one
-                # cannot acknowledge and the group remains incomplete.
+                # Healthy receivers finish only after their own last credit;
+                # the wrong-key peer still cannot make the group complete.
                 for peer_id in good_ids:
+                    require_peer_drained(children.event(sender, "peer_drained", peer_id), peer_id, frames, anchor)
+                    result["capture_states"][str(peer_id)] = children.event(receivers[peer_id], "capture_state")
                     children.command(receivers[peer_id], f"END {frames}\n")
             summaries = {str(peer_id): good_receiver(children, receivers[peer_id], peer_id, frames)
                          for peer_id in good_ids}
             comparisons = compare_group({peer_id: captures[peer_id] for peer_id in good_ids},
                                         good_ids, track, anchor)
+            if bad_peer is None and prepared != comparisons:
+                raise OracleError("group capture changed after the finite horizon while awaiting END")
             if bad_peer is not None:
                 children.completed(sender, expected=2)
                 sent = children.event(sender, "summary")

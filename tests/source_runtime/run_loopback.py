@@ -149,7 +149,7 @@ def compare_capture(path: Path, row: dict, origin_ns: int) -> dict:
         if count < 256 and position + count != row["expected_frames"]:
             raise OracleError("partial block is not the final block")
         if item["start_frame"] != position:
-            raise OracleError("capture frame gap, duplicate, or reordering")
+            raise OracleError(f"capture frame gap, duplicate, or reordering: expected {position}, observed {item['start_frame']}")
         if item["presentation_ns"] != origin_ns + position * 1_000_000_000 // 48_000:
             raise OracleError("capture does not follow the admitted presentation timeline")
         raw = item["pcm_be16_hex"]
@@ -248,9 +248,16 @@ class Children:
                 if not isinstance(item, dict) or not isinstance(item.get("event"), str):
                     raise OracleError(f"{child['name']} emitted an invalid event")
                 name = item["event"]
-                if name not in {"ready", "started", "done", "summary", "stopped", "error"}:
+                if name not in {"ready", "started", "done", "summary", "stopped", "error", "peer_drained", "capture_state"}:
                     raise OracleError(f"{child['name']} emitted an unknown control event")
-                if any(row["event"] == name for row in child["events"]):
+                if name == "peer_drained":
+                    peer_id = item.get("peer_id")
+                    if (type(peer_id) is not int or not 1 <= peer_id <= 0x00ff_ffff
+                            or sum(row["event"] == name for row in child["events"]) >= 8):
+                        raise OracleError(f"{child['name']} emitted invalid/excessive peer completion")
+                if any(row["event"] == name and (name != "peer_drained"
+                                                or row["peer_id"] == item["peer_id"])
+                       for row in child["events"]):
                     raise OracleError(f"{child['name']} emitted a duplicate {name} event")
                 terminals = {"done", "summary", "stopped"}
                 if name in terminals and any(row["event"] in terminals for row in child["events"]):
@@ -264,9 +271,10 @@ class Children:
         # WNOWAIT preserves the leader PID/PGID until the owned group is retired.
         return os.waitid(os.P_PID, child["process"].pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
 
-    def event(self, child: dict, name: str) -> dict:
+    def event(self, child: dict, name: str, peer_id: int | None = None) -> dict:
         while True:
-            matches = [row for row in child["events"] if row["event"] == name]
+            matches = [row for row in child["events"] if row["event"] == name
+                       and (peer_id is None or row.get("peer_id") == peer_id)]
             if len(matches) > 1:
                 raise OracleError(f"duplicate {name} event")
             if matches:
@@ -308,6 +316,8 @@ class Children:
             lines = child["raw_stdout"].splitlines()
             terminals = []
             terminals_omitted = 0
+            capture_states = []
+            capture_states_omitted = 0
             for line in lines[:256]:
                 if len(line) > MAX_LINE_BYTES:
                     continue
@@ -315,9 +325,25 @@ class Children:
                     row = strict_json(line)
                 except (ValueError, UnicodeDecodeError, RecursionError):
                     continue
-                if not isinstance(row, dict) or row.get("event") not in ("done", "summary", "stopped", "error"):
+                if not isinstance(row, dict) or row.get("event") not in ("done", "summary", "stopped", "error", "capture_state"):
                     continue
                 event = {"event": row["event"], **scalars(row, scalar_fields)}
+                if row["event"] == "capture_state":
+                    event.update(scalars(row, {"expected_frames", "decided_blocks"}))
+                    first = row.get("first_non_real")
+                    if "first_non_real" in row and first is None:
+                        event["first_non_real"] = None
+                    elif isinstance(first, dict):
+                        event["first_non_real"] = scalars(first, {"block", "start_frame", "presentation_ns", "late_by_ns"})
+                        outcome = first.get("outcome")
+                        if type(outcome) is str and outcome in {"real", "concealed", "muted_gap",
+                                                               "muted_nohistory", "muted_overdue", "skipped"}:
+                            event["first_non_real"]["outcome"] = outcome
+                    if not capture_states:
+                        capture_states.append(event)
+                    else:
+                        capture_states_omitted += 1
+                    continue
                 peers = row.get("peers")
                 if isinstance(peers, list):
                     event["peers"] = []
@@ -344,6 +370,8 @@ class Children:
                 "teardown_direct_signal_sent": child.get("teardown_direct_signal_sent", False),
                 "terminal_events": terminals,
                 "terminal_events_omitted": terminals_omitted,
+                "capture_states": capture_states,
+                "capture_states_omitted": capture_states_omitted,
                 "stdout_lines_unexamined": max(0, len(lines) - 256),
                 "stderr": stderr[:stderr_limit],
                 "stderr_omitted_chars": max(0, len(stderr) - stderr_limit),
@@ -476,15 +504,35 @@ def provision(children: Children, binary: Path, directory: Path, track: dict,
     # Unix time is only a shared *host fixture* mapping. Each child samples it
     # once with a declared bound and advances with Instant, not wall time.
     anchor = time.time_ns() + (200_000_000 if wrong_key else 2_000_000_000)
-    children.command(receiver, f"START {sender_control} {anchor}\n")
+    # Declare the finite capture horizon before N04 begins; END below remains
+    # a separate permission after the actual sender has drained its credit.
+    children.command(receiver, f"START {sender_control} {anchor} {track['expected_frames']}\n")
     started = children.event(receiver, "started")
     if (started.get("anchor_ns") != anchor
+            or started.get("expected_frames") != track["expected_frames"]
             or type(started.get("host_ns")) is not int or not 0 < started["host_ns"] < anchor
             or type(started.get("uncertainty_ns")) is not int
             or not 0 < started["uncertainty_ns"] <= 2_000_000):
         raise OracleError("receiver did not admit the shared bounded host mapping")
     children.command(sender, f"GO {anchor}\n")
     return sender, receiver, anchor, capture
+
+
+def delay_end_permission(children: Children, receivers: list[dict]):
+    """Keep actual receivers alive after sender drain, beyond its 250 ms lead.
+
+    A continuous N04 engine would invent post-track gaps during this wait.
+    The finite consumer must prepare only its admitted horizon and keep its
+    control/credit loop alive until the controller subsequently sends END.
+    """
+    until = time.monotonic() + 0.75
+    while time.monotonic() < until:
+        children.pump()
+        for receiver in receivers:
+            if (children.status(receiver) is not None
+                    or any(row["event"] in {"done", "summary", "stopped"}
+                           for row in receiver["events"])):
+                raise OracleError("receiver completed before explicit END permission")
 
 
 def run_case(binary: Path, directory: Path, track_id: str, wrong_key: bool = False) -> dict:
@@ -524,6 +572,11 @@ def run_case(binary: Path, directory: Path, track_id: str, wrong_key: bool = Fal
                 children.completed(sender)
                 if sent.get("published_frames") != track["expected_frames"] or sent.get("anchor_ns") != anchor:
                     raise OracleError("sender completion did not account for the admitted full track")
+                # A clock delay alone does not establish preparation readiness.
+                # Retain the actual N04 outcome snapshot even if PCM fails.
+                result["capture_state"] = children.event(receiver, "capture_state")
+                delay_end_permission(children, [receiver])
+                prepared = compare_capture(capture, track, anchor)
                 children.command(receiver, f"END {track['expected_frames']}\n")
                 final = children.event(receiver, "done")
                 children.completed(receiver)
@@ -533,7 +586,10 @@ def run_case(binary: Path, directory: Path, track_id: str, wrong_key: bool = Fal
                         or final.get("concealed_blocks") != 0
                         or final.get("playout_rejected") != 0):
                     raise OracleError("positive track concealed or rejected media instead of preparing every block")
-                result.update(compare_capture(capture, track, anchor))
+                comparison = compare_capture(capture, track, anchor)
+                if prepared != comparison:
+                    raise OracleError("capture changed after the finite horizon while awaiting END")
+                result.update(comparison, delayed_end_ms=750)
             # Input remains the exact immutable owned capture the child opened.
             if hashlib.sha256(read_bounded(directory / "input.container")).hexdigest() != track["sha256"]:
                 raise OracleError("child input changed after provisioning")

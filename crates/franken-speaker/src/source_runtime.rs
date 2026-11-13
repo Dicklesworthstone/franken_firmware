@@ -163,6 +163,7 @@ pub struct SourceRuntime<P: DatagramPort, C: RuntimeClock> {
     selected: bool,
     eof: bool,
     stopped: bool,
+    buffer_transient_credit: bool,
 }
 
 impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
@@ -235,7 +236,18 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
             selected: false,
             eof: false,
             stopped: false,
+            buffer_transient_credit: false,
         })
+    }
+
+    /// Select bounded queueing for transient receiver-credit backpressure.
+    /// The existing isolated publication policy remains the default. This
+    /// reuses the admitted carrier's exact budgets and send-time safeguards;
+    /// a permanently unavailable peer still cannot block healthy members.
+    #[must_use]
+    pub fn with_buffered_credit(mut self) -> Self {
+        self.buffer_transient_credit = true;
+        self
     }
 
     /// Actual local address, for explicit host-loopback setup. This does not
@@ -421,7 +433,13 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
                         session: &self.session,
                     },
                 };
-                match self.source.prepare(&mut self.carrier, &self.peers, inputs) {
+                let prepared = if self.buffer_transient_credit {
+                    self.source
+                        .prepare_buffered(&mut self.carrier, &self.peers, inputs)
+                } else {
+                    self.source.prepare(&mut self.carrier, &self.peers, inputs)
+                };
+                match prepared {
                     Ok(PrepareProgress::Ready) => {
                         self.selected = true;
                         let after = self.observe()?;
@@ -439,12 +457,22 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
                                 session: &self.session,
                             },
                         };
-                        progress = match self.source.publish_isolated(
-                            &mut self.carrier,
-                            &self.peers,
-                            Some(inputs),
-                            report,
-                        ) {
+                        let published = if self.buffer_transient_credit {
+                            self.source.publish_buffered_isolated(
+                                &mut self.carrier,
+                                &self.peers,
+                                Some(inputs),
+                                report,
+                            )
+                        } else {
+                            self.source.publish_isolated(
+                                &mut self.carrier,
+                                &self.peers,
+                                Some(inputs),
+                                report,
+                            )
+                        };
+                        progress = match published {
                             Ok(IsolatedProgress::Published { frames }) => {
                                 RuntimeProgress::Published { frames }
                             }
@@ -1041,6 +1069,95 @@ mod tests {
             owner.step(&mut None).unwrap().progress,
             RuntimeProgress::Draining
         );
+    }
+
+    #[test]
+    fn buffered_credit_profile_retains_pcm_and_reader_at_capacity() {
+        for buffered in [false, true] {
+            let reads = Arc::new(AtomicUsize::new(0));
+            let sent = Arc::new(Mutex::new(Vec::new()));
+            let port = Port {
+                blocked: Arc::new(AtomicBool::new(false)),
+                sent: Arc::clone(&sent),
+            };
+            let mut carrier = CarrierSender::with_port(
+                StreamKey::from_bytes([0x61; 32]),
+                StreamId::new(0x1234).unwrap(),
+                1,
+                CarrierLimits {
+                    window_packets: 1,
+                    peer_queue_packets: 1,
+                    aggregate_queue_packets: 1,
+                    pace_burst_bytes: 65_536,
+                    ..CarrierLimits::baseline()
+                },
+                port,
+            )
+            .unwrap();
+            carrier
+                .add_peer(
+                    7,
+                    "127.0.0.1:32000".parse().unwrap(),
+                    "127.0.0.1:32001".parse().unwrap(),
+                    1500,
+                )
+                .unwrap();
+            let mut owner = owner_with_reader(
+                carrier,
+                ScriptClock(VecDeque::from([1])),
+                CountingReader {
+                    inner: Cursor::new(MP3),
+                    reads: Arc::clone(&reads),
+                },
+                20_000_000_000,
+            );
+            if buffered {
+                owner = owner.with_buffered_credit();
+            }
+            assert_eq!(
+                owner.step(&mut None).unwrap().progress,
+                RuntimeProgress::Published { frames: 256 }
+            );
+            assert_eq!(owner.peer_view(7).unwrap().in_flight, 1);
+            let second = owner.step(&mut None).unwrap();
+            if buffered {
+                assert_eq!(second.progress, RuntimeProgress::Published { frames: 256 });
+                assert_eq!(second.pump.unwrap().media_sent, 0);
+                assert_eq!(owner.peer_view(7).unwrap().queued_packets, 1);
+                assert_eq!(owner.consumed_frames, 512);
+            } else {
+                assert_eq!(second.progress, RuntimeProgress::Waiting);
+                assert_eq!(owner.peer_view(7).unwrap().queued_packets, 0);
+                assert_eq!(owner.consumed_frames, 256);
+            }
+            let before = reads.load(Ordering::Relaxed);
+            let counters = owner.source_counters();
+            for _ in 0..20 {
+                assert_eq!(
+                    owner.step(&mut None).unwrap().progress,
+                    RuntimeProgress::Waiting
+                );
+            }
+            assert_eq!(reads.load(Ordering::Relaxed), before);
+            assert_eq!(owner.source_counters(), counters);
+            assert_eq!(counters.skipped_stalled, 0);
+            assert_eq!(
+                sent.lock().unwrap().len(),
+                1,
+                "queued PCM must not bypass credit"
+            );
+            // Stop fences this private owner; it preserves bounded accounting
+            // until drop instead of inventing a new epoch or receiver credit.
+            let retained_at_stop = owner.peer_view(7).unwrap();
+            owner.stop();
+            assert_eq!(owner.peer_view(7).unwrap(), retained_at_stop);
+            assert!(matches!(owner.step(&mut None), Err(RuntimeError::Stopped)));
+            assert_eq!(
+                sent.lock().unwrap().len(),
+                1,
+                "stop must not flush held old PCM"
+            );
+        }
     }
 
     #[test]

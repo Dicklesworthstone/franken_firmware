@@ -6178,3 +6178,409 @@ fn n07_packed_queue_keeps_legacy_and_protected_clock_paths_distinct() {
     assert_eq!(clocked_n01_pump(&mut sender, 7, 6).media_sent, 0);
     assert_eq!(sender.port.sent.len(), 2);
 }
+
+// These controls use actual nonblocking localhost sockets and real authenticated
+// N01 reports; their explicit clock controls only carrier scheduling.
+fn buffered_udp_pair(
+    queue_packets: usize,
+) -> (
+    CarrierSender<HostUdp>,
+    CarrierReceiver<HostUdp>,
+    CarrierReceiver<HostUdp>,
+    N01GroupSnapshot,
+) {
+    let ip = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    let limits = CarrierLimits {
+        window_packets: 1,
+        peer_queue_packets: queue_packets,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender = CarrierSender::bind(key(), stream(), 1, limits, ip).unwrap();
+    let control = sender.control_addr().unwrap();
+    let first = CarrierReceiver::bind(key(), stream(), 1, ReceiverLimits::baseline(), ip, control)
+        .unwrap()
+        .with_peer_id(7)
+        .unwrap();
+    let second = CarrierReceiver::bind(key(), stream(), 1, ReceiverLimits::baseline(), ip, control)
+        .unwrap()
+        .with_peer_id(8)
+        .unwrap();
+    sender
+        .add_peer(
+            7,
+            first.media_addr().unwrap(),
+            first.control_addr().unwrap(),
+            1500,
+        )
+        .unwrap();
+    sender
+        .add_peer(
+            8,
+            second.media_addr().unwrap(),
+            second.control_addr().unwrap(),
+            1500,
+        )
+        .unwrap();
+    let snapshot = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+        .unwrap();
+    (sender, first, second, snapshot)
+}
+
+fn buffered_udp_wait(mut ready: impl FnMut() -> bool) {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !ready() {
+        assert!(
+            std::time::Instant::now() < until,
+            "localhost packet/report timeout"
+        );
+        std::thread::yield_now();
+    }
+}
+
+fn buffered_udp_pump(
+    sender: &mut CarrierSender<HostUdp>,
+    time: u64,
+    group_time: u64,
+) -> PumpReport {
+    let clock = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 1,
+        view: crate::playout::ClockView {
+            group_ns: group_time,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    sender.pump_n01_clocked(time, &[clock], &AtomicBool::new(false))
+}
+
+fn buffered_udp_take(receiver: &mut CarrierReceiver<HostUdp>) -> AuthenticatedStreamPacket {
+    buffered_udp_wait(|| {
+        receiver.poll();
+        receiver.inbound_len() != 0
+    });
+    receiver.take_media(1).pop().unwrap()
+}
+
+fn buffered_udp_report(
+    sender: &mut CarrierSender<HostUdp>,
+    receiver: &mut CarrierReceiver<HostUdp>,
+    peer: u32,
+    next: u64,
+) {
+    receiver.send_report().unwrap();
+    buffered_udp_wait(|| {
+        sender.poll_reports();
+        sender.peer_view(peer).unwrap().reported_next == next
+    });
+}
+
+fn buffered_udp_submit(
+    sender: &mut CarrierSender<HostUdp>,
+    snapshot: &N01GroupSnapshot,
+    frame: &OutboundFrame,
+    now: u64,
+    buffered: bool,
+) -> Result<N01IsolatedOutcome, AllPeerAdmissionError> {
+    let cancelled = AtomicBool::new(false);
+    let inputs = N01AdmissionInputs {
+        interface_now_ns: now,
+        trusted_group_now_ns: now,
+        overlap_budget_bytes: usize::MAX,
+        cancelled: &cancelled,
+    };
+    if buffered {
+        sender.try_submit_group_media_buffered_isolated(
+            PRIMARY_GROUP,
+            1,
+            snapshot,
+            &[7, 8],
+            frame,
+            inputs,
+        )
+    } else {
+        sender.try_submit_group_media_isolated(PRIMARY_GROUP, 1, snapshot, &[7, 8], frame, inputs)
+    }
+}
+
+#[test]
+fn n07_buffered_credit_window_delivers_retained_pcm_after_real_report() {
+    let (mut sender, mut slow, mut fast, snapshot) = buffered_udp_pair(2);
+    let initial = long_block(0, 0);
+    assert_eq!(
+        buffered_udp_submit(&mut sender, &snapshot, &initial, 0, true)
+            .unwrap()
+            .status,
+        N01IsolatedStatus::Published
+    );
+    assert_eq!(buffered_udp_pump(&mut sender, 1, 1).media_sent, 2);
+    assert_eq!(buffered_udp_take(&mut slow).payload, initial.payload);
+    assert_eq!(buffered_udp_take(&mut fast).payload, initial.payload);
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7, 8], 1),
+        Ok(false)
+    );
+    assert_eq!(
+        sender.has_n01_buffered_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7, 8], 1),
+        Ok(true)
+    );
+    buffered_udp_report(&mut sender, &mut fast, 8, 1);
+
+    // Budget and cancellation refusals preserve the actual outstanding state.
+    let cancelled = AtomicBool::new(false);
+    let candidate = long_block(1, 0);
+    let before = sender.peer_view(7).unwrap();
+    assert_eq!(
+        sender.try_submit_group_media_buffered_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &candidate,
+            N01AdmissionInputs {
+                interface_now_ns: 2,
+                trusted_group_now_ns: 2,
+                overlap_budget_bytes: 0,
+                cancelled: &cancelled
+            }
+        ),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::Budget))
+    );
+    cancelled.store(true, Ordering::Release);
+    assert_eq!(
+        sender.try_submit_group_media_buffered_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &candidate,
+            N01AdmissionInputs {
+                interface_now_ns: 2,
+                trusted_group_now_ns: 2,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancelled
+            }
+        ),
+        Err(AllPeerAdmissionError::Cancelled)
+    );
+    assert_eq!(sender.peer_view(7).unwrap(), before);
+
+    // The legacy API still drops this peer from the fanout while its one-packet window is full.
+    let skipped = long_block(1, 0);
+    let legacy = buffered_udp_submit(&mut sender, &snapshot, &skipped, 2, false).unwrap();
+    assert!(legacy.peers.contains(&Some(N01PeerOutcome {
+        peer: 7,
+        disposition: N01PeerDisposition::Stalled
+    })));
+    assert_eq!(buffered_udp_pump(&mut sender, 10_000_000, 3).media_sent, 1);
+    assert_eq!(
+        buffered_udp_take(&mut fast).start_frame,
+        skipped.start_frame
+    );
+    buffered_udp_report(&mut sender, &mut fast, 8, 2);
+
+    let mut retained = long_block(2, 0);
+    retained.payload = vec![0x5a; MAX_PAYLOAD_BYTES];
+    let result = buffered_udp_submit(&mut sender, &snapshot, &retained, 4, true).unwrap();
+    for peer in [7, 8] {
+        assert!(result.peers.contains(&Some(N01PeerOutcome {
+            peer,
+            disposition: N01PeerDisposition::Queued
+        })));
+    }
+    let before = sender.peer_view(7).unwrap();
+    assert_eq!(
+        (before.in_flight, before.queued_packets, before.sent_next),
+        (1, 1, 1)
+    );
+    assert_eq!(buffered_udp_pump(&mut sender, 20_000_000, 5).media_sent, 1);
+    let fast_packet = buffered_udp_take(&mut fast);
+    assert_eq!(
+        (fast_packet.start_frame, fast_packet.payload),
+        (retained.start_frame, retained.payload.clone())
+    );
+    assert_eq!(sender.peer_view(7).unwrap().sent_next, 1);
+    buffered_udp_report(&mut sender, &mut slow, 7, 1);
+    assert_eq!(buffered_udp_pump(&mut sender, 30_000_000, 6).media_sent, 1);
+    let packet = buffered_udp_take(&mut slow);
+    assert_eq!(
+        (packet.seq, packet.start_frame, packet.payload),
+        (1, retained.start_frame, retained.payload)
+    );
+    slow.poll();
+    assert!(
+        slow.take_media(1).is_empty(),
+        "skipped frame must never be replayed"
+    );
+}
+
+#[test]
+fn n07_buffered_slow_peer_capacity_preserves_healthy_progress_and_deadlines() {
+    let (mut sender, mut slow, mut fast, snapshot) = buffered_udp_pair(2);
+    let initial = long_block(0, 0);
+    buffered_udp_submit(&mut sender, &snapshot, &initial, 0, true).unwrap();
+    assert_eq!(buffered_udp_pump(&mut sender, 1, 1).media_sent, 2);
+    buffered_udp_take(&mut slow);
+    buffered_udp_take(&mut fast);
+    buffered_udp_report(&mut sender, &mut fast, 8, 1);
+    for index in 1..=3 {
+        let mut frame = long_block(index, 0);
+        frame.payload = vec![index as u8; MAX_PAYLOAD_BYTES];
+        if index == 1 {
+            frame.consume_by_ns = 100;
+        }
+        let result = buffered_udp_submit(&mut sender, &snapshot, &frame, index + 1, true).unwrap();
+        let expected = if index <= 2 {
+            N01PeerDisposition::Queued
+        } else {
+            N01PeerDisposition::Capacity
+        };
+        assert!(result.peers.contains(&Some(N01PeerOutcome {
+            peer: 7,
+            disposition: expected
+        })));
+        assert!(result.peers.contains(&Some(N01PeerOutcome {
+            peer: 8,
+            disposition: N01PeerDisposition::Queued
+        })));
+        assert!(sender.peer_view(7).unwrap().queued_packets <= 2);
+        assert_eq!(
+            buffered_udp_pump(&mut sender, index * 10_000_000, index + 1).media_sent,
+            1
+        );
+        let got = buffered_udp_take(&mut fast);
+        assert_eq!(
+            (got.start_frame, got.payload),
+            (frame.start_frame, frame.payload)
+        );
+        buffered_udp_report(&mut sender, &mut fast, 8, index + 1);
+    }
+    assert_eq!(sender.peer_view(7).unwrap().queued_packets, 2);
+    // Age the oldest retained frame at its exact group cutoff while still blocked.
+    let expired = buffered_udp_pump(&mut sender, 50_000_000, 100);
+    assert_eq!(expired.late_dropped, 1);
+    assert_eq!(sender.peer_view(7).unwrap().queued_packets, 1);
+    buffered_udp_report(&mut sender, &mut slow, 7, 1);
+    assert_eq!(
+        buffered_udp_pump(&mut sender, 60_000_000, 101).media_sent,
+        1
+    );
+    let remaining = buffered_udp_take(&mut slow);
+    assert_eq!(
+        (remaining.start_frame, remaining.payload),
+        (512, vec![2; MAX_PAYLOAD_BYTES])
+    );
+    slow.poll();
+    assert!(
+        slow.take_media(1).is_empty(),
+        "expired and capacity-skipped frames must not replay"
+    );
+    assert_eq!(
+        sender
+            .peer_view(7)
+            .unwrap()
+            .counters
+            .media_dropped_late_packets,
+        1
+    );
+}
+
+#[test]
+fn n07_buffered_credit_mode_still_respects_sequence_and_cooldown_guards() {
+    let limits = CarrierLimits {
+        window_packets: MAX_WINDOW_PACKETS,
+        pace_bytes_per_sec: 1_000_000_000,
+        pace_burst_bytes: 1_000_000,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).unwrap();
+    let media = addr("127.0.0.1:42001");
+    let control = addr("127.0.0.1:42002");
+    sender.add_peer(7, media, control, 1500).unwrap();
+    for n in 0..SEQ_AHEAD_LIMIT {
+        let now = n * 1_000_000;
+        sender.submit_media(1, &long_block(n, now), now).unwrap();
+        assert_eq!(sender.pump(now).media_sent, 1);
+    }
+    assert!(sender.peers[0].sequence_blocked());
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let now = SEQ_AHEAD_LIMIT * 1_000_000;
+    assert_eq!(
+        sender.has_n01_buffered_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7], now),
+        Ok(false)
+    );
+    let cancelled = AtomicBool::new(false);
+    let pending = long_block(SEQ_AHEAD_LIMIT, now);
+    let inputs = N01AdmissionInputs {
+        interface_now_ns: now,
+        trusted_group_now_ns: now,
+        overlap_budget_bytes: usize::MAX,
+        cancelled: &cancelled,
+    };
+    assert_eq!(
+        sender.try_submit_group_media_buffered_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &pending,
+            inputs
+        ),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::NoEligiblePeers))
+    );
+    assert_eq!(sender.peer_view(7).unwrap().queued_packets, 0);
+    sender.port.inbound_control.push_back((
+        encode_report(&key(), stream(), 1, SEQ_AHEAD_LIMIT, 7).to_vec(),
+        Some(control),
+    ));
+    assert_eq!(sender.poll_reports(), 1);
+    assert_eq!(
+        sender.has_n01_buffered_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7], now),
+        Ok(true)
+    );
+    // Model the existing I/O cooldown state: it still blocks admission with credit and queue room.
+    sender.peers[0].send_hold_until_ns = Some(now + 10);
+    assert_eq!(
+        sender.has_n01_buffered_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7], now),
+        Ok(false)
+    );
+    let inputs = N01AdmissionInputs {
+        interface_now_ns: now,
+        trusted_group_now_ns: now,
+        overlap_budget_bytes: usize::MAX,
+        cancelled: &cancelled,
+    };
+    assert_eq!(
+        sender.try_submit_group_media_buffered_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &pending,
+            inputs
+        ),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::NoEligiblePeers))
+    );
+    let inputs = N01AdmissionInputs {
+        interface_now_ns: now + 10,
+        trusted_group_now_ns: now + 10,
+        overlap_budget_bytes: usize::MAX,
+        cancelled: &cancelled,
+    };
+    let result = sender
+        .try_submit_group_media_buffered_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &pending,
+            inputs,
+        )
+        .unwrap();
+    assert!(result.peers.contains(&Some(N01PeerOutcome {
+        peer: 7,
+        disposition: N01PeerDisposition::Queued
+    })));
+}

@@ -21,12 +21,12 @@ use franken_speaker::source_runtime::{
 };
 use franken_stream::carrier::{
     CarrierError, CarrierLimits, CarrierReceiver, CarrierSender, DatagramPort, Lane, MediaSink,
-    N01IsolatedOutcome, N01IsolatedStatus, N01PeerDisposition, PRIMARY_GROUP, ReceiverLimits,
-    STALL_PROBE_NS, SinkVerdict,
+    N01IsolatedOutcome, N01IsolatedStatus, N01PeerDisposition, PRIMARY_GROUP, PeerView,
+    ReceiverLimits, STALL_PROBE_NS, SinkVerdict,
 };
 use franken_stream::playout::{
-    Admission, BLOCK_FRAMES, BLOCK_PAYLOAD_BYTES, ClockView, MediaPacket, Outcome, PlayoutConfig,
-    PlayoutEngine, PlayoutProfile, Poll,
+    Admission, BLOCK_FRAMES, BLOCK_PAYLOAD_BYTES, ClockView, Decision, MediaPacket, Outcome,
+    PlayoutConfig, PlayoutEngine, PlayoutProfile, Poll,
 };
 use franken_stream::{StreamId, StreamKey, StreamReceiver};
 
@@ -37,6 +37,7 @@ const MAX_SAMPLE_SPAN_NS: u64 = 1_000_000;
 const MAX_TIMEOUT_MS: u64 = 60_000;
 const MAX_CONTROL_LINE: u64 = 256;
 const MAX_PEER_LIST_BYTES: usize = 4096;
+const MAX_CAPTURE_FRAMES: u64 = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LoopbackPeer {
@@ -274,6 +275,202 @@ struct CaptureSink {
     engine: PlayoutEngine,
     view: ClockView,
     rejected_playout: u64,
+    expected_frames: u64,
+}
+
+/// The finite file boundary is provisioned before playback. It is distinct
+/// from END, the controller permission to finish. Normal positive controllers
+/// wait for sender drain; a negative group may finish only its healthy members.
+/// N04 itself intentionally models a continuous stream, including after EOF.
+struct FiniteCapture {
+    expected_frames: u64,
+    next_block: u64,
+    finish_permitted: bool,
+    captured_frames: u64,
+    real_blocks: u64,
+    concealed: u64,
+    muted: u64,
+    first_non_real: Option<Decision>,
+    raw_pcm: Vec<u8>,
+    real_decisions: Vec<Decision>,
+    serialization_attempted: bool,
+}
+
+impl FiniteCapture {
+    fn new(expected_frames: u64) -> Result<Self, String> {
+        if expected_frames == 0 || expected_frames > MAX_CAPTURE_FRAMES {
+            return Err("finite frame count outside bound".into());
+        }
+        // Host-only fixture bounds: at most four raw bytes per frame and one
+        // record per 256-frame block, allocated before deadline decisions.
+        let pcm_bytes = usize::try_from(expected_frames)
+            .map_err(|_| "finite frame count outside bound")?
+            .checked_mul(4)
+            .ok_or("capture limit")?;
+        let block_count =
+            usize::try_from(expected_frames.div_ceil(BLOCK_FRAMES)).map_err(|_| "capture limit")?;
+        let mut raw_pcm = Vec::new();
+        raw_pcm
+            .try_reserve_exact(pcm_bytes)
+            .map_err(|e| e.to_string())?;
+        let mut real_decisions = Vec::new();
+        real_decisions
+            .try_reserve_exact(block_count)
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
+            expected_frames,
+            next_block: 0,
+            finish_permitted: false,
+            captured_frames: 0,
+            real_blocks: 0,
+            concealed: 0,
+            muted: 0,
+            first_non_real: None,
+            raw_pcm,
+            real_decisions,
+            serialization_attempted: false,
+        })
+    }
+
+    fn permit_end(&mut self, frames: u64) -> Result<(), String> {
+        if self.finish_permitted || frames != self.expected_frames {
+            return Err("END does not match the admitted finite stream".into());
+        }
+        self.finish_permitted = true;
+        Ok(())
+    }
+
+    fn decisions_complete(&self) -> bool {
+        self.next_block >= self.expected_frames.div_ceil(BLOCK_FRAMES)
+    }
+
+    fn finished(&self) -> Result<bool, String> {
+        if !self.finish_permitted || !self.decisions_complete() {
+            return Ok(false);
+        }
+        if self.captured_frames != self.expected_frames || self.concealed != 0 || self.muted != 0 {
+            return Err("finite capture contains missing or non-real audio".into());
+        }
+        Ok(true)
+    }
+
+    fn observation(&self) -> serde_json::Value {
+        let first = self.first_non_real.map(|d| {
+            serde_json::json!({
+                "block":d.block, "start_frame":d.block * BLOCK_FRAMES,
+                "outcome":d.outcome.code(), "presentation_ns":d.presentation_ns,
+                "late_by_ns":d.late_by_ns,
+            })
+        });
+        serde_json::json!({"event":"capture_state", "expected_frames":self.expected_frames,
+            "decided_blocks":self.next_block, "captured_frames":self.captured_frames,
+            "real_blocks":self.real_blocks, "concealed_blocks":self.concealed,
+            "muted_blocks":self.muted, "first_non_real":first})
+    }
+
+    fn drain(
+        &mut self,
+        engine: &mut PlayoutEngine,
+        mut clock: impl FnMut() -> Result<ClockView, String>,
+    ) -> Result<(), String> {
+        let mut pcm = [0_u8; BLOCK_PAYLOAD_BYTES];
+        // Never ask a continuous engine to synthesize blocks outside the
+        // admitted file. Loss within the file still advances by block position,
+        // independently of how many real frames have been captured.
+        while !self.decisions_complete() {
+            let decision = match engine.decide(clock()?, &mut pcm) {
+                Poll::Pending => break,
+                Poll::Decision(decision) => decision,
+                Poll::ClockUnusable => return Err("playout unavailable: ClockUnusable".into()),
+                Poll::ClockRegression => return Err("playout unavailable: ClockRegression".into()),
+                Poll::NotBound => return Err("playout unavailable: NotBound".into()),
+            };
+            if decision.block != self.next_block {
+                return Err("noncontiguous finite playout decision".into());
+            }
+            let start_frame = decision
+                .block
+                .checked_mul(BLOCK_FRAMES)
+                .ok_or("frame overflow")?;
+            if decision.outcome != Outcome::Real && self.first_non_real.is_none() {
+                self.first_non_real = Some(decision);
+            }
+            match decision.outcome {
+                Outcome::Real => {
+                    let frames = (self.expected_frames - start_frame).min(BLOCK_FRAMES);
+                    if u64::from(decision.frames) != frames {
+                        return Err("real block does not match the admitted finite horizon".into());
+                    }
+                    let bytes = &pcm[..usize::from(decision.frames) * 4];
+                    if self.raw_pcm.capacity().saturating_sub(self.raw_pcm.len()) < bytes.len()
+                        || self.real_decisions.len() == self.real_decisions.capacity()
+                    {
+                        return Err("preallocated capture capacity exhausted".into());
+                    }
+                    self.raw_pcm.extend_from_slice(bytes);
+                    self.real_decisions.push(decision);
+                    self.captured_frames += frames;
+                    self.real_blocks += 1;
+                }
+                Outcome::Concealed { .. } => self.concealed += 1,
+                _ => self.muted += 1,
+            }
+            self.next_block += 1;
+        }
+        Ok(())
+    }
+
+    /// Serialize actual captured blocks once, only outside N04's decision loop.
+    fn serialize_once(&mut self, output: &mut impl Write) -> Result<(), String> {
+        if self.serialization_attempted {
+            return Err("capture serialization already attempted".into());
+        }
+        self.serialization_attempted = true;
+        let mut output_bytes = 0_usize;
+        let mut offset = 0_usize;
+        for decision in &self.real_decisions {
+            let end = offset
+                .checked_add(usize::from(decision.frames) * 4)
+                .ok_or("capture limit")?;
+            let bytes = self
+                .raw_pcm
+                .get(offset..end)
+                .ok_or("capture data mismatch")?;
+            let mut hex = String::with_capacity(bytes.len() * 2);
+            use std::fmt::Write as _;
+            for byte in bytes {
+                write!(&mut hex, "{byte:02x}").map_err(|e| e.to_string())?;
+            }
+            let row = serde_json::json!({"start_frame":decision.block * BLOCK_FRAMES,
+                "presentation_ns":decision.presentation_ns,"frames":decision.frames,"pcm_be16_hex":hex});
+            let mut line = serde_json::to_vec(&row).map_err(|e| e.to_string())?;
+            line.push(b'\n');
+            output_bytes = output_bytes
+                .checked_add(line.len())
+                .ok_or("capture limit")?;
+            if output_bytes > 4 * 1024 * 1024 {
+                return Err("capture limit".into());
+            }
+            output.write_all(&line).map_err(|e| e.to_string())?;
+            offset = end;
+        }
+        Ok(())
+    }
+}
+
+fn receiver_start(line: &str) -> Result<(SocketAddr, u64, FiniteCapture), String> {
+    let fields: Vec<_> = line.split_whitespace().collect();
+    if fields.len() != 4 || fields[0] != "START" {
+        return Err("expected START address anchor finite_frames".into());
+    }
+    let sender = loopback_addr(fields[1])?;
+    let anchor = fields[2]
+        .parse()
+        .map_err(|_| "invalid presentation anchor")?;
+    let frames = fields[3]
+        .parse()
+        .map_err(|_| "invalid finite frame count")?;
+    Ok((sender, anchor, FiniteCapture::new(frames)?))
 }
 
 /// Re-advertise already-consumed authenticated credit even when no more media
@@ -314,7 +511,14 @@ impl MediaSink for CaptureSink {
         let Some(media) = MediaPacket::from_authenticated(&packet) else {
             return SinkVerdict::Refused;
         };
-        if self.engine.on_packet(self.view, &media) != Admission::Admitted {
+        let expected = self
+            .expected_frames
+            .saturating_sub(media.start_frame)
+            .min(BLOCK_FRAMES);
+        if expected == 0
+            || u64::from(media.frames) != expected
+            || self.engine.on_packet(self.view, &media) != Admission::Admitted
+        {
             self.rejected_playout += 1;
         }
         // Authentication consumed the number even if N04 found the PCM late.
@@ -348,14 +552,9 @@ fn receive(
         "control":carrier.control_addr().map_err(|e| e.to_string())?.to_string(), "peer_id":peer}),
     )?;
     let start = next_control(&input, deadline)?;
-    let fields: Vec<_> = start.split_whitespace().collect();
-    if fields.len() != 3 || fields[0] != "START" {
-        return Err("expected START address anchor".into());
-    }
-    carrier.set_sender_control(loopback_addr(fields[1])?);
-    let anchor: u64 = fields[2]
-        .parse()
-        .map_err(|_| "invalid presentation anchor")?;
+    let (sender, anchor, mut capture) = receiver_start(&start)?;
+    let expected_frames = capture.expected_frames;
+    carrier.set_sender_control(sender);
     let clock = HostClock::sample()?;
     if anchor <= clock.now()?.saturating_add(100_000_000)
         || anchor > franken_stream::MAX_TIMESTAMP_NS
@@ -379,6 +578,7 @@ fn receive(
         engine,
         view: clock.view()?,
         rejected_playout: 0,
+        expected_frames,
     };
     let mut file = OpenOptions::new()
         .write(true)
@@ -386,25 +586,18 @@ fn receive(
         .open(output)
         .map_err(|e| e.to_string())?;
     event(serde_json::json!({"event":"started", "anchor_ns":anchor,
-        "host_ns":clock.now()?, "uncertainty_ns":clock.uncertainty_ns}))?;
-    let mut captured_frames = 0_u64;
-    let mut concealed = 0_u64;
-    let mut muted = 0_u64;
-    let mut output_bytes = 0_usize;
-    let mut real_blocks = 0_u64;
-    let mut expected_frames = None;
+        "host_ns":clock.now()?, "uncertainty_ns":clock.uncertainty_ns,
+        "expected_frames":expected_frames}))?;
     let mut credit = CreditRefresh::default();
-    let result: Result<(), String> = (|| loop {
+    let mut reported_capture_state = false;
+    let mut result: Result<(), String> = (|| loop {
         match input.try_recv() {
             Ok(Ok(command)) if command == "STOP" => return Ok(()),
-            Ok(Ok(command)) if command.starts_with("END ") && expected_frames.is_none() => {
+            Ok(Ok(command)) if command.starts_with("END ") => {
                 let frames: u64 = command[4..]
                     .parse()
                     .map_err(|_| "invalid END frame count")?;
-                if frames == 0 || frames > 1_000_000 {
-                    return Err("END frame count outside bound".into());
-                }
-                expected_frames = Some(frames);
+                capture.permit_end(frames)?;
             }
             Ok(Ok(_)) => return Err("unexpected receiver control".into()),
             Ok(Err(e)) => return Err(e),
@@ -422,59 +615,58 @@ fn receive(
         if sink.rejected_playout != 0 {
             return Err("authenticated media was rejected by N04 playout".into());
         }
-        let mut pcm = [0_u8; BLOCK_PAYLOAD_BYTES];
-        loop {
-            match sink.engine.decide(clock.view()?, &mut pcm) {
-                Poll::Pending => break,
-                Poll::Decision(decision) if decision.outcome == Outcome::Real => {
-                    let bytes = &pcm[..usize::from(decision.frames) * 4];
-                    let mut hex = String::with_capacity(bytes.len() * 2);
-                    use std::fmt::Write as _;
-                    for byte in bytes {
-                        write!(&mut hex, "{byte:02x}").map_err(|e| e.to_string())?;
-                    }
-                    let row = serde_json::json!({"start_frame":decision.block * BLOCK_FRAMES,
-                        "presentation_ns":decision.presentation_ns,"frames":decision.frames,"pcm_be16_hex":hex});
-                    let mut bytes = serde_json::to_vec(&row).map_err(|e| e.to_string())?;
-                    bytes.push(b'\n');
-                    output_bytes = output_bytes
-                        .checked_add(bytes.len())
-                        .ok_or("capture limit")?;
-                    if output_bytes > 4 * 1024 * 1024 {
-                        return Err("capture limit".into());
-                    }
-                    file.write_all(&bytes).map_err(|e| e.to_string())?;
-                    captured_frames += u64::from(decision.frames);
-                    real_blocks += 1;
-                }
-                Poll::Decision(decision) => match decision.outcome {
-                    Outcome::Concealed { .. } => concealed += 1,
-                    _ => muted += 1,
-                },
-                other => return Err(format!("playout unavailable: {other:?}")),
-            }
+        capture.drain(&mut sink.engine, || clock.view())?;
+        if capture.decisions_complete() && !reported_capture_state {
+            capture.serialize_once(&mut file)?;
+            file.flush().map_err(|e| e.to_string())?;
+            event(capture.observation())?;
+            reported_capture_state = true;
         }
-        if let Some(expected) = expected_frames {
-            if captured_frames > expected {
-                return Err("capture exceeds expected frames".into());
-            }
-            if captured_frames == expected {
-                return Ok(());
-            }
+        if capture.finished()? {
+            return Ok(());
         }
         thread::sleep(Duration::from_micros(250));
     })();
+    if !capture.serialization_attempted
+        && let Err(error) = capture.serialize_once(&mut file)
+    {
+        result = Err(match result {
+            Ok(()) => error,
+            Err(previous) => format!("{previous}; capture serialization: {error}"),
+        });
+    }
     file.flush().map_err(|e| e.to_string())?;
     event(
         serde_json::json!({"event": if result.is_ok() { "done" } else { "summary" },
-        "captured_frames":captured_frames, "real_blocks":real_blocks,
-        "concealed_blocks":concealed, "muted_blocks":muted,
+        "captured_frames":capture.captured_frames, "real_blocks":capture.real_blocks,
+        "concealed_blocks":capture.concealed, "muted_blocks":capture.muted,
+        "expected_frames":capture.expected_frames, "finish_permitted":capture.finish_permitted,
         "media_read":carrier.stats().media_read, "media_accepted":carrier.stats().media_accepted,
         "media_rejected":carrier.stats().media_rejected,
         "rejected_authentication":sink.receiver.counters().rejected_authentication,
         "playout_rejected":sink.rejected_playout, "peer_id":peer}),
     )?;
     result
+}
+
+/// Reports only retired sender-side final credit after EOF to the local
+/// controller. N01 feedback is a high-water mark; this does not establish
+/// receipt of every packet or sample preparation.
+fn peer_final_credit_retired(view: &PeerView, frames: u64) -> bool {
+    let blocks = frames.div_ceil(BLOCK_FRAMES);
+    frames != 0
+        && view.fence.is_none()
+        && view.queued_packets == 0
+        && view.in_flight == 0
+        && view.sent_next == blocks
+        && view.reported_next == blocks
+        && view.counters.media_submitted_packets == blocks
+        && view.counters.media_sent_packets == blocks
+        && view.counters.media_dropped_overflow_packets == 0
+        && view.counters.media_dropped_aggregate_packets == 0
+        && view.counters.media_dropped_late_packets == 0
+        && view.counters.media_dropped_fenced_packets == 0
+        && view.counters.media_dropped_send_error_packets == 0
 }
 
 fn send(
@@ -588,8 +780,10 @@ fn send(
             clock,
         },
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())?
+    .with_buffered_credit();
     let mut published_frames = 0_u64;
+    let mut reported_drained = [false; 8];
     loop {
         match input.try_recv() {
             Ok(Ok(command)) if command == "STOP" => {
@@ -609,6 +803,24 @@ fn send(
         }
         let mut outcomes = None;
         let step = runtime.step(&mut outcomes).map_err(|e| e.to_string())?;
+        // Draining/Drained/Incomplete are EOF states, so no new source blocks
+        // can appear after this observation. Each peer gets at most one event.
+        // A bad peer cannot withhold the controller's good-peer completion.
+        if matches!(
+            step.progress,
+            RuntimeProgress::Draining | RuntimeProgress::Drained | RuntimeProgress::Incomplete
+        ) {
+            for (index, peer) in peers.iter().enumerate() {
+                let view = runtime.peer_view(peer.id).ok_or("missing peer view")?;
+                if !reported_drained[index] && peer_final_credit_retired(&view, published_frames) {
+                    event(
+                        serde_json::json!({"event":"peer_drained", "peer_id":peer.id,
+                        "published_frames":published_frames, "anchor_ns":anchor, "peer":view}),
+                    )?;
+                    reported_drained[index] = true;
+                }
+            }
+        }
         match step.progress {
             RuntimeProgress::Published { frames } => {
                 let outcome = outcomes.ok_or("missing peer admission outcome")?;
@@ -740,6 +952,414 @@ fn run(mode: &str, args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const FINITE_ANCHOR: u64 = 1_000_000_000;
+
+    fn finite_view(group_ns: u64) -> ClockView {
+        ClockView {
+            group_ns,
+            uncertainty_ns: 1_000_000,
+            usable: true,
+        }
+    }
+
+    fn finite_sink(frames: u64) -> CaptureSink {
+        let mut engine = PlayoutEngine::new(
+            PlayoutProfile::MUSIC,
+            PlayoutConfig {
+                work_ns: 20_000_000,
+                lead_ns: 20_000_000,
+                tolerance_ns: 0,
+            },
+        )
+        .unwrap();
+        engine.begin_stream(1, 0, FINITE_ANCHOR).unwrap();
+        CaptureSink {
+            receiver: StreamReceiver::new(
+                StreamKey::from_bytes([7; 32]),
+                StreamId::new(7).unwrap(),
+                1,
+            ),
+            engine,
+            view: finite_view(0),
+            rejected_playout: 0,
+            expected_frames: frames,
+        }
+    }
+
+    fn finite_wire(sender: &mut franken_stream::StreamSender, start: u64, frames: u64) -> Vec<u8> {
+        sender
+            .send(franken_stream::OutboundFrame::media(
+                start,
+                FINITE_ANCHOR + franken_stream::playout::frames_to_ns(start),
+                FINITE_ANCHOR + franken_stream::playout::frames_to_ns(start) - 50_000_000,
+                (0..frames)
+                    .flat_map(|n| {
+                        let sample = ((start + n) as u16).to_be_bytes();
+                        [sample[0], sample[1], 0x12, 0x34]
+                    })
+                    .collect(),
+            ))
+            .unwrap()
+    }
+
+    fn admit_finite(frames: u64, missing_block: Option<u64>) -> CaptureSink {
+        let mut sink = finite_sink(frames);
+        let mut sender = franken_stream::StreamSender::new(
+            StreamKey::from_bytes([7; 32]),
+            StreamId::new(7).unwrap(),
+            1,
+        );
+        for start in (0..frames).step_by(BLOCK_FRAMES as usize) {
+            // Generate even a dropped packet, so the actual authenticated
+            // sequence has the gap a real carrier would observe.
+            let packet = finite_wire(&mut sender, start, (frames - start).min(BLOCK_FRAMES));
+            if missing_block != Some(start / BLOCK_FRAMES) {
+                assert!(matches!(sink.offer(&packet), SinkVerdict::Admitted { .. }));
+            }
+        }
+        assert_eq!(sink.rejected_playout, 0);
+        sink
+    }
+
+    fn capture_rows(bytes: &[u8]) -> Vec<serde_json::Value> {
+        std::str::from_utf8(bytes)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn finite_capture_defers_stalling_writer_until_actual_n04_decisions_finish() {
+        use std::cell::Cell;
+
+        // The test clock advances on every observation. A scripted writer
+        // models 80 ms of blocked I/O without depending on host scheduling.
+        fn next_view(now: &Cell<u64>) -> ClockView {
+            let current = now.get();
+            now.set(current + 1_000);
+            finite_view(current)
+        }
+
+        struct SlowWriter<'a> {
+            bytes: Vec<u8>,
+            writes: usize,
+            now: &'a Cell<u64>,
+        }
+        impl Write for SlowWriter<'_> {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.writes += 1;
+                if self.writes == 1 {
+                    self.now.set(self.now.get() + 80_000_000);
+                }
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        // Counterexample for the previous interleaved writer: scripted time
+        // advances during its callback and the actual N04 decision is overdue.
+        let mut old = admit_finite(512, None);
+        let mut pcm = [0_u8; BLOCK_PAYLOAD_BYTES];
+        let now = Cell::new(965_000_000);
+        assert!(
+            matches!(old.engine.decide(next_view(&now), &mut pcm), Poll::Decision(d)
+            if d.block == 0 && d.outcome == Outcome::Real)
+        );
+        let mut old_writer = SlowWriter {
+            bytes: Vec::new(),
+            writes: 0,
+            now: &now,
+        };
+        old_writer.write_all(&pcm).unwrap();
+        assert!(
+            matches!(old.engine.decide(next_view(&now), &mut pcm), Poll::Decision(d)
+            if d.block == 1 && d.outcome == Outcome::MutedOverdue)
+        );
+
+        let mut sink = admit_finite(512, None);
+        let mut capture = FiniteCapture::new(512).unwrap();
+        let reserved = (
+            capture.raw_pcm.capacity(),
+            capture.real_decisions.capacity(),
+        );
+        let now = Cell::new(965_000_000);
+        let mut writer = SlowWriter {
+            bytes: Vec::new(),
+            writes: 0,
+            now: &now,
+        };
+        capture
+            .drain(&mut sink.engine, || Ok(next_view(&now)))
+            .unwrap();
+        assert_eq!(writer.writes, 0, "no write occurs during N04 decisions");
+        assert_eq!(
+            now.get(),
+            965_002_000,
+            "the clock advanced for both decisions"
+        );
+        assert_eq!(
+            (
+                capture.captured_frames,
+                capture.real_blocks,
+                capture.concealed,
+                capture.muted
+            ),
+            (512, 2, 0, 0)
+        );
+        assert_eq!(
+            (
+                capture.raw_pcm.capacity(),
+                capture.real_decisions.capacity()
+            ),
+            reserved
+        );
+        capture.serialize_once(&mut writer).unwrap();
+        assert!(writer.writes > 0);
+        assert_eq!(
+            now.get(),
+            1_045_002_000,
+            "the scripted I/O stall advances time"
+        );
+        let rows = capture_rows(&writer.bytes);
+        let actual: String = rows
+            .iter()
+            .map(|row| row["pcm_be16_hex"].as_str().unwrap())
+            .collect();
+        let expected: String = (0..512).map(|n| format!("{n:04x}1234")).collect();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            rows.iter()
+                .map(|row| row["start_frame"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            vec![0, 256]
+        );
+    }
+
+    #[test]
+    fn finite_capture_partial_error_serializes_once_without_duplicate_retry() {
+        let mut sink = admit_finite(600, None);
+        let mut capture = FiniteCapture::new(600).unwrap();
+        let mut reads = 0;
+        let error = capture.drain(&mut sink.engine, || {
+            reads += 1;
+            if reads == 1 {
+                Ok(finite_view(975_500_000))
+            } else {
+                Err("clock failed".into())
+            }
+        });
+        assert_eq!(error, Err("clock failed".into()));
+        assert_eq!(capture.captured_frames, 256);
+        assert!(!capture.decisions_complete());
+
+        // A different partial capture writes its one real block on the error
+        // path, without inventing the unvisited later decisions.
+        let mut partial_sink = admit_finite(600, None);
+        let mut partial = FiniteCapture::new(600).unwrap();
+        let mut calls = 0;
+        assert!(
+            partial
+                .drain(&mut partial_sink.engine, || {
+                    calls += 1;
+                    if calls == 1 {
+                        Ok(finite_view(975_500_000))
+                    } else {
+                        Err("clock failed".into())
+                    }
+                })
+                .is_err()
+        );
+        let mut partial_output = Vec::new();
+        partial.serialize_once(&mut partial_output).unwrap();
+        let partial_rows = capture_rows(&partial_output);
+        assert_eq!(partial_rows.len(), 1);
+        assert_eq!(partial_rows[0]["start_frame"], 0);
+        assert_eq!(partial_rows[0]["frames"], 256);
+        let expected: String = (0..256).map(|n| format!("{n:04x}1234")).collect();
+        assert_eq!(partial_rows[0]["pcm_be16_hex"], expected);
+
+        struct PartialFailure {
+            bytes: Vec<u8>,
+            calls: usize,
+        }
+        impl Write for PartialFailure {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.calls += 1;
+                if self.calls > 1 {
+                    return Err(io::Error::other("injected write failure"));
+                }
+                let count = bytes.len().min(16);
+                self.bytes.extend_from_slice(&bytes[..count]);
+                Ok(count)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut writer = PartialFailure {
+            bytes: Vec::new(),
+            calls: 0,
+        };
+        assert!(capture.serialize_once(&mut writer).is_err());
+        assert_eq!(writer.bytes.len(), 16);
+        let calls = writer.calls;
+        assert!(capture.serialize_once(&mut writer).is_err());
+        assert_eq!(writer.calls, calls, "failed output is never retried");
+        assert_eq!(writer.bytes.len(), 16);
+    }
+
+    #[test]
+    fn finite_capture_prevents_real_engine_post_end_concealment_without_trimming_pcm() {
+        let view = finite_view(975_500_000); // Block 3 is due, but still before presentation.
+        let mut unbounded = admit_finite(600, None);
+        let mut pcm = [0; BLOCK_PAYLOAD_BYTES];
+        for (block, frames) in [(0, 256), (1, 256), (2, 88)] {
+            assert!(
+                matches!(unbounded.engine.decide(view, &mut pcm), Poll::Decision(d)
+                if d.block == block && d.frames == frames && d.outcome == Outcome::Real)
+            );
+        }
+        // Planted old consumer: a continuous engine really does produce a
+        // fourth conceal decision. This is not a hand-written oracle model.
+        assert!(
+            matches!(unbounded.engine.decide(view, &mut pcm), Poll::Decision(d)
+            if d.block == 3 && matches!(d.outcome, Outcome::Concealed { .. }))
+        );
+
+        for frames in [1, 256, 512, 600] {
+            let mut sink = admit_finite(frames, None);
+            let mut capture = FiniteCapture::new(frames).unwrap();
+            let mut output = Vec::new();
+            capture.drain(&mut sink.engine, || Ok(view)).unwrap();
+            assert_eq!(capture.captured_frames, frames);
+            assert_eq!((capture.concealed, capture.muted), (0, 0));
+            assert_eq!(capture.real_blocks, frames.div_ceil(BLOCK_FRAMES));
+            assert!(capture.observation()["first_non_real"].is_null());
+            assert_eq!(sink.engine.snapshot().cursor, frames.div_ceil(BLOCK_FRAMES));
+            capture.serialize_once(&mut output).unwrap();
+            let rows = capture_rows(&output);
+            let mut actual_pcm = String::new();
+            for (index, row) in rows.iter().enumerate() {
+                let start = index as u64 * BLOCK_FRAMES;
+                assert_eq!(row["start_frame"], start);
+                assert_eq!(row["frames"], (frames - start).min(BLOCK_FRAMES));
+                assert_eq!(
+                    row["presentation_ns"],
+                    FINITE_ANCHOR + start * 1_000_000_000 / 48000
+                );
+                actual_pcm.push_str(row["pcm_be16_hex"].as_str().unwrap());
+            }
+            let expected_pcm: String = (0..frames).map(|n| format!("{n:04x}1234")).collect();
+            assert_eq!(actual_pcm, expected_pcm);
+            let original = output.clone();
+            capture
+                .drain(&mut sink.engine, || {
+                    Ok(finite_view(FINITE_ANCHOR + 1_000_000_000))
+                })
+                .unwrap();
+            assert_eq!(output, original);
+            assert!(
+                !capture.finished().unwrap(),
+                "PCM completion cannot grant transport completion"
+            );
+            capture.permit_end(frames).unwrap();
+            assert!(capture.finished().unwrap());
+        }
+    }
+
+    #[test]
+    fn finite_capture_keeps_actual_missing_middle_and_final_partial_as_failures() {
+        for missing in [0, 1, 2] {
+            let mut sink = admit_finite(600, Some(missing));
+            let mut capture = FiniteCapture::new(600).unwrap();
+            capture.permit_end(600).unwrap(); // Early controller permission is no success proof.
+            let mut output = Vec::new();
+            capture
+                .drain(&mut sink.engine, || Ok(finite_view(975_500_000)))
+                .unwrap();
+            assert_eq!(capture.concealed + capture.muted, 1);
+            assert_eq!(capture.next_block, 3);
+            let observed = capture.observation();
+            assert_eq!(
+                observed["first_non_real"]["start_frame"],
+                missing * BLOCK_FRAMES
+            );
+            assert_eq!(observed["decided_blocks"], 3);
+            assert!(capture.finished().is_err());
+            capture.serialize_once(&mut output).unwrap();
+            let rows = capture_rows(&output);
+            assert_eq!(rows.len(), 2);
+            assert!(
+                rows.iter()
+                    .all(|row| row["start_frame"] != missing * BLOCK_FRAMES)
+            );
+            assert!(capture.captured_frames < 600);
+        }
+    }
+
+    #[test]
+    fn finite_capture_rejects_invalid_declarations_and_mismatched_or_duplicate_end() {
+        for line in [
+            "START 127.0.0.1:9 1000000000",
+            "START 127.0.0.1:9 1000000000 0",
+            "START 127.0.0.1:9 1000000000 1000001",
+            "START 127.0.0.1:9 1000000000 invalid",
+            "START 192.0.2.1:9 1000000000 600",
+            "START 127.0.0.1:9 invalid 600",
+            "START 127.0.0.1:9 1000000000 600 extra",
+        ] {
+            assert!(receiver_start(line).is_err(), "accepted {line}");
+        }
+        let (sender, anchor, mut capture) =
+            receiver_start("START 127.0.0.1:9 1000000000 600").unwrap();
+        assert_eq!(sender, "127.0.0.1:9".parse().unwrap());
+        assert_eq!(anchor, FINITE_ANCHOR);
+        assert!(capture.permit_end(599).is_err());
+        assert!(!capture.finish_permitted);
+        capture.permit_end(600).unwrap();
+        assert!(!capture.finished().unwrap());
+        assert!(capture.permit_end(600).is_err());
+        assert!(FiniteCapture::new(MAX_CAPTURE_FRAMES).is_ok());
+    }
+
+    #[test]
+    fn finite_capture_rejects_authenticated_extra_and_short_blocks_without_hiding_credit() {
+        for (start, frames) in [(0, 255), (512, 89), (768, 256)] {
+            let mut sink = finite_sink(600);
+            let mut sender = franken_stream::StreamSender::new(
+                StreamKey::from_bytes([7; 32]),
+                StreamId::new(7).unwrap(),
+                1,
+            );
+            assert_eq!(
+                sink.offer(&finite_wire(&mut sender, start, frames)),
+                SinkVerdict::Admitted { seq: 0 }
+            );
+            assert_eq!(sink.receiver.counters().accepted, 1);
+            assert_eq!(
+                sink.rejected_playout, 1,
+                "authenticated consumption is not successful preparation"
+            );
+            assert_eq!(sink.engine.stats().admitted, 0);
+        }
+        let mut sink = finite_sink(600);
+        let mut sender = franken_stream::StreamSender::new(
+            StreamKey::from_bytes([7; 32]),
+            StreamId::new(7).unwrap(),
+            1,
+        );
+        let packet = finite_wire(&mut sender, 512, 88);
+        assert_eq!(sink.offer(&packet), SinkVerdict::Admitted { seq: 0 });
+        assert_eq!(sink.rejected_playout, 0);
+        assert_eq!(sink.offer(&packet), SinkVerdict::Refused);
+        assert_eq!(sink.receiver.counters().rejected_replay, 1);
+        assert_eq!(sink.engine.stats().admitted, 1);
+    }
 
     fn three_peers() -> Vec<LoopbackPeer> {
         peer_list("7@127.0.0.1:11001@127.0.0.1:11002,42@127.0.0.1:11003@127.0.0.1:11004,65535@127.0.0.1:11005@127.0.0.1:11006").unwrap()
@@ -931,6 +1551,7 @@ mod tests {
                 usable: true,
             },
             rejected_playout: 0,
+            expected_frames: MAX_CAPTURE_FRAMES,
         };
         let frame = OutboundFrame::media(
             0,
@@ -951,6 +1572,29 @@ mod tests {
         let mut report = [0_u8; 128];
         let (len, _) = blackhole.recv_from(&mut report).unwrap(); // first genuine report was lost
         assert_eq!(sender.peer_view(1).unwrap().in_flight, 1);
+        assert!(!peer_final_credit_retired(
+            &sender.peer_view(1).unwrap(),
+            BLOCK_FRAMES
+        ));
+
+        // The finite PCM is fully prepared while the real last credit is lost.
+        // Do not exit here: the sender still has a live in-flight packet.
+        let mut capture = FiniteCapture::new(BLOCK_FRAMES).unwrap();
+        let mut output = Vec::new();
+        let view = ClockView {
+            group_ns: anchor - 40_000_000,
+            uncertainty_ns: 1_000_000,
+            usable: true,
+        };
+        capture.drain(&mut sink.engine, || Ok(view)).unwrap();
+        assert!(capture.decisions_complete());
+        assert!(!capture.finished().unwrap());
+        capture.serialize_once(&mut output).unwrap();
+        let rows = capture_rows(&output);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["pcm_be16_hex"], "11".repeat(BLOCK_PAYLOAD_BYTES));
+        let mut same_clock_pcm = [0; BLOCK_PAYLOAD_BYTES];
+        assert_eq!(sink.engine.decide(view, &mut same_clock_pcm), Poll::Pending);
 
         // Replaying authentic report bytes from the wrong control address cannot mint credit.
         blackhole
@@ -1001,19 +1645,23 @@ mod tests {
             sender.peer_view(1).unwrap().reported_next == 1
         });
         assert_eq!(sender.peer_view(1).unwrap().in_flight, 0);
+        assert_eq!(sender.peer_view(1).unwrap().queued_packets, 0);
+        assert!(peer_final_credit_retired(
+            &sender.peer_view(1).unwrap(),
+            BLOCK_FRAMES
+        ));
         assert_eq!(receiver.stats().reports_sent, 2);
-
-        let mut pcm = [0_u8; BLOCK_PAYLOAD_BYTES];
-        let view = ClockView {
-            group_ns: anchor - 40_000_000,
-            uncertainty_ns: 1_000_000,
-            usable: true,
-        };
-        assert!(
-            matches!(sink.engine.decide(view, &mut pcm), Poll::Decision(d) if d.outcome == Outcome::Real)
+        let original = output.clone();
+        capture
+            .drain(&mut sink.engine, || Ok(finite_view(anchor + 1_000_000_000)))
+            .unwrap();
+        assert_eq!(
+            output, original,
+            "no extra PCM or concealment while refreshing credit"
         );
-        assert_eq!(pcm, [0x11; BLOCK_PAYLOAD_BYTES]);
-        assert_eq!(sink.engine.decide(view, &mut pcm), Poll::Pending);
+        assert_eq!((capture.concealed, capture.muted), (0, 0));
+        capture.permit_end(BLOCK_FRAMES).unwrap();
+        assert!(capture.finished().unwrap());
     }
 
     #[test]
@@ -1059,6 +1707,7 @@ mod tests {
                 usable: true,
             },
             rejected_playout: 0,
+            expected_frames: MAX_CAPTURE_FRAMES,
         };
         assert_eq!(sink.offer(&[0]), SinkVerdict::Refused);
         assert_eq!(sink.receiver.counters().rejected_structure, 1);
@@ -1110,6 +1759,7 @@ mod tests {
                 usable: true,
             },
             rejected_playout: 0,
+            expected_frames: MAX_CAPTURE_FRAMES,
         };
         let first = wire_sender
             .send(OutboundFrame::media(

@@ -691,6 +691,11 @@ class AllPeerNativeEvidence(unittest.TestCase):
         "n07_n01_selected_same_group_route_change_invalidates_and_fences",
         "n07_n01_selected_fence_survives_unrelated_group_mutation",
         "n07_n01_source_claim_rejects_old_protected_state",
+        "n07_packed_queue_tag_preserves_lengths_flags_and_slot_bound",
+        "n07_packed_queue_keeps_legacy_and_protected_clock_paths_distinct",
+        "n07_buffered_credit_mode_still_respects_sequence_and_cooldown_guards",
+        "n07_buffered_credit_window_delivers_retained_pcm_after_real_report",
+        "n07_buffered_slow_peer_capacity_preserves_healthy_progress_and_deadlines",
         "n07_isolated_retry_cooldown_cannot_steal_healthy_peer_capacity",
         "n07_isolated_fanout_continues_healthy_peer_and_never_replays_skipped_pcm",
         "n07_isolated_fanout_all_unavailable_waits_then_expired_skips_once",
@@ -703,14 +708,14 @@ class AllPeerNativeEvidence(unittest.TestCase):
         "n07_all_peer_accepted_queue_is_fenced_on_route_and_membership_change",
     )
 
-    def test_all_thirty_six_are_required_by_the_existing_u02_case(self):
+    def test_all_forty_one_are_required_by_the_existing_u02_case(self):
         u02 = next(case for case in rc.CASES if case["id"] == "N07-U02")
         names = [rc.C + name for name in self.ADDED]
         self.assertEqual(len(rc.CASES), 25)
-        self.assertEqual(len(u02["tests"]), 72)
-        self.assertEqual(len(set(u02["tests"])), 72)
+        self.assertEqual(len(u02["tests"]), 77)
+        self.assertEqual(len(set(u02["tests"])), 77)
         self.assertEqual(len(set(names[:15])), 15)
-        self.assertEqual(len(set(names)), 36)
+        self.assertEqual(len(set(names)), 41)
         for name in names:
             self.assertEqual(u02["tests"].count(name), 1, name)
         self.assertEqual(judged(rc, log_text())["N07-U02"], ("passed", ""))
