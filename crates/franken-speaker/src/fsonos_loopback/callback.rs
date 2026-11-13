@@ -332,7 +332,7 @@ impl Deliverer {
                 // Declared before run: unwinding drops socket-owning frames
                 // before this guard can certify that no more writes occur.
                 let _terminal = DeliveryTerminal(terminal);
-                let cause = run(&jobs, addr, limits, &for_stop, &for_report);
+                let cause = run(jobs, addr, limits, &for_stop, &for_report);
                 lock(&for_report).stopped_by = cause;
             })
             .map_err(|error| format!("spawn: {}", error.kind()))?;
@@ -386,7 +386,7 @@ impl Drop for Deliverer {
 }
 
 fn run(
-    jobs: &Receiver<Vec<u8>>,
+    jobs: Receiver<Vec<u8>>,
     addr: SocketAddr,
     limits: CallbackLimits,
     stop: &AtomicBool,
@@ -406,14 +406,30 @@ fn run(
             Err(RecvTimeoutError::Disconnected) => break CallbackStop::Closed,
         }
     };
-    // Whatever is still queued is never attempted: counted, not sent.
+    retire_queue(jobs, report, || {});
+    cause
+}
+
+/// Finish ordinary shutdown while admission is serialized with final cleanup.
+/// The no-op in normal delivery is also a synchronization point for tests:
+/// it observes the actual final-drain boundary, not a second queue algorithm.
+fn retire_queue(
+    jobs: Receiver<Vec<u8>>,
+    report: &Mutex<CallbackReport>,
+    after_final_drain: impl FnOnce(),
+) {
+    // Outbox::offer_one holds this same mutex across admission. Keep it
+    // through the final finite drain and receiver disconnect, so no producer
+    // can enqueue a notification after the count but before the queue closes.
+    // Receiver ownership makes closure happen here, before the lock is released.
+    let mut counts = lock(report);
     let mut left = 0_u32;
     while jobs.try_recv().is_ok() {
         left = left.saturating_add(1);
     }
-    let mut counts = lock(report);
+    after_final_drain();
+    drop(jobs);
     counts.abandoned = counts.abandoned.saturating_add(left);
-    cause
 }
 
 /// What one attempt got as far as.

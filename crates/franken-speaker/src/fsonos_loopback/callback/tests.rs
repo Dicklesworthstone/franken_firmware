@@ -785,3 +785,156 @@ fn stopping_with_a_join_budget_too_large_to_add_to_an_instant_does_not_panic() {
     deliverer.stop();
     assert_eq!(deliverer.report().stopped_by, CallbackStop::Lifetime);
 }
+
+#[test]
+fn orderly_shutdown_closes_queue_before_returning_reconciled_accounting() {
+    let listening = listener();
+    let target = target_of(&listening, "/events");
+    let url = target.url().to_string();
+    let mut bounds = limits();
+    bounds.queue = 2;
+    let (queue, jobs) = mpsc::sync_channel(bounds.queue);
+    let report = Arc::new(Mutex::new(CallbackReport::default()));
+    let outbox = Outbox {
+        target: target.clone(),
+        max_request_bytes: bounds.max_request_bytes,
+        queue,
+        report: Arc::clone(&report),
+        terminal: Arc::new(AtomicBool::new(false)),
+    };
+    let late_offerer = outbox.clone();
+
+    // Real bounded admission: two notifications are accepted, and the third
+    // is refused while the receiver is still open. No delivery thread exists.
+    outbox.offer(&[
+        notification(&url, 0, BODY),
+        notification(&url, 1, BODY),
+        notification(&url, 2, BODY),
+    ]);
+    {
+        let before = lock(&report);
+        assert_eq!(before.offered, 3);
+        assert_eq!(before.queued, 2);
+        assert_eq!(before.dropped, 1);
+        assert_eq!(before.abandoned, 0);
+        assert!(!before.reconciled());
+    }
+
+    // A stopped delivery loop must retire its receiver before publishing
+    // stable accounting, even while independent Outbox clones remain alive.
+    let stop = AtomicBool::new(true);
+    assert_eq!(
+        run(jobs, target.addr, bounds, &stop, &report),
+        CallbackStop::Requested
+    );
+    {
+        let settled = lock(&report);
+        assert_eq!(settled.queued, 2);
+        assert_eq!(settled.abandoned, 2);
+        assert_eq!(settled.delivered, 0);
+        assert_eq!(settled.failed, 0);
+        assert_eq!(settled.bytes_out, 0);
+        assert!(settled.reconciled());
+    }
+
+    // Even direct queue admission can no longer accept anything. The normal
+    // late-offer path must count a drop rather than grow the retired queue.
+    assert!(matches!(
+        late_offerer.queue.try_send(Vec::new()),
+        Err(mpsc::TrySendError::Disconnected(_))
+    ));
+    late_offerer.offer(&[notification(&url, 3, BODY)]);
+    let settled = lock(&report);
+    assert_eq!(settled.offered, 4);
+    assert_eq!(settled.queued, 2);
+    assert_eq!(settled.abandoned, 2);
+    assert_eq!(settled.dropped, 2);
+    assert!(settled.reconciled());
+    drop(settled);
+    assert!(matches!(listening.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
+}
+
+#[test]
+fn orderly_shutdown_serializes_live_offers_with_final_drain_and_disconnect() {
+    let listening = listener();
+    let target = target_of(&listening, "/events");
+    let url = target.url().to_string();
+    let (queue, jobs) = mpsc::sync_channel(4);
+    let report = Arc::new(Mutex::new(CallbackReport::default()));
+    let outbox = Outbox {
+        target,
+        max_request_bytes: limits().max_request_bytes,
+        queue,
+        report: Arc::clone(&report),
+        terminal: Arc::new(AtomicBool::new(false)),
+    };
+    outbox.offer(&[notification(&url, 0, BODY), notification(&url, 1, BODY)]);
+    let late_offerer = outbox.clone();
+    let late_notification = notification(&url, 2, BODY);
+    let (go_tx, go_rx) = mpsc::sync_channel(1);
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (done_tx, done_rx) = mpsc::sync_channel(1);
+    let producer = thread::spawn(move || {
+        go_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("shutdown must reach its final-drain boundary");
+        entered_tx.send(()).expect("test still observes producer");
+        late_offerer.offer(&[late_notification]);
+        done_tx.send(()).expect("test still observes result");
+    });
+    let mut boundary_locked = false;
+    retire_queue(jobs, &report, || {
+        boundary_locked = match report.try_lock() {
+            Ok(guard) => {
+                drop(guard);
+                false
+            }
+            Err(std::sync::TryLockError::WouldBlock) => true,
+            Err(std::sync::TryLockError::Poisoned(_)) => panic!("report mutex poisoned"),
+        };
+        go_tx.send(()).expect("producer remains available");
+        entered_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("producer entered the live offer");
+        // An unprotected old drain permits the actual offer to complete
+        // before disconnect. Force that causal schedule, without a timing
+        // race or a timeout being interpreted as successful serialization.
+        // A protected drain releases admission only after receiver closure.
+        if !boundary_locked {
+            done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("unprotected admission should complete before disconnect");
+        }
+    });
+    if boundary_locked {
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("serialized offer must finish after disconnect");
+    }
+    producer.join().expect("offerer must not panic");
+    let settled = lock(&report);
+    println!(
+        "callback-shutdown: boundary_locked={boundary_locked} offered={} queued={} abandoned={} dropped={} delivered={} failed={} reconciled={}",
+        settled.offered,
+        settled.queued,
+        settled.abandoned,
+        settled.dropped,
+        settled.delivered,
+        settled.failed,
+        settled.reconciled(),
+    );
+    assert!(
+        boundary_locked,
+        "admission was unlocked after the final drain: {settled:?}"
+    );
+    assert_eq!(settled.offered, 3);
+    assert_eq!(settled.queued, 2);
+    assert_eq!(settled.abandoned, 2);
+    assert_eq!(settled.dropped, 1);
+    assert_eq!(settled.delivered, 0);
+    assert_eq!(settled.failed, 0);
+    assert_eq!(settled.bytes_out, 0);
+    assert!(settled.reconciled());
+    drop(settled);
+    assert!(matches!(listening.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
+}
