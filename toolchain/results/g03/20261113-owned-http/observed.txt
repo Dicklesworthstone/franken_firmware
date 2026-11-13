@@ -1,0 +1,40 @@
+Selected actual speaker output; no worker paths or raw receipts included.
+Native 30107136981729295
+
+test settled_http::tests::valid_request_reaches_one_handler_and_copies_every_transport_field ... ok
+test settled_http::tests::dropped_and_expired_queued_requests_are_reclaimed_without_owner_polling ... ok
+test settled_http::tests::expired_owner_service_skips_handler_but_permitted_successor_still_works ... ok
+test settled_http::tests::lost_reply_reports_executed_work_without_reapplying_or_retaining_capacity ... ok
+test settled_http::tests::request_and_header_caps_refuse_before_consuming_the_single_slot ... ok
+test settled_http::tests::owner_drop_disconnects_pending_work_and_refuses_later_submissions ... ok
+test fsonos_loopback::mailbox_tests::mailbox_adapter_preserves_committed_response_despite_render_error_and_updates_snapshot ... ok
+test fsonos_loopback::mailbox_tests::mailbox_discovery_extras_are_refused_and_plain_factory_start_still_works ... ok
+test network_render::tests::controller_events::http_integration::real_http_signed_set_and_relative_retry_change_same_owner_protected_pcm_once ... ok
+test network_render::tests::controller_events::http_integration::full_mailbox_refuses_real_tcp_without_blocking_local_mute_or_acknowledged_stop ... ok
+test network_render::tests::controller_events::http_integration::expired_handoff_is_outcome_unknown_and_does_not_block_local_mute_or_stop ... ok
+test network_render::tests::controller_events::http_integration::tcp_event_methods_are_refused_without_mailbox_work_and_soap_still_reaches_owner ... ok
+
+test result: ok. 605 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 62.75s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.31s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.36s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Selected actual Clippy output; native 30107136981729296
+    Finished `dev` profile [unoptimized] target(s) in 1m 08s
+Remote and wrapper exit 0; terminal ACK and resource release independently checked.
+
+Historical source-review failure (annotation, not native execution):
+The first adapter draft permitted LocalLink event subscription without a delivery outbox.
+Independent source review rejected it before any native run. The successor refuses
+event methods before admission and pairs exact LocalLink405/Tailnet401/noSID with
+permitted owner-serviced SOAP. Initial weak non200/priming-only tests were also
+strengthened to exact401 and retained nonzero program-token/ACK checks before execution.
+
+NOT RUN: the existing ignored D03 25.5 virtual-hour soak; external fsonos client,
+discovery/event-delivery, target guest, provider/native-tailnet, and physical audio.
