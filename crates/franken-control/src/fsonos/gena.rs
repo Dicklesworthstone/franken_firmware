@@ -293,6 +293,15 @@ impl SubscriptionTable {
         self.expired_total
     }
 
+    /// Invalidate every transport-owned subscription without reusing its SID
+    /// namespace. This is lifecycle cleanup, not expiry; the incarnation,
+    /// counter and expired count are retained.
+    pub(crate) fn invalidate_all(&mut self) -> usize {
+        let removed = self.entries.len();
+        self.entries.clear();
+        removed
+    }
+
     /// Remove every subscription whose time has come. Returns how many.
     pub fn expire(&mut self, now_ns: u64) -> usize {
         let before = self.entries.len();
@@ -1070,6 +1079,39 @@ mod tests {
         assert_eq!(t.len(), 1);
         assert_eq!(t.expire(800 * SEC), 1);
         assert!(t.is_empty());
+    }
+
+    #[test]
+    fn transport_invalidation_removes_old_sids_without_reusing_the_namespace() {
+        let mut t = table();
+        let (first, initial) = subscribe(&mut t, 0, Service::RenderingControl);
+        let (other, _) = subscribe(&mut t, 0, Service::AvTransport);
+        assert_eq!(initial.seq, 0);
+        assert_eq!(t.invalidate_all(), 2);
+        assert!(t.is_empty());
+        assert_eq!(t.expired_total(), 0);
+        assert_eq!(t.invalidate_all(), 0);
+        let renew = SubscribeHeaders {
+            timeout: Some("Second-300"),
+            ..SubscribeHeaders::default()
+        };
+        assert_eq!(
+            t.renew(1, Service::RenderingControl, &first.sid, &renew),
+            Err(GenaError::PreconditionFailed)
+        );
+        assert_eq!(
+            t.unsubscribe(1, Service::AvTransport, &other.sid),
+            Err(GenaError::PreconditionFailed)
+        );
+        let (fresh, event) = subscribe(&mut t, 1, Service::RenderingControl);
+        assert_ne!(fresh.sid, first.sid);
+        assert_ne!(fresh.sid, other.sid);
+        assert_eq!(event.sid, fresh.sid);
+        assert_eq!(event.seq, 0);
+        assert!(
+            t.renew(2, Service::RenderingControl, &fresh.sid, &renew)
+                .is_ok()
+        );
     }
 
     #[test]

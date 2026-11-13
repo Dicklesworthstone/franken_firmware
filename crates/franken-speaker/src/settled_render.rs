@@ -26,7 +26,9 @@ use crate::button_adapter::{
 };
 use crate::network_render::{NetworkRender, NetworkRenderError, OwnerStep};
 use crate::render::{RenderState, StopReport, TickReport, TimingModel};
-use crate::settled_http::{HttpMailboxError, HttpMailboxOwner, HttpService, OwnedHttpReply};
+use crate::settled_http::{
+    HttpMailboxError, HttpMailboxOwner, HttpOwnerIdentity, HttpService, OwnedHttpReply,
+};
 
 /// Explicitly provisioned pending identity and local protection ceiling.
 #[derive(Debug)]
@@ -176,6 +178,7 @@ pub struct SettledRender<
     last_group_upper_ns: Option<u64>,
     transport: TransportState,
     transport_dirty: bool,
+    http_identity: HttpOwnerIdentity,
     active: bool,
     stopping: bool,
     join: Option<(u64, AuthorityToken)>,
@@ -277,6 +280,7 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             last_group_upper_ns: Some(latest_ns),
             transport: TransportState::Transitioning,
             transport_dirty: true,
+            http_identity: HttpOwnerIdentity::new(),
             active: false,
             stopping: false,
             join: None,
@@ -638,14 +642,32 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
     /// Service at most one admitted HTTP request on the caller's control path.
     /// No network I/O or waiting is performed by the render loop. The copied
     /// session is diagnostic host state, not evidence of physical output.
+    /// The first call, even when idle, associates this exact owner instance
+    /// with this one mailbox. Other owners, other mailboxes and generic
+    /// service cannot replace either side of that association.
     pub fn service_http(
         &mut self,
         mailbox: &mut HttpMailboxOwner,
     ) -> Result<HttpService, HttpMailboxError> {
-        mailbox.service_one(|request| OwnedHttpReply {
+        let permit = mailbox.associate_owner(&mut self.http_identity)?;
+        mailbox.service_owned(&permit, |request| OwnedHttpReply {
             result: self.handle_soap(&request),
             session: self.session.clone(),
         })
+    }
+
+    /// Reopen this owner's mailbox after its exclusive eventing worker exits.
+    /// Invalidate the actual owned endpoint's subscriptions before admitting
+    /// raw clients or another callback target. Call on the same owner/mailbox
+    /// pair used by `service_http`, outside the render callback. Active or
+    /// still-executing work returns Busy and does not invalidate anything.
+    #[cfg(any(test, feature = "harness"))]
+    pub fn release_http_eventing(
+        &mut self,
+        mailbox: &mut HttpMailboxOwner,
+    ) -> Result<usize, HttpMailboxError> {
+        let permit = mailbox.owner_permit(&self.http_identity)?;
+        mailbox.finish_eventing(&permit, || self.soap.invalidate_subscriptions())
     }
 
     fn note_transport(&mut self, next: TransportState) {

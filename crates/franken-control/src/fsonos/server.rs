@@ -495,6 +495,13 @@ impl Endpoint {
         self.gena.expire(now_ns)
     }
 
+    /// Retire every subscription before replacing its delivery transport.
+    /// Old SIDs cannot be renewed; future subscriptions keep this endpoint's
+    /// monotonically allocated SID namespace. No clock or network is touched.
+    pub fn invalidate_subscriptions(&mut self) -> usize {
+        self.gena.invalidate_all()
+    }
+
     /// Bring every subscriber up to the session as it is now. The owner calls this after anything it
     /// did to the session itself (a local change, a membership change, a move to a new epoch, a change to the
     /// directory made through [`Endpoint::directory_mut`]), and it is called for it after every command this module drives.

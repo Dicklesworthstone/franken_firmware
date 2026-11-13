@@ -50,11 +50,14 @@ use franken_session::{
 };
 
 use crate::control_adapter::ControlPlane;
-use crate::settled_http::{HttpMailboxClient, HttpMailboxError};
+use crate::settled_http::{AttachedHttpMailboxClient, HttpMailboxClient, HttpMailboxError};
 
 mod callback;
 mod discovery;
 mod incarnation;
+
+#[cfg(test)]
+mod mailbox_eventing_tests;
 
 pub use callback::{CallbackLimits, CallbackReport, CallbackStop, CallbackTarget};
 use discovery::Responder;
@@ -303,6 +306,22 @@ pub trait HttpControl {
     fn supports_extras(&self) -> bool {
         true
     }
+
+    /// Called once before readiness. Eventing must have a real delivery queue;
+    /// a mailbox adapter also needs its exclusive owner-mailbox attachment.
+    fn prepare_eventing(&mut self, delivery: Option<HttpEventDelivery<'_>>) -> Result<(), String> {
+        if delivery.is_some() && !self.supports_extras() {
+            return Err("control owner does not admit transport-local extras".into());
+        }
+        Ok(())
+    }
+}
+
+/// Proof that this worker actually owns a bounded callback queue. Its private
+/// field and lack of public constructor prevent a safe external caller from
+/// enabling mailbox subscriptions with a boolean or a fabricated outbox.
+pub struct HttpEventDelivery<'a> {
+    _outbox: &'a callback::Outbox,
 }
 
 impl HttpControl for ControlPlane {
@@ -367,6 +386,29 @@ pub fn mailbox_control(client: HttpMailboxClient) -> Box<dyn HttpControl> {
     Box::new(MailboxControl {
         client,
         directory: Directory::default(),
+        eventing_opt_in: false,
+        attachment: None,
+    })
+}
+
+/// Opt in to eventing through [`FsonosLoopback::start_eventing_with_control`].
+/// A real outbox must exist before subscriptions are enabled. That worker
+/// exclusively attaches to the mailbox: raw/cloned clients and other adapters
+/// cannot submit commands while it runs, avoiding lost or reordered events
+/// across independent HTTP response writers. Without an outbox this behaves
+/// like [`mailbox_control`]. Discovery remains unsupported.
+/// After worker exit the mailbox remains fenced until the actual endpoint
+/// owner calls `SettledRender::release_http_eventing` to invalidate old SIDs.
+///
+/// This carries HTTP-produced notifications only. Other owner methods return
+/// caller-owned vectors. Replies abandoned before consumption count their
+/// actual notification losses; those events are not retried or delivered.
+pub fn mailbox_eventing_control(client: HttpMailboxClient) -> Box<dyn HttpControl> {
+    Box::new(MailboxControl {
+        client,
+        directory: Directory::default(),
+        eventing_opt_in: true,
+        attachment: None,
     })
 }
 
@@ -375,6 +417,8 @@ struct MailboxControl {
     // The legacy trait exposes transport-local metadata. This adapter never
     // uses it to configure the owned endpoint, and refuses extras at startup.
     directory: Directory,
+    eventing_opt_in: bool,
+    attachment: Option<AttachedHttpMailboxClient>,
 }
 
 impl HttpControl for MailboxControl {
@@ -384,12 +428,11 @@ impl HttpControl for MailboxControl {
         _now_ns: u64,
         request: &HttpRequest<'_>,
     ) -> Handled {
-        // This adapter has no event-delivery transport. Refuse before the
-        // actual owner can create or remove subscriptions; preserve the
-        // tailnet ingress's anonymous 401 policy instead of disclosing it.
-        if request.method.eq_ignore_ascii_case("SUBSCRIBE")
-            || request.method.eq_ignore_ascii_case("UNSUBSCRIBE")
-        {
+        // Only an opted-in, exclusively attached worker with an actual outbox
+        // can accept local event methods. Tailnet events remain anonymous401.
+        let event = request.method.eq_ignore_ascii_case("SUBSCRIBE")
+            || request.method.eq_ignore_ascii_case("UNSUBSCRIBE");
+        if event && (request.ingress == Ingress::Tailnet || self.attachment.is_none()) {
             let mut refusal = mailbox_fault(
                 if request.ingress == Ingress::Tailnet {
                     401
@@ -406,11 +449,11 @@ impl HttpControl for MailboxControl {
             }
             return refusal;
         }
-        let reply = match self
-            .client
-            .submit(request)
-            .and_then(|pending| pending.wait())
-        {
+        let submitted = match &self.attachment {
+            Some(attached) => attached.submit(request),
+            None => self.client.submit(request),
+        };
+        let reply = match submitted.and_then(|pending| pending.wait()) {
             Ok(reply) => reply,
             Err(error) => {
                 let (status, unknown) = match error {
@@ -445,6 +488,21 @@ impl HttpControl for MailboxControl {
 
     fn supports_extras(&self) -> bool {
         false
+    }
+
+    fn prepare_eventing(&mut self, delivery: Option<HttpEventDelivery<'_>>) -> Result<(), String> {
+        let Some(delivery) = delivery else {
+            return Ok(());
+        };
+        if !self.eventing_opt_in || self.attachment.is_some() {
+            return Err("control owner does not admit transport-local extras".into());
+        }
+        self.attachment = Some(
+            self.client
+                .attach_eventing(delivery._outbox.terminal_fence())
+                .map_err(|_| "owner eventing attachment is unavailable".to_string())?,
+        );
+        Ok(())
     }
 }
 
@@ -524,6 +582,41 @@ impl FsonosLoopback {
             limits,
             None,
             None,
+            (host_incarnation, Box::new(factory)),
+        )
+    }
+
+    /// Start a custom owner-backed control plane with one bounded callback
+    /// outbox. The factory runs on the HTTP worker; it must explicitly admit
+    /// eventing before readiness. No legacy plane is substituted on failure.
+    ///
+    /// # Errors
+    /// As [`Self::start_eventing`], including a factory/attachment refusal.
+    pub fn start_eventing_with_control<F>(
+        session: UnifiedGroupSession,
+        member_id: &str,
+        policy: Policy,
+        limits: LoopbackLimits,
+        target: CallbackTarget,
+        callbacks: CallbackLimits,
+        factory: F,
+    ) -> Result<Self, String>
+    where
+        F: FnOnce(
+                &UnifiedGroupSession,
+                &str,
+                [u8; INCARNATION_BYTES],
+            ) -> Result<Box<dyn HttpControl>, String>
+            + Send
+            + 'static,
+    {
+        Self::start_inner_with(
+            session,
+            member_id,
+            policy,
+            limits,
+            None,
+            Some((target, callbacks)),
             (host_incarnation, Box::new(factory)),
         )
     }
@@ -873,10 +966,18 @@ fn worker_main(
             return;
         }
     };
-    if (extras.described.is_some() || extras.outbox.is_some()) && !plane.supports_extras() {
+    if extras.described.is_some() && !plane.supports_extras() {
         let _ = ready.send(Err(
             "control owner does not admit transport-local extras".into()
         ));
+        return;
+    }
+    let delivery = extras
+        .outbox
+        .as_ref()
+        .map(|outbox| HttpEventDelivery { _outbox: outbox });
+    if let Err(reason) = plane.prepare_eventing(delivery) {
+        let _ = ready.send(Err(reason));
         return;
     }
     // What the group session does not hold, the topology answer reads from the endpoint's directory: where the served member's

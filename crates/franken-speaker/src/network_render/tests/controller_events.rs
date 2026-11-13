@@ -2316,3 +2316,6 @@ mod button_integration;
 
 #[cfg(unix)]
 mod http_integration;
+
+#[cfg(unix)]
+mod http_eventing;

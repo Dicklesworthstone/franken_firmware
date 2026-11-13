@@ -246,9 +246,15 @@ pub(super) struct Outbox {
     max_request_bytes: usize,
     queue: SyncSender<Vec<u8>>,
     report: Arc<Mutex<CallbackReport>>,
+    terminal: Arc<AtomicBool>,
 }
 
 impl Outbox {
+    /// Latches only after the actual delivery loop has ended its socket I/O.
+    /// A stop request or a timed-out join is never a terminal observation.
+    pub(super) fn terminal_fence(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.terminal)
+    }
     /// Whether the `CALLBACK` header `value` (`<url>`) names exactly the allowed callback. Exact string equality: nothing is parsed,
     /// resolved or normalised.
     pub(super) fn allows(&self, value: &str) -> bool {
@@ -310,17 +316,22 @@ impl Deliverer {
         let (queue, jobs) = mpsc::sync_channel::<Vec<u8>>(limits.queue);
         let report = Arc::new(Mutex::new(CallbackReport::default()));
         let stop = Arc::new(AtomicBool::new(false));
+        let terminal = Arc::new(AtomicBool::new(false));
         let addr = target.addr;
         let outbox = Outbox {
             target,
             max_request_bytes: limits.max_request_bytes,
             queue,
             report: Arc::clone(&report),
+            terminal: Arc::clone(&terminal),
         };
         let (for_report, for_stop) = (Arc::clone(&report), Arc::clone(&stop));
         let worker = thread::Builder::new()
             .name("g03-fsonos-callback".to_string())
             .spawn(move || {
+                // Declared before run: unwinding drops socket-owning frames
+                // before this guard can certify that no more writes occur.
+                let _terminal = DeliveryTerminal(terminal);
                 let cause = run(&jobs, addr, limits, &for_stop, &for_report);
                 lock(&for_report).stopped_by = cause;
             })
@@ -357,6 +368,14 @@ impl Deliverer {
         if worker.join().is_err() {
             lock(&self.report).stopped_by = CallbackStop::WorkerPanicked;
         }
+    }
+}
+
+struct DeliveryTerminal(Arc<AtomicBool>);
+
+impl Drop for DeliveryTerminal {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
     }
 }
 
