@@ -2254,6 +2254,159 @@ mod tests {
         assert_eq!(rig.channel.stats().committed, 1);
     }
 
+    fn live_relative_reply_after_intervening_change(group: bool, restart: bool) {
+        let mut rig = Rig::durable();
+        let revision = rig.session.state_revision;
+        let relative = if group {
+            ControlCommand::AdjustGroupVolume { delta: 5 }
+        } else {
+            ControlCommand::AdjustMemberVolume {
+                member_id: "kitchen".to_string(),
+                delta: 5,
+            }
+        };
+        let headers = tailnet_headers(CTL, CTL, 1, EPOCH, Some(revision), relative);
+        let (action, args): (&str, &[(&str, &str)]) = if group {
+            (
+                "SetRelativeGroupVolume",
+                &[("InstanceID", "0"), ("Adjustment", "5")],
+            )
+        } else {
+            ("SetRelativeVolume", &REL5)
+        };
+        let lost = tail(&mut rig, action, args, &headers);
+        assert_eq!(lost.response.status, 200, "{}", lost.response.body);
+        assert!(lost.response.body.contains("<NewVolume>55</NewVolume>"));
+        let after_first = rig.session.state_revision;
+        assert_eq!(after_first, revision + 1);
+
+        let absolute = if group {
+            ControlCommand::SetGroupVolume { volume: 70 }
+        } else {
+            set_volume_command(70)
+        };
+        let later = tailnet_headers(CTL, CTL, 2, EPOCH, Some(after_first), absolute);
+        let changed = if group {
+            tail(
+                &mut rig,
+                "SetGroupVolume",
+                &[("InstanceID", "0"), ("DesiredVolume", "70")],
+                &later,
+            )
+        } else {
+            tail(&mut rig, "SetVolume", &set_volume("70"), &later)
+        };
+        assert_eq!(changed.response.status, 200, "{}", changed.response.body);
+        let current = rig.session.state_revision;
+        assert_eq!(current, after_first + 1);
+        let retry = tail(&mut rig, action, args, &headers);
+        assert_eq!(retry.response.status, 200, "{}", retry.response.body);
+        assert!(retry.response.body.contains("<NewVolume>70</NewVolume>"));
+        assert_eq!(rig.session.state_revision, current);
+        assert_eq!(rig.channel.stats().committed, 2);
+        assert_eq!(
+            if group {
+                rig.session.group_master_volume
+            } else {
+                rig.member("kitchen").0
+            },
+            70
+        );
+
+        if restart {
+            rig.restart_process();
+        } else {
+            rig.now = 31_000 * MS;
+        }
+        let unknown = tail(&mut rig, action, args, &headers);
+        assert_eq!(fault_code(&unknown).as_deref(), Some("801"));
+        assert_eq!(rig.session.state_revision, current);
+        assert_eq!(
+            if group {
+                rig.session.group_master_volume
+            } else {
+                rig.member("kitchen").0
+            },
+            70
+        );
+    }
+
+    #[test]
+    fn player_relative_retry_returns_current_volume_then_expires() {
+        live_relative_reply_after_intervening_change(false, false);
+    }
+
+    #[test]
+    fn group_relative_retry_returns_current_volume_then_expires() {
+        live_relative_reply_after_intervening_change(true, false);
+    }
+
+    #[test]
+    fn player_relative_retry_returns_current_volume_then_restart_is_unknown() {
+        live_relative_reply_after_intervening_change(false, true);
+    }
+
+    #[test]
+    fn group_relative_retry_returns_current_volume_then_restart_is_unknown() {
+        live_relative_reply_after_intervening_change(true, true);
+    }
+
+    #[test]
+    fn relative_retry_returns_current_volume_after_later_command_in_same_step() {
+        let mut rig = Rig::durable();
+        let relative = relative_command(5);
+        let revision = rig.session.state_revision;
+        let headers = tailnet_headers(CTL, CTL, 1, EPOCH, Some(revision), relative.clone());
+        assert!(matches!(
+            rig.channel
+                .submit(0, signed_request(CTL, 1, Some(revision), relative)),
+            SubmitResult::Queued { .. }
+        ));
+        let later = tailnet_headers(CTL, CTL, 2, EPOCH, Some(revision), set_volume_command(70));
+        let changed = tail(&mut rig, "SetVolume", &set_volume("70"), &later);
+        assert_eq!(changed.response.status, 200, "{}", changed.response.body);
+        assert_eq!(rig.member("kitchen").0, 70);
+        let current = rig.session.state_revision;
+        let retry = tail(&mut rig, "SetRelativeVolume", &REL5, &headers);
+        assert_eq!(retry.response.status, 200, "{}", retry.response.body);
+        assert!(retry.response.body.contains("<NewVolume>70</NewVolume>"));
+        assert_eq!(rig.member("kitchen").0, 70);
+        assert_eq!(rig.session.state_revision, current);
+        assert_eq!(rig.channel.stats().committed, 2);
+    }
+
+    #[test]
+    fn current_relative_reply_is_unknown_after_capacity_eviction_and_not_reapplied() {
+        let mut rig = Rig::durable();
+        let mut config = roomy();
+        config.ledger_capacity = 1;
+        let mut channel = ControlChannel::new(admitted_peers(), config).unwrap();
+        let token = AuthorityToken::issue(&rig.session, LEASE_EXPIRY_NS);
+        channel.install_lease(&rig.session, token, 0).unwrap();
+        rig.channel = channel;
+        let revision = rig.session.state_revision;
+        let first = tailnet_headers(CTL, CTL, 1, EPOCH, Some(revision), relative_command(5));
+        let lost = tail(&mut rig, "SetRelativeVolume", &REL5, &first);
+        assert_eq!(lost.response.status, 200, "{}", lost.response.body);
+        assert!(lost.response.body.contains("<NewVolume>55</NewVolume>"));
+        let later = tailnet_headers(
+            CTL,
+            CTL,
+            2,
+            EPOCH,
+            Some(rig.session.state_revision),
+            set_volume_command(70),
+        );
+        let changed = tail(&mut rig, "SetVolume", &set_volume("70"), &later);
+        assert_eq!(changed.response.status, 200, "{}", changed.response.body);
+        let current = rig.session.state_revision;
+        let unknown = tail(&mut rig, "SetRelativeVolume", &REL5, &first);
+        assert_eq!(fault_code(&unknown).as_deref(), Some("801"));
+        assert_eq!(rig.member("kitchen").0, 70);
+        assert_eq!(rig.session.state_revision, current);
+        assert_eq!(rig.channel.stats().committed, 2);
+    }
+
     #[test]
     fn a_tailnet_stop_names_its_time_and_both_are_signed() {
         let mut rig = Rig::new();

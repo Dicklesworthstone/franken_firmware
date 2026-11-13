@@ -474,7 +474,13 @@
         "server::the_planted_adapter_that_reapplies_on_retry_fails_the_one_effect_judge",
         "server::the_planted_adapter_that_answers_success_after_retention_fails_the_retention_judge",
         "server::a_plain_soap_retry_of_a_relative_change_applies_twice_and_that_is_pinned",
-        "server::a_retried_relative_step_with_the_same_command_id_applies_once"
+        "server::a_retried_relative_step_with_the_same_command_id_applies_once",
+        "server::player_relative_retry_returns_current_volume_then_expires",
+        "server::group_relative_retry_returns_current_volume_then_expires",
+        "server::player_relative_retry_returns_current_volume_then_restart_is_unknown",
+        "server::group_relative_retry_returns_current_volume_then_restart_is_unknown",
+        "server::relative_retry_returns_current_volume_after_later_command_in_same_step",
+        "server::current_relative_reply_is_unknown_after_capacity_eviction_and_not_reapplied"
       ]
     },
     {
