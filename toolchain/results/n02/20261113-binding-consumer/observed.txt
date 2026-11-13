@@ -1,0 +1,20 @@
+Selected native output; ANSI removed, private routing paths omitted.
+Captions are supervisor annotations.
+Native30107136981729291: complete affected speaker package.
+test network_render::tests::controller_events::binding_integration::fresh_binding_member_profile_and_role_mismatches_refuse_before_start ... ok
+test network_render::tests::controller_events::binding_integration::fresh_stored_binding_and_absence_both_reach_join_and_protected_pcm ... ok
+test result: ok. 587 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 56.96s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.24s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.31s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Native30107136981729292: strict workspace all-target Clippy.
+    Finished `dev` profile [unoptimized] target(s) in 1m 06s
+Native receipt command_exit_code: 0; terminal ACK and custody checked separately.
