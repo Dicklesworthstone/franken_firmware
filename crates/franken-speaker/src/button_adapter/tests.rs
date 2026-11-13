@@ -405,7 +405,7 @@ fn losing_the_button_device_never_unmutes_and_is_not_a_release() {
     assert!(a.poll(100_000).is_empty());
     assert_eq!(a.stats().channel_resets, 1);
 
-    // A faulted channel is the same, and a first press after it acts (the repeat clock is forgotten too).
+    // Repeated faults cannot turn an uncertain held press into a new press.
     assert_eq!(
         a.on_event(ChannelEvent::Faulted { at: 4_000 }, &mut m),
         ButtonAction::ChannelReset
@@ -413,6 +413,12 @@ fn losing_the_button_device_never_unmutes_and_is_not_a_release() {
     assert!(m.persisted().local_mute);
     assert_eq!(
         a.on_event(down(MUTE, 4_001), &mut m),
+        ButtonAction::Ignored(IgnoredButton::AwaitingRelease)
+    );
+    assert!(m.persisted().local_mute);
+    a.on_event(up(MUTE, 4_002), &mut m);
+    assert_eq!(
+        a.on_event(down(MUTE, 4_003), &mut m),
         ButtonAction::LocalMute {
             muted: false,
             effective_mute: None
@@ -436,6 +442,179 @@ fn a_fault_that_is_not_a_button_is_ignored() {
     assert_eq!(a.stats().other_events, 2);
     assert!(!m.persisted().local_mute);
     assert_eq!(m.trim_permille(), 1_000);
+}
+
+#[test]
+fn actual_hal_fault_reset_requires_release_before_a_held_mute_can_unmute() {
+    fn fault_and_reset(rig: &mut Rig, adapter: &mut ButtonAdapter, member: &mut MemberVolume) {
+        use franken_hal::events::{ChannelState, SYNC};
+        let bad_kind = [SYNC, 9, 0, 0, 0, 0, 0, 0];
+        rig.probe.push_chunk(bad_kind.repeat(3));
+        rig.wait(1);
+        assert_eq!(rig.channel.channel_state(), ChannelState::Faulted);
+        let events = rig.drain();
+        assert_eq!(events.len(), 1, "one actual fault: {events:?}");
+        assert!(matches!(events[0], ChannelEvent::Faulted { .. }));
+        assert_eq!(
+            adapter.on_event(events[0], member),
+            ButtonAction::ChannelReset
+        );
+        assert!(rig.channel.reset());
+    }
+
+    for previously_observed_down in [true, false] {
+        let mut rig = Rig::new();
+        let mut adapter = adapter();
+        let mut member = member();
+        if previously_observed_down {
+            assert!(matches!(
+                rig.press_into(MUTE, &mut adapter, &mut member),
+                ButtonAction::LocalMute { muted: true, .. }
+            ));
+        } else {
+            // The mute was already set; a press can begin during the outage.
+            // No pre-fault Down exists to identify that held button.
+            member.local_mute(true);
+        }
+        fault_and_reset(&mut rig, &mut adapter, &mut member);
+        for _ in 0..2 {
+            assert_eq!(
+                rig.press_into(MUTE, &mut adapter, &mut member),
+                ButtonAction::Ignored(IgnoredButton::AwaitingRelease)
+            );
+            assert!(member.persisted().local_mute);
+            assert_eq!(member.effective_mute(), Some(MuteReason::Local));
+            assert_eq!(member.trim_permille(), 1_000);
+            assert!(adapter.poll(rig.tick + 100_000).is_empty());
+            fault_and_reset(&mut rig, &mut adapter, &mut member);
+        }
+        // An independent previously-up volume button remains useful.
+        assert!(matches!(
+            rig.press_into(UP, &mut adapter, &mut member),
+            ButtonAction::TrimStep {
+                trim_permille: 1_100,
+                ..
+            }
+        ));
+        assert!(member.persisted().local_mute);
+        rig.wait(20);
+        rig.release_into(MUTE, &mut adapter, &mut member);
+        assert!(matches!(
+            rig.press_into(MUTE, &mut adapter, &mut member),
+            ButtonAction::LocalMute { muted: false, .. }
+        ));
+        assert!(!member.persisted().local_mute);
+        assert_eq!(adapter.stats().awaiting_release, 2);
+        eprintln!(
+            "G02_BUTTON_RECOVERY observed_down={previously_observed_down} stats={:?} trim={}",
+            adapter.stats(),
+            member.trim_permille()
+        );
+    }
+    for mute_set_during_outage in [true, false] {
+        let mut rig = Rig::new();
+        let mut adapter = adapter();
+        let mut member = member();
+        fault_and_reset(&mut rig, &mut adapter, &mut member);
+        if mute_set_during_outage {
+            member.local_mute(true);
+        }
+        let action = rig.press_into(MUTE, &mut adapter, &mut member);
+        if mute_set_during_outage {
+            assert_eq!(
+                action,
+                ButtonAction::Ignored(IgnoredButton::AwaitingRelease)
+            );
+        } else {
+            assert!(matches!(
+                action,
+                ButtonAction::LocalMute { muted: true, .. }
+            ));
+        }
+        assert!(member.persisted().local_mute);
+        fault_and_reset(&mut rig, &mut adapter, &mut member);
+        assert_eq!(
+            rig.press_into(MUTE, &mut adapter, &mut member),
+            ButtonAction::Ignored(IgnoredButton::AwaitingRelease)
+        );
+        assert!(member.persisted().local_mute);
+        rig.wait(20);
+        rig.release_into(MUTE, &mut adapter, &mut member);
+        assert!(matches!(
+            rig.press_into(MUTE, &mut adapter, &mut member),
+            ButtonAction::LocalMute { muted: false, .. }
+        ));
+        assert!(!member.persisted().local_mute);
+        eprintln!(
+            "G02_BUTTON_RECOVERY late_mute={mute_set_during_outage} stats={:?}",
+            adapter.stats()
+        );
+    }
+}
+
+#[test]
+fn unknown_and_repeated_fault_preserve_release_and_repeat_guards() {
+    let mut adapter = adapter();
+    let mut member = member();
+    assert!(matches!(
+        adapter.on_event(down(UP, 100), &mut member),
+        ButtonAction::TrimStep { .. }
+    ));
+    assert_eq!(
+        adapter.on_event(changed(UP, ButtonState::Unknown, 101), &mut member),
+        ButtonAction::Ignored(IgnoredButton::UnknownState)
+    );
+    adapter.on_event(ChannelEvent::Faulted { at: 102 }, &mut member);
+    adapter.on_event(ChannelEvent::Lost { at: 103 }, &mut member);
+    assert_eq!(
+        adapter.on_event(down(UP, 104), &mut member),
+        ButtonAction::Ignored(IgnoredButton::AwaitingRelease)
+    );
+    assert_eq!(member.trim_permille(), 1_100);
+    adapter.on_event(up(UP, 105), &mut member);
+    assert_eq!(
+        adapter.on_event(down(UP, 106), &mut member),
+        ButtonAction::Ignored(IgnoredButton::TooSoonAfterLastPress)
+    );
+    adapter.on_event(up(UP, 107), &mut member);
+    assert!(matches!(
+        adapter.on_event(down(UP, 110), &mut member),
+        ButtonAction::TrimStep {
+            trim_permille: 1_200,
+            ..
+        }
+    ));
+    assert_eq!(adapter.stats().awaiting_release, 1);
+    for uncertain in [
+        ChannelEvent::Lost { at: 1 },
+        ChannelEvent::Faulted { at: 1 },
+        changed(MUTE, ButtonState::Unknown, 1),
+    ] {
+        let mut adapter = super::ButtonAdapter::new(map(), bounds());
+        let mut member = super::MemberVolume::new(1.0);
+        adapter.on_event(uncertain, &mut member);
+        assert!(matches!(
+            adapter.on_event(down(MUTE, 100), &mut member),
+            ButtonAction::LocalMute { muted: true, .. }
+        ));
+        assert_eq!(
+            adapter.on_event(down(MUTE, 200), &mut member),
+            ButtonAction::Ignored(IgnoredButton::AwaitingRelease)
+        );
+        assert!(member.persisted().local_mute);
+        adapter.on_event(up(MUTE, 201), &mut member);
+        assert!(matches!(
+            adapter.on_event(down(MUTE, 210), &mut member),
+            ButtonAction::LocalMute { muted: false, .. }
+        ));
+        adapter.on_event(uncertain, &mut member);
+        member.local_mute(true);
+        assert_eq!(
+            adapter.on_event(down(MUTE, 300), &mut member),
+            ButtonAction::Ignored(IgnoredButton::AwaitingRelease)
+        );
+        assert!(member.persisted().local_mute);
+    }
 }
 
 // ---- authority and configuration -------------------------------------------------------------------------------------
@@ -802,6 +981,7 @@ struct ModelPress {
     down_at: Option<u64>,
     last_applied: Option<u64>,
     stuck: bool,
+    require_release: bool,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -824,6 +1004,7 @@ fn kind_of(action: ButtonAction) -> Kind {
         ButtonAction::Ignored(IgnoredButton::Unmapped) => Kind::Ignored("unmapped"),
         ButtonAction::Ignored(IgnoredButton::TooSoonAfterLastPress) => Kind::Ignored("too_soon"),
         ButtonAction::Ignored(IgnoredButton::WhileStuck) => Kind::Ignored("while_stuck"),
+        ButtonAction::Ignored(IgnoredButton::AwaitingRelease) => Kind::Ignored("awaiting_release"),
         ButtonAction::Ignored(IgnoredButton::NotAButtonEvent) => Kind::Ignored("not_a_button"),
         ButtonAction::Refused(_) => Kind::Ignored("refused"),
         ButtonAction::ChannelReset => Kind::Reset,
@@ -866,12 +1047,15 @@ fn over_random_events_cloud_commands_and_rejoins_the_adapter_matches_a_plain_mod
                             Kind::Ignored("unmapped")
                         }
                         (role, ButtonState::Unknown) => {
+                            model[role].require_release |=
+                                model[role].down_at.is_some() || model[role].stuck || role == 0;
                             model[role].down_at = None;
                             model[role].stuck = false;
                             tally[4] += 1;
                             Kind::Ignored("unknown")
                         }
                         (role, ButtonState::Up) => {
+                            model[role].require_release = false;
                             let was_stuck = model[role].stuck;
                             model[role].down_at = None;
                             model[role].stuck = false;
@@ -882,7 +1066,9 @@ fn over_random_events_cloud_commands_and_rejoins_the_adapter_matches_a_plain_mod
                             })
                         }
                         (role, ButtonState::Down) => {
-                            if model[role].stuck {
+                            if model[role].require_release && (role != 0 || local_mute) {
+                                Kind::Ignored("awaiting_release")
+                            } else if model[role].stuck {
                                 tally[3] += 1;
                                 Kind::Ignored("while_stuck")
                             } else {
@@ -962,7 +1148,12 @@ fn over_random_events_cloud_commands_and_rejoins_the_adapter_matches_a_plain_mod
                         assert_eq!(got, Kind::Ignored("not_a_button"), "{context}");
                     } else {
                         assert_eq!(got, Kind::Reset, "{context}");
-                        model = [ModelPress::default(); 3];
+                        for (role, press) in model.iter_mut().enumerate() {
+                            press.require_release |=
+                                press.down_at.is_some() || press.stuck || role == 0;
+                            press.down_at = None;
+                            press.stuck = false;
+                        }
                         tally[6] += 1;
                     }
                 }

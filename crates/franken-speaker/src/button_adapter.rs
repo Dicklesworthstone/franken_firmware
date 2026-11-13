@@ -43,8 +43,11 @@
 //! # Device loss
 //!
 //! [`ChannelEvent::Lost`] and [`ChannelEvent::Faulted`] leave every HAL button `Unknown`, which is not `Up`. The
-//! adapter forgets which buttons it saw pressed, **changes nothing else**, and in particular never unmutes: a room
-//! whose button device vanished stays as muted as it was.
+//! adapter forgets down/stuck timing but retains repeat history and requires a debounced `Up` before a previously
+//! held button can act again. The mute button stays uncertain until an observed release: a press that began during
+//! the outage cannot be distinguished from a new press. An uncertain Down may still mute an unmuted room, but it
+//! cannot unmute, including when another local control set mute during the outage. This may require releasing once
+//! after recovery even if a release occurred unseen. Other known-up buttons remain usable; loss never unmutes.
 //!
 //! Numerical and host tests do not prove a physical button; nothing here touches a device.
 
@@ -180,6 +183,8 @@ pub enum IgnoredButton {
     TooSoonAfterLastPress,
     /// A `Down` while the button is flagged stuck.
     WhileStuck,
+    /// A held or uncertain button must be observed released after channel recovery.
+    AwaitingRelease,
     /// An LED or device fault: not a button.
     NotAButtonEvent,
 }
@@ -203,7 +208,7 @@ pub enum ButtonAction {
     /// The member refused the trim step. Cannot happen with a validated [`ButtonBounds`]; kept typed instead of
     /// unwrapped.
     Refused(VolumeError),
-    /// The channel was lost or faulted: pressed-button bookkeeping was forgotten, and nothing else changed.
+    /// The channel was lost or faulted: held buttons await release; member intent is unchanged.
     ChannelReset,
 }
 
@@ -217,6 +222,7 @@ pub struct ButtonStats {
     pub unmapped: u32,
     pub too_soon: u32,
     pub while_stuck: u32,
+    pub awaiting_release: u32,
     pub stuck_detected: u32,
     pub channel_resets: u32,
     pub other_events: u32,
@@ -229,12 +235,14 @@ struct Press {
     /// The tick of the last press that was applied.
     last_applied_at: Option<u64>,
     stuck: bool,
+    require_release: bool,
 }
 
 const IDLE: Press = Press {
     down_at: None,
     last_applied_at: None,
     stuck: false,
+    require_release: false,
 };
 
 /// Turns debounced HAL button events into local mute and local trim on one member.
@@ -265,6 +273,7 @@ impl ButtonAdapter {
                 unmapped: 0,
                 too_soon: 0,
                 while_stuck: 0,
+                awaiting_release: 0,
                 stuck_detected: 0,
                 channel_resets: 0,
                 other_events: 0,
@@ -277,8 +286,15 @@ impl ButtonAdapter {
         match event {
             ChannelEvent::ButtonChanged { id, state, at } => self.on_button(id, state, at, member),
             ChannelEvent::Lost { .. } | ChannelEvent::Faulted { .. } => {
-                // Every HAL button is now Unknown, which is not Up. Forget what was pressed; touch nothing else.
-                self.presses = [IDLE; 3];
+                // Unknown is not a release. Preserve the latch across repeated
+                // faults and protect a muted room from a press begun unseen.
+                for role in ButtonRole::ALL {
+                    let press = &mut self.presses[role.index()];
+                    press.require_release |=
+                        press.down_at.is_some() || press.stuck || role == ButtonRole::Mute;
+                    press.down_at = None;
+                    press.stuck = false;
+                }
                 bump(&mut self.stats.channel_resets);
                 ButtonAction::ChannelReset
             }
@@ -304,6 +320,8 @@ impl ButtonAdapter {
         let mut press = self.presses[slot];
         match state {
             ButtonState::Unknown => {
+                press.require_release |=
+                    press.down_at.is_some() || press.stuck || role == ButtonRole::Mute;
                 press.down_at = None;
                 press.stuck = false;
                 self.presses[slot] = press;
@@ -311,6 +329,7 @@ impl ButtonAdapter {
                 ButtonAction::Ignored(IgnoredButton::UnknownState)
             }
             ButtonState::Up => {
+                press.require_release = false;
                 press.down_at = None;
                 let was_stuck = press.stuck;
                 press.stuck = false;
@@ -323,6 +342,12 @@ impl ButtonAdapter {
                 }
             }
             ButtonState::Down => {
+                if press.require_release
+                    && (role != ButtonRole::Mute || member.persisted().local_mute)
+                {
+                    bump(&mut self.stats.awaiting_release);
+                    return ButtonAction::Ignored(IgnoredButton::AwaitingRelease);
+                }
                 if press.stuck {
                     bump(&mut self.stats.while_stuck);
                     return ButtonAction::Ignored(IgnoredButton::WhileStuck);
