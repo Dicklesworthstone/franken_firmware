@@ -7,7 +7,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::{
-    NetworkRender, NetworkRenderAdmission, NetworkRenderError, OwnerStep, PreparedPcm, TickMapping,
+    FinalFeedbackConfig, FinalFeedbackOutcome, NetworkRender, NetworkRenderAdmission,
+    NetworkRenderError, OwnerStep, PreparedPcm, TickMapping,
 };
 use franken_clock::group::{GroupClock, GroupClockConfig, ProbeResponse, StartSchedule};
 use franken_dsp::StereoAudioBlock;
@@ -22,7 +23,9 @@ use franken_hal::slots::LeakLedger;
 use franken_platform::abi::Abi;
 use franken_platform::layer::PlatformLayer;
 use franken_platform::ops::{KernelOps, Provenance, Timespec};
-use franken_stream::carrier::{CarrierReceiver, HostUdp, ReceiverLimits};
+use franken_stream::carrier::{
+    CarrierLimits, CarrierReceiver, CarrierSender, HostUdp, ReceiverLimits,
+};
 use franken_stream::playout::{
     BLOCK_FRAMES, BLOCK_PAYLOAD_BYTES, Decision, Outcome, PlayoutConfig, PlayoutProfile,
     frames_to_ns,
@@ -31,7 +34,7 @@ use franken_stream::{OutboundFrame, StreamId, StreamKey, StreamReceiver, StreamS
 
 use crate::media_playout::{MediaPlayout, PreparedBlock, Release, synthetic_ledger};
 use crate::net_carrier::MediaEndpoint;
-use crate::render::{RenderConfig, RenderLoop, ScriptedTiming};
+use crate::render::{RenderConfig, RenderLoop, RenderState, ScriptedTiming};
 
 const RENDER_FRAMES: usize = 64;
 const CLOCK_ORIGIN: u64 = 100_000_000_000;
@@ -39,6 +42,7 @@ const CLOCK_ORIGIN: u64 = 100_000_000_000;
 struct TestKernel {
     now: Rc<Cell<u64>>,
     fail: Rc<Cell<bool>>,
+    advance_after_read_ns: Rc<Cell<u64>>,
 }
 
 impl KernelOps for TestKernel {
@@ -55,6 +59,10 @@ impl KernelOps for TestKernel {
         let now = self.now.get();
         out.secs = i64::try_from(now / 1_000_000_000).unwrap();
         out.nanos = i64::try_from(now % 1_000_000_000).unwrap();
+        self.now.set(
+            now.checked_add(self.advance_after_read_ns.get())
+                .expect("test clock advance overflow"),
+        );
         0
     }
     fn getrandom(&mut self, _buf: &mut [u8], _flags: u32) -> isize {
@@ -167,6 +175,7 @@ fn network_with_authority(authority_after_start_ns: u64) -> NetworkFixture {
     let kernel = TestKernel {
         now: Rc::clone(&now),
         fail: Rc::clone(&fail),
+        advance_after_read_ns: Rc::new(Cell::new(0)),
     };
     let matrix = crate::guest_evidence::for_abi(Abi::PowerPc32).matrix();
     let platform = crate::platform_start::admit_test_layer(&matrix, kernel).unwrap();
@@ -1784,3 +1793,660 @@ fn exhausted_source_rejects_controls_without_interrupting_scheduled_eof() {
 
 #[cfg(unix)]
 mod controller_events;
+
+fn feedback_config() -> FinalFeedbackConfig {
+    FinalFeedbackConfig {
+        interval_ns: 10_000_000,
+        grace_ns: 500_000_000,
+        max_reports: 2,
+    }
+}
+
+fn complete_finite_feedback_owner(rig: &mut RunningFixture) {
+    let mut timing = ScriptedTiming {
+        default_cost: 1,
+        ..ScriptedTiming::default()
+    };
+    for step in 0..5000_u64 {
+        rig.now
+            .set(rig.start_local_ns - 15_000_000 + step * 100_000);
+        if matches!(rig.owner.step(&mut timing).unwrap(), OwnerStep::Complete) {
+            assert_eq!(rig.owner.render_state(), RenderState::Stopped);
+            assert!(rig.owner.render.stop_report().acknowledged);
+            return;
+        }
+    }
+    panic!("finite owner did not complete its actual drain");
+}
+
+fn feed_one_finite_block(rig: &mut RunningFixture) {
+    let wire = packet(&mut rig.sender, 0, rig.start_group_ns, 64);
+    rig.socket.send_to(&wire, rig.address).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let report = rig.owner.poll().unwrap();
+        if report.media_accepted == 1 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "receiver did not consume media"
+        );
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn final_feedback_recovers_real_lost_credit_after_natural_drain() {
+    let mut rig = running(64);
+    rig.probe.set_lose_completions(true);
+    rig.owner.enable_final_feedback(feedback_config()).unwrap();
+    assert_eq!(
+        rig.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::NotDue
+    );
+    let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    let relay = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    relay
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    let mut sender = CarrierSender::bind(
+        StreamKey::from_bytes([0x42; 32]),
+        StreamId::new(0x5EED_5EED_0000_0001).unwrap(),
+        1,
+        CarrierLimits::baseline(),
+        ip,
+    )
+    .unwrap();
+    let receiver_control = relay.local_addr().unwrap();
+    rig.owner
+        .endpoint
+        .carrier_mut()
+        .set_sender_control(receiver_control);
+    sender
+        .add_peer(7, rig.address, receiver_control, 1500)
+        .unwrap();
+    let pts = rig.start_group_ns;
+    let frame = OutboundFrame::media(0, pts, pts - 5_333_333, signal(0, 64));
+    assert_eq!(sender.submit_media(1, &frame, 0).unwrap().queued, 1);
+    assert_eq!(sender.pump(0).media_sent, 1);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if rig.owner.poll().unwrap().media_accepted == 1 {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(rig.owner.endpoint.carrier().consumed_next(), 1);
+    rig.owner.report().unwrap();
+    let mut first = [0_u8; 128];
+    let (first_len, _) = relay.recv_from(&mut first).unwrap(); // drop genuine final report
+    assert_eq!(sender.peer_view(7).unwrap().in_flight, 1);
+    let mut timing = ScriptedTiming {
+        default_cost: 1,
+        ..ScriptedTiming::default()
+    };
+    let mut natural_drain = false;
+    for step in 0..5000_u64 {
+        rig.now
+            .set(rig.start_local_ns - 15_000_000 + step * 100_000);
+        rig.owner.step(&mut timing).unwrap();
+        if rig.owner.complete && rig.owner.render_state() == RenderState::Draining {
+            natural_drain = true;
+            break;
+        }
+    }
+    assert!(natural_drain);
+    let retained = rig.probe.pending();
+    assert!(
+        retained > 0,
+        "actual backend buffers await the flush acknowledgment"
+    );
+    assert!(!rig.owner.render.stop_report().acknowledged);
+    let captures = rig.probe.captured_submissions();
+    assert!(!captures.is_empty());
+    assert!(matches!(rig.owner.report(), Err(NetworkRenderError::Ended)));
+    let media_read = rig.owner.endpoint.carrier().stats().media_read;
+    assert_eq!(
+        rig.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Sent
+    );
+    let mut retry = [0_u8; 128];
+    let (retry_len, _) = relay.recv_from(&mut retry).unwrap();
+    assert_eq!(&retry[..retry_len], &first[..first_len]);
+    relay
+        .send_to(&retry[..retry_len], sender.control_addr().unwrap())
+        .unwrap();
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        sender.poll_reports();
+        if sender.peer_view(7).unwrap().reported_next == 1 {
+            break;
+        }
+        assert!(std::time::Instant::now() < until);
+        std::thread::yield_now();
+    }
+    assert_eq!(sender.peer_view(7).unwrap().in_flight, 0);
+    assert_eq!(
+        rig.probe.pending(),
+        retained,
+        "credit does not acknowledge HAL stop"
+    );
+    assert_eq!(
+        rig.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::NotDue
+    );
+    let late = packet(&mut rig.sender, 0, rig.start_group_ns, 64);
+    rig.socket.send_to(&late, rig.address).unwrap();
+    assert!(matches!(rig.owner.poll(), Err(NetworkRenderError::Ended)));
+    assert_eq!(rig.owner.endpoint.carrier().stats().media_read, media_read);
+    assert_eq!(rig.probe.captured_submissions(), captures);
+    let mut stopped = false;
+    for _ in 0..20 {
+        rig.now.set(rig.now.get() + 100_000);
+        if matches!(rig.owner.step(&mut timing).unwrap(), OwnerStep::Complete) {
+            stopped = true;
+            break;
+        }
+    }
+    assert!(stopped);
+    assert!(rig.owner.render.stop_report().acknowledged);
+    assert_eq!(rig.probe.pending(), 0);
+    rig.now.set(rig.now.get() + 12_000_000);
+    assert_eq!(
+        rig.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Sent
+    );
+    assert_eq!(
+        rig.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Expired
+    );
+    assert_eq!(
+        rig.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Expired
+    );
+}
+
+#[test]
+fn final_feedback_is_bounded_and_explicit_stop_is_irrevocable() {
+    let mut disabled = running(64);
+    assert_eq!(
+        disabled.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Disabled
+    );
+    for config in [
+        FinalFeedbackConfig {
+            interval_ns: 0,
+            ..feedback_config()
+        },
+        FinalFeedbackConfig {
+            interval_ns: 1_000_000_001,
+            ..feedback_config()
+        },
+        FinalFeedbackConfig {
+            grace_ns: 9_999_999,
+            ..feedback_config()
+        },
+        FinalFeedbackConfig {
+            grace_ns: 5_000_000_001,
+            ..feedback_config()
+        },
+        FinalFeedbackConfig {
+            max_reports: 0,
+            ..feedback_config()
+        },
+        FinalFeedbackConfig {
+            max_reports: 17,
+            ..feedback_config()
+        },
+    ] {
+        assert!(matches!(
+            disabled.owner.enable_final_feedback(config),
+            Err(NetworkRenderError::Configuration)
+        ));
+    }
+    disabled
+        .owner
+        .enable_final_feedback(feedback_config())
+        .unwrap();
+    assert!(matches!(
+        disabled.owner.enable_final_feedback(feedback_config()),
+        Err(NetworkRenderError::Configuration)
+    ));
+    disabled.owner.cancel().unwrap();
+    assert_eq!(
+        disabled.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Disabled
+    );
+    assert!(matches!(
+        disabled.owner.enable_final_feedback(feedback_config()),
+        Err(NetworkRenderError::Configuration)
+    ));
+
+    let mut revoked = running(64);
+    revoked
+        .owner
+        .enable_final_feedback(feedback_config())
+        .unwrap();
+    revoked.owner.revoke_final_feedback();
+    revoked.owner.revoke_final_feedback();
+    assert_eq!(
+        revoked.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Disabled
+    );
+    assert!(matches!(
+        revoked.owner.enable_final_feedback(feedback_config()),
+        Err(NetworkRenderError::Configuration)
+    ));
+
+    let mut complete = running(64);
+    complete
+        .owner
+        .enable_final_feedback(feedback_config())
+        .unwrap();
+    feed_one_finite_block(&mut complete);
+    complete_finite_feedback_owner(&mut complete);
+    assert!(complete.owner.complete);
+    complete.owner.cancel().unwrap(); // Explicit cancel after natural completion also revokes.
+    assert!(complete.owner.complete);
+    assert_eq!(
+        complete.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Disabled
+    );
+    assert!(matches!(
+        complete.owner.enable_final_feedback(feedback_config()),
+        Err(NetworkRenderError::Configuration)
+    ));
+}
+
+#[test]
+fn final_feedback_expiry_epoch_and_clock_fault_fail_closed() {
+    let mut expired = running(64);
+    expired
+        .owner
+        .enable_final_feedback(FinalFeedbackConfig {
+            interval_ns: 10_000_000,
+            grace_ns: 30_000_000,
+            max_reports: 2,
+        })
+        .unwrap();
+    feed_one_finite_block(&mut expired);
+    complete_finite_feedback_owner(&mut expired);
+    expired.now.set(expired.now.get() + 40_000_000);
+    assert_eq!(
+        expired.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Expired
+    );
+    assert_eq!(
+        expired.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Expired
+    );
+
+    let mut stale = running(64);
+    stale
+        .owner
+        .enable_final_feedback(feedback_config())
+        .unwrap();
+    feed_one_finite_block(&mut stale);
+    complete_finite_feedback_owner(&mut stale);
+    stale.owner.clock.begin_epoch(2, 8).unwrap();
+    assert!(matches!(
+        stale.owner.final_feedback(),
+        Err(NetworkRenderError::Clock)
+    ));
+    assert_eq!(
+        stale.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Disabled
+    );
+
+    let mut authority = running_with_authority(64, 0, 10_000_000);
+    authority
+        .owner
+        .enable_final_feedback(feedback_config())
+        .unwrap();
+    feed_one_finite_block(&mut authority);
+    complete_finite_feedback_owner(&mut authority);
+    authority.now.set(authority.start_local_ns + 10_000_000);
+    assert!(matches!(
+        authority.owner.final_feedback(),
+        Err(NetworkRenderError::Clock)
+    ));
+    assert_eq!(
+        authority.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Disabled
+    );
+
+    let mut faulty = running(64);
+    faulty
+        .owner
+        .enable_final_feedback(feedback_config())
+        .unwrap();
+    feed_one_finite_block(&mut faulty);
+    complete_finite_feedback_owner(&mut faulty);
+    faulty.fail.set(true);
+    assert!(matches!(
+        faulty.owner.final_feedback(),
+        Err(NetworkRenderError::Clock)
+    ));
+    assert_eq!(
+        faulty.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Disabled
+    );
+}
+
+#[test]
+fn final_feedback_is_revoked_on_natural_drain_fault() {
+    let mut rig = running_with_policy(64, 0, 2_000_000_000, true);
+    rig.owner.enable_final_feedback(feedback_config()).unwrap();
+    rig.probe.set_lose_completions(true);
+    feed_one_finite_block(&mut rig);
+    let mut timing = ScriptedTiming {
+        default_cost: 1,
+        ..ScriptedTiming::default()
+    };
+    let mut failed = false;
+    for step in 0..5000_u64 {
+        rig.now
+            .set(rig.start_local_ns - 15_000_000 + step * 100_000);
+        match rig.owner.step(&mut timing) {
+            Err(NetworkRenderError::Preparation) => {
+                failed = true;
+                break;
+            }
+            Err(other) => panic!("unexpected drain error: {other:?}"),
+            Ok(OwnerStep::Complete) => panic!("unacknowledged flush cannot complete"),
+            Ok(OwnerStep::Waiting | OwnerStep::Tick(_)) => {}
+        }
+    }
+    assert!(failed);
+    assert_eq!(rig.owner.render_state(), RenderState::Faulted);
+    assert!(
+        rig.owner.complete,
+        "fault followed the natural EOF transition"
+    );
+    assert_eq!(
+        rig.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Disabled
+    );
+    assert!(matches!(
+        rig.owner.enable_final_feedback(feedback_config()),
+        Err(NetworkRenderError::Configuration)
+    ));
+}
+
+#[test]
+fn final_feedback_revokes_real_early_render_fault_before_completion() {
+    use franken_hal::backend::{DriverError, Op};
+
+    let mut faulted = running(64);
+    faulted
+        .owner
+        .enable_final_feedback(feedback_config())
+        .unwrap();
+    assert_eq!(
+        faulted.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::NotDue
+    );
+    // Exercise the actual backend failure before NetworkRender's normal error
+    // handler, so the final-feedback guard itself sees a live faulted renderer.
+    faulted.probe.fail_next(Op::Start, DriverError::Errno(5));
+    assert!(
+        faulted
+            .owner
+            .render
+            .start(StartPreconditions {
+                presentation_mapping_installed: true,
+                safe_gain_installed: true,
+            })
+            .is_err()
+    );
+    assert_eq!(faulted.owner.render_state(), RenderState::Faulted);
+    assert!(!faulted.owner.complete);
+    assert!(faulted.owner.final_feedback.is_some());
+    let before = faulted.owner.endpoint.carrier().stats().reports_sent;
+    assert_eq!(
+        faulted.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Disabled
+    );
+    assert!(faulted.owner.final_feedback.is_none());
+    assert_eq!(
+        faulted.owner.endpoint.carrier().stats().reports_sent,
+        before
+    );
+    assert!(matches!(
+        faulted.owner.enable_final_feedback(feedback_config()),
+        Err(NetworkRenderError::Configuration)
+    ));
+
+    // The ordinary owner path independently revokes on a pre-completion clock fault.
+    let mut clock_fault = running(64);
+    clock_fault
+        .owner
+        .enable_final_feedback(feedback_config())
+        .unwrap();
+    clock_fault.fail.set(true);
+    assert!(matches!(
+        clock_fault.owner.poll(),
+        Err(NetworkRenderError::Clock)
+    ));
+    assert!(!clock_fault.owner.complete);
+    assert_eq!(
+        clock_fault.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Disabled
+    );
+
+    let mut healthy = running(64);
+    healthy
+        .owner
+        .enable_final_feedback(feedback_config())
+        .unwrap();
+    assert_eq!(
+        healthy.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::NotDue
+    );
+}
+
+#[test]
+fn final_feedback_grace_uses_actual_n03_lower_bound_and_excludes_boundary() {
+    let mut rig = running(64);
+    let config = FinalFeedbackConfig {
+        interval_ns: 10_000_000,
+        grace_ns: 30_000_000,
+        max_reports: 2,
+    };
+    rig.owner.enable_final_feedback(config).unwrap();
+    let relay = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    relay
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    rig.owner
+        .endpoint
+        .carrier_mut()
+        .set_sender_control(relay.local_addr().unwrap());
+    feed_one_finite_block(&mut rig);
+    let mut timing = ScriptedTiming {
+        default_cost: 1,
+        ..ScriptedTiming::default()
+    };
+    let mut transition = None;
+    let mut stopped = false;
+    for step in 0..5000_u64 {
+        let local = rig.start_local_ns - 15_000_000 + step * 100_000;
+        rig.now.set(local);
+        let outcome = rig.owner.step(&mut timing).unwrap();
+        if rig.owner.complete && transition.is_none() {
+            let center = rig.owner.clock.group_ns(local).unwrap();
+            let uncertainty = rig.owner.clock.report(local).uncertainty_ns.unwrap();
+            assert!(uncertainty > 0, "the actual N03 bound must be nonzero");
+            transition = Some((center, uncertainty));
+        }
+        if matches!(outcome, OwnerStep::Complete) {
+            stopped = true;
+            break;
+        }
+    }
+    assert!(stopped);
+    let (initial_center, initial_uncertainty) = transition.unwrap();
+    let deadline = rig
+        .owner
+        .final_feedback
+        .as_ref()
+        .unwrap()
+        .deadline_ns
+        .unwrap();
+    assert_eq!(
+        deadline,
+        initial_center.checked_sub(initial_uncertainty).unwrap() + config.grace_ns
+    );
+    let old_midpoint_deadline = initial_center + config.grace_ns;
+    let latest_at = |local: u64| {
+        rig.owner.clock.group_ns(local).unwrap()
+            + rig.owner.clock.report(local).uncertainty_ns.unwrap()
+    };
+    let mut inside = rig.now.get();
+    let mut outside = inside + 40_000_000;
+    assert!(latest_at(inside) < deadline);
+    assert!(latest_at(outside) >= deadline);
+    // Find adjacent actual local instants straddling the conservative bound.
+    while inside + 1 < outside {
+        let mid = inside + (outside - inside) / 2;
+        if latest_at(mid) < deadline {
+            inside = mid;
+        } else {
+            outside = mid;
+        }
+    }
+    assert!(latest_at(inside) < deadline);
+    assert!(latest_at(outside) >= deadline);
+    assert!(
+        latest_at(outside) < old_midpoint_deadline,
+        "the rejected midpoint anchor would have allowed the outside report"
+    );
+    rig.now.set(inside);
+    assert_eq!(
+        rig.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Sent
+    );
+    let mut wire = [0_u8; 128];
+    let (len, _) = relay.recv_from(&mut wire).unwrap();
+    assert!(len > 0);
+    let sent = rig.owner.endpoint.carrier().stats().reports_sent;
+    rig.now.set(outside);
+    assert_eq!(
+        rig.owner.final_feedback().unwrap(),
+        FinalFeedbackOutcome::Expired
+    );
+    assert_eq!(rig.owner.endpoint.carrier().stats().reports_sent, sent);
+    relay.set_nonblocking(true).unwrap();
+    assert_eq!(
+        relay.recv_from(&mut wire).unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    assert!(matches!(
+        rig.owner.enable_final_feedback(config),
+        Err(NetworkRenderError::Configuration)
+    ));
+}
+
+#[test]
+fn final_feedback_grace_arithmetic_extremes_permanently_revoke() {
+    for view in [
+        franken_stream::playout::ClockView {
+            group_ns: 1,
+            uncertainty_ns: 2,
+            usable: true,
+        },
+        franken_stream::playout::ClockView {
+            group_ns: u64::MAX - 1,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    ] {
+        let mut rig = running(64);
+        rig.owner.enable_final_feedback(feedback_config()).unwrap();
+        // An explicit extreme-view probe covers arithmetic impossible in this
+        // fixture's ordinary N03 timeline; it is not a clock measurement.
+        rig.owner.arm_final_feedback(view);
+        assert_eq!(
+            rig.owner.final_feedback().unwrap(),
+            FinalFeedbackOutcome::Disabled
+        );
+        assert!(matches!(
+            rig.owner.enable_final_feedback(feedback_config()),
+            Err(NetworkRenderError::Configuration)
+        ));
+        assert_eq!(rig.owner.endpoint.carrier().stats().reports_sent, 0);
+    }
+}
+
+#[test]
+fn final_feedback_permit_receives_send_bound_and_denial_revokes() {
+    for permitted in [false, true] {
+        let mut rig = running(64);
+        rig.owner.enable_final_feedback(feedback_config()).unwrap();
+        let calls = Cell::new(0_u32);
+        assert_eq!(
+            rig.owner
+                .final_feedback_if(|_| {
+                    calls.set(calls.get() + 1);
+                    true
+                })
+                .unwrap(),
+            FinalFeedbackOutcome::NotDue
+        );
+        assert_eq!(calls.get(), 0, "a non-due retry never invokes authority");
+        let relay = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        relay
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        rig.owner
+            .endpoint
+            .carrier_mut()
+            .set_sender_control(relay.local_addr().unwrap());
+        feed_one_finite_block(&mut rig);
+        complete_finite_feedback_owner(&mut rig);
+        let local = rig.now.get();
+        let expected = rig.owner.clock.group_ns(local).unwrap()
+            + rig.owner.clock.report(local).uncertainty_ns.unwrap();
+        let seen = Cell::new(None);
+        let before = rig.owner.endpoint.carrier().stats().reports_sent;
+        let outcome = rig
+            .owner
+            .final_feedback_if(|latest| {
+                calls.set(calls.get() + 1);
+                seen.set(Some(latest));
+                permitted
+            })
+            .unwrap();
+        assert_eq!(calls.get(), 1);
+        assert_eq!(seen.get(), Some(expected));
+        let mut wire = [0_u8; 128];
+        if permitted {
+            assert_eq!(outcome, FinalFeedbackOutcome::Sent);
+            assert_eq!(
+                rig.owner.endpoint.carrier().stats().reports_sent,
+                before + 1
+            );
+            assert!(relay.recv_from(&mut wire).unwrap().0 > 0);
+        } else {
+            assert_eq!(outcome, FinalFeedbackOutcome::Disabled);
+            assert_eq!(rig.owner.endpoint.carrier().stats().reports_sent, before);
+            relay.set_nonblocking(true).unwrap();
+            assert_eq!(
+                relay.recv_from(&mut wire).unwrap_err().kind(),
+                std::io::ErrorKind::WouldBlock
+            );
+            assert_eq!(
+                rig.owner
+                    .final_feedback_if(|_| panic!("revoked permit invoked"))
+                    .unwrap(),
+                FinalFeedbackOutcome::Disabled
+            );
+            assert!(matches!(
+                rig.owner.enable_final_feedback(feedback_config()),
+                Err(NetworkRenderError::Configuration)
+            ));
+        }
+    }
+}

@@ -24,7 +24,9 @@ use franken_stream::carrier::{DatagramPort, PollReport};
 use crate::button_adapter::{
     ButtonAction, ButtonAdapter, ButtonBounds, ButtonMap, ButtonRole, ButtonStats,
 };
-use crate::network_render::{NetworkRender, NetworkRenderError, OwnerStep};
+use crate::network_render::{
+    FinalFeedbackConfig, FinalFeedbackOutcome, NetworkRender, NetworkRenderError, OwnerStep,
+};
 use crate::render::{RenderState, StopReport, TickReport, TimingModel};
 use crate::settled_http::{
     HttpMailboxError, HttpMailboxOwner, HttpOwnerIdentity, HttpService, OwnedHttpReply,
@@ -181,6 +183,9 @@ pub struct SettledRender<
     http_identity: HttpOwnerIdentity,
     active: bool,
     stopping: bool,
+    // Natural completion also drains the HAL. It does not grant an explicit
+    // stop/revocation a route back into transport feedback.
+    final_feedback_revoked: bool,
     join: Option<(u64, AuthorityToken)>,
 }
 
@@ -283,6 +288,7 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             http_identity: HttpOwnerIdentity::new(),
             active: false,
             stopping: false,
+            final_feedback_revoked: false,
             join: None,
         })
     }
@@ -812,6 +818,100 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
         }
     }
 
+    /// Opt in once, before rendering, to bounded retransmission of final
+    /// authenticated consumption credit. No report is a playback or HAL ACK.
+    pub fn enable_final_feedback(&mut self, config: FinalFeedbackConfig) -> Result<(), OwnerError> {
+        if self.final_feedback_revoked || self.stopping {
+            return Err(OwnerError::Render(NetworkRenderError::Ended));
+        }
+        self.render
+            .enable_final_feedback(config)
+            .map_err(OwnerError::Render)
+    }
+
+    /// Retry already-consumed final credit after natural EOF, subject to both
+    /// the transport's finite budget and the current canonical control lease.
+    /// Callers drive this separately from rendering and HAL drain. No ingress,
+    /// PCM preparation, policy change or device submission happens here.
+    pub fn final_feedback(&mut self) -> Result<FinalFeedbackOutcome, OwnerError> {
+        if self.final_feedback_revoked || !self.active {
+            return Ok(FinalFeedbackOutcome::Disabled);
+        }
+        // Borrow disjoint owned state: the transport supplies the *same* fresh
+        // conservative bound it uses for the send, not an earlier clock read.
+        // This callback performs only in-memory checks and never calls storage,
+        // a clock, rendering or arbitrary user work.
+        let control = &self.control;
+        let session = &self.session;
+        let membership = &self.membership;
+        let authority = &self.authority;
+        let join = &self.join;
+        let member = &self.member;
+        let profile = &self.profile;
+        let role = self.role;
+        let observed = &self.observed;
+        let observed_stop = &self.observed_stop;
+        let epoch = self.render.bound_epoch();
+        let last_upper = &mut self.last_group_upper_ns;
+        let mut refusal = None;
+        let result = self.render.final_feedback_if(|sampled_latest| {
+            let latest = last_upper.map_or(sampled_latest, |last| last.max(sampled_latest));
+            *last_upper = Some(latest);
+            if !control.fresh_group_is_healthy()
+                || session.control_sequence_exhausted()
+                || control.session_sequence_exhausted(session)
+            {
+                refusal = Some(OwnerError::Binding);
+                return false;
+            }
+            if !membership.lease_is_live(session, authority, latest)
+                || !control.lease_is_live(session, latest)
+                || join
+                    .as_ref()
+                    .is_none_or(|(_, token)| !membership.lease_is_live(session, token, latest))
+            {
+                refusal = Some(OwnerError::LeaseExpired);
+                return false;
+            }
+            let entry = session.members.get(member);
+            let current = CommittedVolume {
+                epoch: session.current_epoch,
+                revision: session.state_revision,
+                group: session.group_master_volume,
+                member: entry.map(|m| (m.volume_0_to_100, m.muted)),
+            };
+            if current.epoch != observed.epoch
+                || current.revision < observed.revision
+                || (current.revision == observed.revision && current != *observed)
+                || session.current_epoch != epoch
+                || session.group_master_volume > 100
+                || session.last_group_stop().as_ref() != observed_stop.as_ref()
+                || entry.is_none_or(|entry| {
+                    entry.member_id.as_str() != member.as_str()
+                        || entry.profile_id.as_str() != profile.as_str()
+                        || entry.role != role
+                        || entry.volume_0_to_100 > 100
+                        || entry.lifecycle != MemberLifecycleState::SynchronizedReady
+                })
+            {
+                refusal = Some(OwnerError::Binding);
+                return false;
+            }
+            true
+        });
+        if let Some(error) = refusal {
+            let _ = self.request_stop();
+            return Err(error);
+        }
+        match result {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                let _ = self.request_stop();
+                Err(OwnerError::Render(error))
+            }
+        }
+    }
+
     pub fn render_step<T: TimingModel>(
         &mut self,
         timing: &mut T,
@@ -853,6 +953,10 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
     }
 
     pub fn request_stop(&mut self) -> Result<RenderApplication, OwnerError> {
+        // Also revoke when a natural EOF has already entered the shared drain
+        // path. The existing idempotent HAL-stop behavior is unchanged.
+        self.final_feedback_revoked = true;
+        self.render.revoke_final_feedback();
         if !self.stopping {
             self.stopping = true;
             self.note_transport(TransportState::Transitioning);

@@ -78,6 +78,34 @@ pub struct NetworkRenderAdmission {
     pub start: StartPreconditions,
 }
 
+/// Optional host-side retry budget for authenticated final carrier credit.
+/// The grace is an upper bound, not an extension of clock or authority life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FinalFeedbackConfig {
+    pub interval_ns: u64,
+    pub grace_ns: u64,
+    pub max_reports: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinalFeedbackOutcome {
+    Sent,
+    NotDue,
+    Expired,
+    Disabled,
+}
+
+struct FinalFeedbackState {
+    config: FinalFeedbackConfig,
+    deadline_ns: Option<u64>,
+    next_due_ns: Option<u64>,
+    stream: u64,
+    epoch: u64,
+    consumed_next: u64,
+    sent: u32,
+    expired: bool,
+}
+
 /// Terminal faults invalidate the owner; source-end refusals leave the admitted
 /// renderer available for its existing completion/drain path.
 #[derive(Debug)]
@@ -271,6 +299,8 @@ pub struct NetworkRender<P: DatagramPort, O: KernelOps, B: DeviceBackend> {
     complete: bool,
     software_silent_start: bool,
     desired_muted: bool,
+    final_feedback: Option<FinalFeedbackState>,
+    final_feedback_locked: bool,
 }
 
 impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
@@ -377,6 +407,8 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
             complete: false,
             software_silent_start: false,
             desired_muted: false,
+            final_feedback: None,
+            final_feedback_locked: false,
         })
     }
 
@@ -445,6 +477,7 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
     }
 
     fn invalidate(&mut self) {
+        self.revoke_final_feedback();
         self.pcm.clear();
         self.terminal = true;
         match self.render.state() {
@@ -737,6 +770,157 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
             .map_err(|_| NetworkRenderError::Preparation)
     }
 
+    /// Configure one bounded final-credit retry budget before the renderer runs.
+    /// No configuration or revocation can be reset for this owner.
+    pub fn enable_final_feedback(
+        &mut self,
+        config: FinalFeedbackConfig,
+    ) -> Result<(), NetworkRenderError> {
+        if self.final_feedback_locked
+            || self.terminal
+            || self.render.state() != RenderState::Ready
+            || !(10_000_000..=1_000_000_000).contains(&config.interval_ns)
+            || config.grace_ns < config.interval_ns
+            || config.grace_ns > 5_000_000_000
+            || !(1..=16).contains(&config.max_reports)
+        {
+            return Err(NetworkRenderError::Configuration);
+        }
+        self.final_feedback_locked = true;
+        self.final_feedback = Some(FinalFeedbackState {
+            config,
+            deadline_ns: None,
+            next_due_ns: None,
+            stream: 0,
+            epoch: 0,
+            consumed_next: 0,
+            sent: 0,
+            expired: false,
+        });
+        Ok(())
+    }
+
+    /// Permanently revoke this owner's optional final feedback without touching audio.
+    pub fn revoke_final_feedback(&mut self) {
+        self.final_feedback_locked = true;
+        self.final_feedback = None;
+    }
+
+    fn arm_final_feedback(&mut self, view: franken_stream::playout::ClockView) {
+        let Some(grace) = self
+            .final_feedback
+            .as_ref()
+            .map(|state| state.config.grace_ns)
+        else {
+            return;
+        };
+        // The true transition may be as early as the lower bound. A later
+        // upper-bound observation must fit strictly inside that grace period.
+        let Some(deadline) = view
+            .group_ns
+            .checked_sub(view.uncertainty_ns)
+            .and_then(|earliest| earliest.checked_add(grace))
+        else {
+            self.revoke_final_feedback();
+            return;
+        };
+        let feedback = self.final_feedback.as_mut().expect("feedback not removed");
+        feedback.deadline_ns = Some(deadline);
+        feedback.stream = self.endpoint.carrier().stream_id().get();
+        feedback.epoch = self.endpoint.carrier().epoch();
+        feedback.consumed_next = self.endpoint.carrier().consumed_next();
+    }
+
+    /// Re-advertise only the receiver's actual final credit during natural
+    /// drain or after stop. This does not ingest media or acknowledge HAL stop.
+    pub fn final_feedback(&mut self) -> Result<FinalFeedbackOutcome, NetworkRenderError> {
+        self.final_feedback_if(|_| true)
+    }
+
+    /// Check the caller's authority against the same freshly sampled upper
+    /// group-time bound used by this send. The permit must be bounded and
+    /// nonblocking; it is not an atomic real-time or zero-latency guarantee.
+    pub fn final_feedback_if(
+        &mut self,
+        permit: impl FnOnce(u64) -> bool,
+    ) -> Result<FinalFeedbackOutcome, NetworkRenderError> {
+        let Some(state) = self.final_feedback.as_ref() else {
+            return Ok(FinalFeedbackOutcome::Disabled);
+        };
+        if self.render.state() == RenderState::Faulted || (self.terminal && !self.complete) {
+            self.revoke_final_feedback();
+            return Ok(FinalFeedbackOutcome::Disabled);
+        }
+        if state.expired {
+            return Ok(FinalFeedbackOutcome::Expired);
+        }
+        if !self.complete {
+            return Ok(FinalFeedbackOutcome::NotDue);
+        }
+        if !matches!(
+            self.render.state(),
+            RenderState::Draining | RenderState::Stopped
+        ) {
+            self.revoke_final_feedback();
+            return Ok(FinalFeedbackOutcome::Disabled);
+        }
+        let view = match self.fresh_clock() {
+            Ok(view) => view,
+            Err(error) => {
+                self.revoke_final_feedback();
+                return Err(error);
+            }
+        };
+        let state = self.final_feedback.as_ref().expect("feedback not removed");
+        let Some(deadline) = state.deadline_ns else {
+            self.revoke_final_feedback();
+            return Ok(FinalFeedbackOutcome::Disabled);
+        };
+        let carrier = self.endpoint.carrier();
+        if carrier.stream_id().get() != state.stream
+            || carrier.epoch() != state.epoch
+            || state.epoch != self.schedule.epoch
+            || state.consumed_next == 0
+            || carrier.consumed_next() != state.consumed_next
+        {
+            self.revoke_final_feedback();
+            return Ok(FinalFeedbackOutcome::Disabled);
+        }
+        let Some(latest) = view.group_ns.checked_add(view.uncertainty_ns) else {
+            self.revoke_final_feedback();
+            return Err(NetworkRenderError::Clock);
+        };
+        if latest >= deadline || state.sent >= state.config.max_reports {
+            self.final_feedback
+                .as_mut()
+                .expect("feedback not removed")
+                .expired = true;
+            return Ok(FinalFeedbackOutcome::Expired);
+        }
+        if state
+            .next_due_ns
+            .is_some_and(|due| view.group_ns.saturating_sub(view.uncertainty_ns) < due)
+        {
+            return Ok(FinalFeedbackOutcome::NotDue);
+        }
+        let Some(next_due) = latest.checked_add(state.config.interval_ns) else {
+            self.revoke_final_feedback();
+            return Err(NetworkRenderError::Clock);
+        };
+        if !permit(latest) {
+            self.revoke_final_feedback();
+            return Ok(FinalFeedbackOutcome::Disabled);
+        }
+        if self.endpoint.report().is_err() {
+            self.revoke_final_feedback();
+            return Err(NetworkRenderError::Preparation);
+        }
+        let state = self.final_feedback.as_mut().expect("feedback not removed");
+        state.sent += 1;
+        state.next_due_ns = Some(next_due);
+        Ok(FinalFeedbackOutcome::Sent)
+    }
+
     /// Prepare at most one network block and advance at most one device tick.
     /// Callers supply the admitted timing model and continue driving this method.
     pub fn step<T: TimingModel>(
@@ -752,6 +936,7 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
                     .render
                     .tick_with_start_permission(&mut self.pcm, timing, false);
                 if self.render.state() == RenderState::Faulted {
+                    self.revoke_final_feedback();
                     return Err(NetworkRenderError::Preparation);
                 }
                 return Ok(OwnerStep::Tick(tick));
@@ -892,6 +1077,7 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
             self.render.cancel().map_err(NetworkRenderError::Render)?;
             self.terminal = true;
             self.complete = true;
+            self.arm_final_feedback(view);
             return Ok(OwnerStep::Waiting);
         }
         let deadline = self
@@ -974,6 +1160,7 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
     /// Stop immediately: discard only unsubmitted PCM and ask the actual HAL
     /// session to mute/abort. Submitted buffers remain with the session.
     pub fn cancel(&mut self) -> Result<(), NetworkRenderError> {
+        self.revoke_final_feedback();
         self.pcm.clear();
         self.terminal = true;
         match self.render.state() {

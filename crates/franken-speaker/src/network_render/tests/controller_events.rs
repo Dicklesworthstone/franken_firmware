@@ -325,7 +325,21 @@ struct PreparedParts {
     start_local_ns: u64,
 }
 fn prepared_parts(capable: bool, completion_ticks: u64) -> PreparedParts {
-    let net = network();
+    prepared_parts_for_feedback(capable, completion_ticks, 512, None)
+}
+
+// Alternate trusted fixture provisioning for real source/feedback integration.
+// Existing controller cases retain their original 512-frame/localhost:9 setup.
+fn prepared_parts_for_feedback(
+    capable: bool,
+    completion_ticks: u64,
+    final_frame: u64,
+    sender_control: Option<SocketAddr>,
+) -> PreparedParts {
+    let mut net = network();
+    if let Some(address) = sender_control {
+        net.endpoint.carrier_mut().set_sender_control(address);
+    }
     let address = net.endpoint.carrier().media_addr().unwrap();
     let start_local_ns = net
         .clock
@@ -392,7 +406,7 @@ fn prepared_parts(capable: bool, completion_ticks: u64) -> PreparedParts {
         NetworkRenderAdmission {
             schedule,
             anchor_frame: 0,
-            final_frame: 512,
+            final_frame,
             mapping,
             capacity_frames: 1024,
             start: StartPreconditions {
@@ -2319,3 +2333,6 @@ mod http_integration;
 
 #[cfg(unix)]
 mod http_eventing;
+
+#[cfg(unix)]
+mod final_feedback;
