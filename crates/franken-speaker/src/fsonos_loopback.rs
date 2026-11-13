@@ -50,6 +50,7 @@ use franken_session::{
 };
 
 use crate::control_adapter::ControlPlane;
+use crate::settled_http::{HttpMailboxClient, HttpMailboxError};
 
 mod callback;
 mod discovery;
@@ -296,6 +297,12 @@ pub trait HttpControl {
     ) -> Handled;
 
     fn directory_mut(&mut self) -> &mut Directory;
+
+    /// Whether this worker may configure discovery and event-delivery extras.
+    /// A mailbox-owned endpoint must be configured at its actual owner instead.
+    fn supports_extras(&self) -> bool {
+        true
+    }
 }
 
 impl HttpControl for ControlPlane {
@@ -348,6 +355,112 @@ impl<K: SecretStore, S: Storage> HttpControl for FleetSoapPlane<K, S> {
 
     fn directory_mut(&mut self) -> &mut Directory {
         self.endpoint.directory_mut()
+    }
+}
+
+/// Forward this isolated HTTP worker to the actual protected-playback owner.
+/// The caller explicitly services the mailbox outside its render callback.
+/// No second control plane, fixture identity, or live membership is created.
+/// The custom-factory SOAP path is supported; discovery/event-delivery extras
+/// must be configured by an owner-aware transport and are refused by this shim.
+pub fn mailbox_control(client: HttpMailboxClient) -> Box<dyn HttpControl> {
+    Box::new(MailboxControl {
+        client,
+        directory: Directory::default(),
+    })
+}
+
+struct MailboxControl {
+    client: HttpMailboxClient,
+    // The legacy trait exposes transport-local metadata. This adapter never
+    // uses it to configure the owned endpoint, and refuses extras at startup.
+    directory: Directory,
+}
+
+impl HttpControl for MailboxControl {
+    fn handle_request(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        _now_ns: u64,
+        request: &HttpRequest<'_>,
+    ) -> Handled {
+        // This adapter has no event-delivery transport. Refuse before the
+        // actual owner can create or remove subscriptions; preserve the
+        // tailnet ingress's anonymous 401 policy instead of disclosing it.
+        if request.method.eq_ignore_ascii_case("SUBSCRIBE")
+            || request.method.eq_ignore_ascii_case("UNSUBSCRIBE")
+        {
+            let mut refusal = mailbox_fault(
+                if request.ingress == Ingress::Tailnet {
+                    401
+                } else {
+                    405
+                },
+                false,
+            );
+            if request.ingress == Ingress::LocalLegacy {
+                refusal
+                    .response
+                    .headers
+                    .push(("Allow".into(), "POST".into()));
+            }
+            return refusal;
+        }
+        let reply = match self
+            .client
+            .submit(request)
+            .and_then(|pending| pending.wait())
+        {
+            Ok(reply) => reply,
+            Err(error) => {
+                let (status, unknown) = match error {
+                    HttpMailboxError::TooLarge | HttpMailboxError::TooManyHeaders => (413, false),
+                    HttpMailboxError::Busy => (503, false),
+                    HttpMailboxError::TimeoutOutcomeUnknown => (504, true),
+                    HttpMailboxError::Disconnected => (503, true),
+                    HttpMailboxError::Unavailable | HttpMailboxError::InvalidLimits => (500, false),
+                };
+                return mailbox_fault(status, unknown);
+            }
+        };
+        // This is a diagnostic copy from the sole owner, never authority used
+        // to reconstruct it. HTTP callers cannot write the renderer's session.
+        *session = reply.session;
+        match reply.result {
+            Ok(result) => {
+                // A control may have committed even when policy application
+                // failed. Preserve its real response instead of inviting a
+                // relative retry by rewriting a committed result as a fault.
+                let mut handled = result.control;
+                handled.notifications.extend(result.notifications);
+                handled
+            }
+            Err(_) => mailbox_fault(500, false),
+        }
+    }
+
+    fn directory_mut(&mut self) -> &mut Directory {
+        &mut self.directory
+    }
+
+    fn supports_extras(&self) -> bool {
+        false
+    }
+}
+
+fn mailbox_fault(status: u16, unknown: bool) -> Handled {
+    Handled {
+        response: franken_control::fsonos::HttpResponse {
+            status,
+            headers: if unknown {
+                vec![("X-Franken-Outcome".into(), "unknown".into())]
+            } else {
+                Vec::new()
+            },
+            body: String::new(),
+        },
+        notifications: Vec::new(),
+        settled_others: Vec::new(),
     }
 }
 
@@ -661,7 +774,10 @@ impl FsonosLoopback {
         self.addr
     }
 
-    /// Look at the group session the endpoint serves, as it is now. This is the ground truth a test compares an answer with.
+    /// Inspect the transport's diagnostic session. The legacy planes update it
+    /// directly. With mailbox_control it is the last owner-response snapshot,
+    /// and may be stale before the first response or between owner-side changes.
+    /// Requests themselves always query the actual owner, not this copy.
     pub fn with_session<R>(&self, read: impl FnOnce(&UnifiedGroupSession) -> R) -> R {
         let session = self.shared.session();
         read(&session)
@@ -757,6 +873,12 @@ fn worker_main(
             return;
         }
     };
+    if (extras.described.is_some() || extras.outbox.is_some()) && !plane.supports_extras() {
+        let _ = ready.send(Err(
+            "control owner does not admit transport-local extras".into()
+        ));
+        return;
+    }
     // What the group session does not hold, the topology answer reads from the endpoint's directory: where the served member's
     // description lives, and its room. Only that member is entered; any other member is listed without a location.
     let device = extras.described.map(|described| {
@@ -1262,3 +1384,112 @@ mod tests;
 
 #[cfg(test)]
 mod fleet_tests;
+
+#[cfg(test)]
+mod mailbox_tests {
+    use super::*;
+    use crate::settled_http::{HttpMailboxConfig, HttpService, OwnedHttpReply, http_mailbox};
+    use crate::settled_render::{ControlResult, OwnerError};
+
+    fn notice(seq: u32) -> Notification {
+        Notification {
+            sid: "uuid:synthetic".into(),
+            service: franken_control::fsonos::Service::RenderingControl,
+            callback: "http://127.0.0.1:9/events".into(),
+            seq,
+            body: format!("notice-{seq}"),
+        }
+    }
+
+    #[test]
+    fn mailbox_adapter_preserves_committed_response_despite_render_error_and_updates_snapshot() {
+        let config = HttpMailboxConfig::new(4096, 8, Duration::from_millis(500)).unwrap();
+        let (client, mut owner) = http_mailbox(config).unwrap();
+        let service = thread::spawn(move || {
+            let end = Instant::now() + Duration::from_secs(2);
+            loop {
+                let result = owner
+                    .service_one(|request| {
+                        assert_eq!(request.body, b"request");
+                        let mut session = UnifiedGroupSession::new("group", "issuer", 1);
+                        session.state_revision = 17;
+                        OwnedHttpReply {
+                            result: Ok(ControlResult {
+                                control: Handled {
+                                    response: franken_control::fsonos::HttpResponse {
+                                        status: 200,
+                                        headers: Vec::new(),
+                                        body: "committed".into(),
+                                    },
+                                    notifications: vec![notice(1)],
+                                    settled_others: Vec::new(),
+                                },
+                                render: Err(OwnerError::Clock),
+                                notifications: vec![notice(2)],
+                            }),
+                            session,
+                        }
+                    })
+                    .unwrap();
+                if result == HttpService::Replied {
+                    break;
+                }
+                assert_eq!(result, HttpService::Idle);
+                assert!(Instant::now() < end);
+                thread::sleep(Duration::from_millis(1));
+            }
+        });
+        let mut plane = mailbox_control(client);
+        let mut diagnostic = UnifiedGroupSession::new("diagnostic", "old", 1);
+        let request = HttpRequest {
+            method: "POST",
+            path: "/control",
+            peer_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            ingress: Ingress::Tailnet,
+            headers: &[],
+            body: b"request",
+        };
+        let response = plane.handle_request(&mut diagnostic, 0, &request);
+        assert_eq!(response.response.status, 200);
+        assert_eq!(response.response.body, "committed");
+        assert_eq!(response.notifications, vec![notice(1), notice(2)]);
+        assert_eq!(diagnostic.group_id, "group");
+        assert_eq!(diagnostic.state_revision, 17);
+        service.join().unwrap();
+    }
+
+    #[test]
+    fn mailbox_discovery_extras_are_refused_and_plain_factory_start_still_works() {
+        let config = HttpMailboxConfig::new(4096, 8, Duration::from_millis(500)).unwrap();
+        let (client, _owner) = http_mailbox(config).unwrap();
+        let identity = DiscoveryIdentity::fixture();
+        let described = FsonosLoopback::describe(&identity, DiscoveryLimits::standard()).unwrap();
+        let refused_client = client.clone();
+        let refused = FsonosLoopback::start_inner_with(
+            UnifiedGroupSession::new("group", "issuer", 1),
+            &identity.uuid,
+            Policy::LocalLink,
+            LoopbackLimits::standard(),
+            Some((described, DiscoveryLimits::standard())),
+            None,
+            (
+                || Ok([1; INCARNATION_BYTES]),
+                Box::new(move |_, _, _| Ok(mailbox_control(refused_client))),
+            ),
+        );
+        assert_eq!(
+            refused.err().as_deref(),
+            Some("control owner does not admit transport-local extras")
+        );
+        let started = FsonosLoopback::start_with_control(
+            UnifiedGroupSession::new("group", "issuer", 1),
+            &identity.uuid,
+            Policy::UnauthenticatedTailnet,
+            LoopbackLimits::standard(),
+            move |_, _, _| Ok(mailbox_control(client)),
+        )
+        .unwrap();
+        assert!(started.addr().ip().is_loopback());
+        assert_eq!(started.stop().stopped_by, StopCause::Requested);
+    }
+}

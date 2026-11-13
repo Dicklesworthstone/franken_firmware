@@ -2313,3 +2313,6 @@ mod binding_integration;
 
 #[cfg(unix)]
 mod button_integration;
+
+#[cfg(unix)]
+mod http_integration;

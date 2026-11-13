@@ -31,6 +31,7 @@ pub mod platform_start;
 pub mod render;
 pub mod render_log;
 pub mod services;
+pub mod settled_http;
 pub mod settled_render;
 pub mod source_media;
 pub mod source_runtime;

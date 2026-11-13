@@ -26,6 +26,7 @@ use crate::button_adapter::{
 };
 use crate::network_render::{NetworkRender, NetworkRenderError, OwnerStep};
 use crate::render::{RenderState, StopReport, TickReport, TimingModel};
+use crate::settled_http::{HttpMailboxError, HttpMailboxOwner, HttpService, OwnedHttpReply};
 
 /// Explicitly provisioned pending identity and local protection ceiling.
 #[derive(Debug)]
@@ -631,6 +632,19 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             control,
             render,
             notifications,
+        })
+    }
+
+    /// Service at most one admitted HTTP request on the caller's control path.
+    /// No network I/O or waiting is performed by the render loop. The copied
+    /// session is diagnostic host state, not evidence of physical output.
+    pub fn service_http(
+        &mut self,
+        mailbox: &mut HttpMailboxOwner,
+    ) -> Result<HttpService, HttpMailboxError> {
+        mailbox.service_one(|request| OwnedHttpReply {
+            result: self.handle_soap(&request),
+            session: self.session.clone(),
         })
     }
 
