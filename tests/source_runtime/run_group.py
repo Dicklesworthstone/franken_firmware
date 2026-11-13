@@ -146,6 +146,7 @@ def run_case(binary: Path, directory: Path, track_id: str, count: int, bad_peer:
               "wrong_key_peer": bad_peer, "input_sha256": track["sha256"],
               "reference_sha256": track["reference"]["sha256"],
               "manifest_sha256": track["_manifest_sha256"]}
+    children = None
     try:
         with Children(directory, 22) as children:
             sender, receivers, captures, anchor = provision(children, binary, directory, track, peer_ids, bad_peer)
@@ -182,6 +183,8 @@ def run_case(binary: Path, directory: Path, track_id: str, count: int, bad_peer:
         result["status"] = "passed"
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         result["error"] = f"{type(error).__name__}: {error}"
+        result["failure_diagnostics"] = (children.failure_diagnostics() if children is not None
+                                         else {"artifact_dir": str(directory.resolve()), "children": []})
     (directory / "result.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     return result
 

@@ -266,6 +266,98 @@ class ProcessSupervisorTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 read_bounded(link)
 
+class FailureDiagnosticTests(unittest.TestCase):
+    """Diagnostic logging over real Python subprocesses; no audio evidence."""
+
+    def directory(self):
+        return Path(tempfile.mkdtemp(prefix="ffw-source-diagnostic-"))
+
+    @staticmethod
+    def failing_child(supervisor, *_args, **_kwargs):
+        script = ('import json,sys;'
+                  'print(json.dumps({"event":"summary","peer_id":1,"captured_frames":256,'
+                  '"real_blocks":1,"concealed_blocks":2,"playout_rejected":3}),flush=True);'
+                  'print("actual child failure",file=sys.stderr,flush=True);sys.exit(7)')
+        child = supervisor.spawn("receiver-1", [sys.executable, "-c", script])
+        supervisor.event(child, "done")
+
+    def test_failure_records_actual_terminal_exit_and_stderr(self):
+        directory = self.directory()
+        with self.assertRaisesRegex(OracleError, "exited without done"):
+            with Children(directory, 3) as supervisor:
+                self.failing_child(supervisor)
+        diag = supervisor.failure_diagnostics()
+        self.assertEqual(diag["artifact_dir"], str(directory.resolve()))
+        child = diag["children"][0]
+        self.assertEqual(child["child"], "receiver-1")
+        self.assertEqual(child["pre_teardown_status"], {"kind": "exit", "code": 7})
+        self.assertEqual(child["post_teardown_returncode"], 7)
+        self.assertEqual(child["terminal_events"][0]["concealed_blocks"], 2)
+        self.assertEqual(child["terminal_events"][0]["playout_rejected"], 3)
+        self.assertIn("actual child failure", child["stderr"])
+        self.assertEqual(child["stderr_omitted_chars"], 0)
+
+    def test_permitted_success_records_done_and_zero_exit(self):
+        with Children(self.directory(), 3) as supervisor:
+            child = supervisor.spawn("receiver", [sys.executable, "-c",
+                'print(\'{"event":"done","captured_frames":64,"real_blocks":1}\',flush=True)'])
+            self.assertEqual(supervisor.event(child, "done")["captured_frames"], 64)
+            supervisor.completed(child)
+        row = supervisor.failure_diagnostics()["children"][0]
+        self.assertEqual(row["pre_teardown_status"], {"kind": "exit", "code": 0})
+        self.assertEqual(row["terminal_events"], [{"event": "done", "captured_frames": 64, "real_blocks": 1}])
+
+    def test_stderr_is_bounded_redacted_and_reports_truncation(self):
+        key = "07" * 32
+        with Children(self.directory(), 3) as supervisor:
+            child = supervisor.spawn("receiver", [sys.executable, "-c",
+                f'import sys;sys.stderr.write("KEY {key} " + "x"*3000);sys.stderr.flush()'])
+            supervisor.completed(child)
+        row = supervisor.failure_diagnostics()["children"][0]
+        self.assertEqual(len(row["stderr"]), 2048)
+        self.assertGreater(row["stderr_omitted_chars"], 0)
+        self.assertNotIn(key, row["stderr"])
+        self.assertIn("[redacted]", row["stderr"])
+
+    def test_signal_status_is_distinct_from_supervisor_teardown(self):
+        with self.assertRaisesRegex(OracleError, "exited without done"):
+            with Children(self.directory(), 3) as supervisor:
+                child = supervisor.spawn("receiver", [sys.executable, "-c",
+                    "import os,signal;os.kill(os.getpid(), signal.SIGTERM)"])
+                supervisor.event(child, "done")
+        row = supervisor.failure_diagnostics()["children"][0]
+        self.assertEqual(row["pre_teardown_status"], {"kind": "signal", "signal": signal.SIGTERM})
+        self.assertEqual(row["post_teardown_returncode"], -signal.SIGTERM)
+
+    def test_live_at_teardown_stays_unknown_and_reports_cleanup_signal(self):
+        with self.assertRaisesRegex(OracleError, "forced failure"):
+            with Children(self.directory(), 3) as supervisor:
+                child = supervisor.spawn("receiver", [sys.executable, "-c",
+                    'import time;print(\'{"event":"ready"}\',flush=True);time.sleep(15)'])
+                supervisor.event(child, "ready")
+                raise OracleError("forced failure")
+        row = supervisor.failure_diagnostics()["children"][0]
+        self.assertEqual(row["pre_teardown_status"], {"kind": "unknown"})
+        self.assertTrue(row["teardown_group_signal_sent"])
+        self.assertEqual(row["post_teardown_returncode"], -signal.SIGKILL)
+
+    def test_both_original_runners_attach_child_diagnostics_on_failure(self):
+        import run_loopback
+        import run_group
+        for module, args in ((run_loopback, (False,)), (run_group, (2, None))):
+            with self.subTest(runner=module.__name__):
+                directory = self.directory() / "case"
+                with patch.object(module, "provision", side_effect=self.failing_child):
+                    result = module.run_case(Path("/unused"), directory, "vorbis_48000", *args)
+                self.assertEqual(result["status"], "failed")
+                self.assertIn("exited without done", result["error"])
+                self.assertEqual(result["failure_diagnostics"]["artifact_dir"], str(directory.resolve()))
+                row = result["failure_diagnostics"]["children"][0]
+                self.assertEqual(row["pre_teardown_status"], {"kind": "exit", "code": 7})
+                self.assertEqual(row["terminal_events"][0]["concealed_blocks"], 2)
+                self.assertIn("actual child failure", row["stderr"])
+                self.assertEqual(json.loads((directory / "result.json").read_text()), result)
+
 
 if __name__ == "__main__":
     unittest.main()

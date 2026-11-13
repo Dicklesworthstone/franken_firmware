@@ -13,6 +13,7 @@ import ipaddress
 import json
 import math
 import os
+import re
 import selectors
 import signal
 import stat
@@ -281,6 +282,74 @@ class Children:
         if code != expected:
             raise OracleError(f"{child['name']} exit {code}, expected {expected}")
 
+    def failure_diagnostics(self) -> dict:
+        """Bounded observations after cleanup, never command or stdin contents."""
+        scalar_fields = {
+            "captured_frames", "real_blocks", "concealed_blocks", "muted_blocks",
+            "media_read", "media_accepted", "media_rejected", "rejected_authentication",
+            "playout_rejected", "peer_id", "published_frames", "anchor_ns",
+            "expired_blocks", "skipped_fenced", "skipped_mtu", "skipped_stalled",
+            "skipped_capacity", "skipped_sequence", "saturated",
+        }
+        counter_fields = {
+            "media_sent_packets", "media_submitted_packets", "reports_accepted",
+            "media_dropped_late_packets", "media_dropped_overflow_packets",
+            "media_dropped_aggregate_packets", "media_dropped_fenced_packets",
+            "media_dropped_send_error_packets", "window_stalled_pumps",
+        }
+        def scalars(item, fields):
+            return {key: item[key] for key in fields
+                    if key in item and (type(item[key]) in (int, bool) or item[key] is None)}
+
+        observations = []
+        for child in self.children:
+            # Parse only bounded actual stdout, including data drained during
+            # cleanup. Malformed/partial lines remain in the existing artifact.
+            lines = child["raw_stdout"].splitlines()
+            terminals = []
+            terminals_omitted = 0
+            for line in lines[:256]:
+                if len(line) > MAX_LINE_BYTES:
+                    continue
+                try:
+                    row = strict_json(line)
+                except (ValueError, UnicodeDecodeError, RecursionError):
+                    continue
+                if not isinstance(row, dict) or row.get("event") not in ("done", "summary", "stopped", "error"):
+                    continue
+                event = {"event": row["event"], **scalars(row, scalar_fields)}
+                peers = row.get("peers")
+                if isinstance(peers, list):
+                    event["peers"] = []
+                    for peer in peers[:8]:
+                        if isinstance(peer, dict):
+                            view = scalars(peer, {"peer", "in_flight", "queued_packets", "reported_next", "sent_next"})
+                            if isinstance(peer.get("counters"), dict):
+                                view["counters"] = scalars(peer["counters"], counter_fields)
+                            event["peers"].append(view)
+                    event["peers_omitted"] = max(0, len(peers) - 8)
+                if len(terminals) < 4:
+                    terminals.append(event)
+                else:
+                    terminals_omitted += 1
+            stderr = bytes(child["stderr"]).decode("utf-8", errors="replace")
+            stderr = re.sub(r"(?i)\bkey(?:\s+|[=:]\s*)\S+|(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])",
+                            "[redacted]", stderr)
+            stderr_limit = 2048
+            observations.append({
+                "child": child["name"],
+                "pre_teardown_status": child.get("pre_teardown_status", {"kind": "unknown"}),
+                "post_teardown_returncode": child["process"].returncode,
+                "teardown_group_signal_sent": child.get("teardown_group_signal_sent", False),
+                "teardown_direct_signal_sent": child.get("teardown_direct_signal_sent", False),
+                "terminal_events": terminals,
+                "terminal_events_omitted": terminals_omitted,
+                "stdout_lines_unexamined": max(0, len(lines) - 256),
+                "stderr": stderr[:stderr_limit],
+                "stderr_omitted_chars": max(0, len(stderr) - stderr_limit),
+            })
+        return {"artifact_dir": str(self.artifacts.resolve()), "children": observations}
+
     def __exit__(self, exc_type, *_):
         errors = []
 
@@ -288,6 +357,7 @@ class Children:
             process = child["process"]
             try:
                 os.killpg(child["pgid"], signal.SIGKILL)
+                child["teardown_group_signal_sent"] = True
             except ProcessLookupError:
                 pass
             except PermissionError:
@@ -308,6 +378,17 @@ class Children:
         try:
             for child in self.children:
                 process = child["process"]
+                # Observe without reaping; a live process stays explicitly unknown.
+                try:
+                    observed = self.status(child)
+                    if observed is None:
+                        child["pre_teardown_status"] = {"kind": "unknown"}
+                    elif observed.si_code == os.CLD_EXITED:
+                        child["pre_teardown_status"] = {"kind": "exit", "code": observed.si_status}
+                    else:
+                        child["pre_teardown_status"] = {"kind": "signal", "signal": observed.si_status}
+                except OSError:
+                    child["pre_teardown_status"] = {"kind": "unknown"}
                 try:
                     # Signal before wait/reap: no recycled PGID can be targeted.
                     retire_owned(child)
@@ -316,6 +397,7 @@ class Children:
                     # The unreaped leader is still our child, never a recycled PID.
                     try:
                         os.kill(process.pid, signal.SIGKILL)
+                        child["teardown_direct_signal_sent"] = True
                     except ProcessLookupError:
                         pass
                     except OSError as fallback:
@@ -412,6 +494,7 @@ def run_case(binary: Path, directory: Path, track_id: str, wrong_key: bool = Fal
               "boundary": "host-process/local-provisioning/encoded-fixture/PCM-file-sink",
               "input_sha256": track["sha256"], "reference_sha256": track["reference"]["sha256"],
               "manifest_sha256": track["_manifest_sha256"], "status": "failed"}
+    children = None
     try:
         with Children(directory, 20) as children:
             sender, receiver, anchor, capture = provision(
@@ -457,6 +540,8 @@ def run_case(binary: Path, directory: Path, track_id: str, wrong_key: bool = Fal
         result["status"] = "passed"
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         result["error"] = f"{type(error).__name__}: {error}"
+        result["failure_diagnostics"] = (children.failure_diagnostics() if children is not None
+                                         else {"artifact_dir": str(directory.resolve()), "children": []})
     (directory / "result.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     return result
 
