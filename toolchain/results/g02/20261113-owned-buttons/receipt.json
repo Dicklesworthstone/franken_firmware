@@ -1,0 +1,1169 @@
+{
+  "schema": "ffw.native_qualification.v1",
+  "baseline_commit": "523bda9aab8a6bbf1323703773a59e8109521348",
+  "code_commit": "ba0b6fce71132b0179b158e738f9d84773725c6c",
+  "code_tree": "b6a98c50071b4659b868ac38f991f68f9d76cd0a",
+  "qualified_source": {
+    "files": 1630,
+    "manifest_sha256": "96d886806dd3408af491e1030c7f3394a83db7d7d5f9438b8f6f7904762146a6",
+    "inventory_sha256": "45c842342fe6c84ef0cbcaa1355aa88b139320ca5fdfc51a2fe1479088070d31",
+    "git_comparison": "all1630 committed blobs/length/executable bits matched",
+    "transferred_files": 1628,
+    "excluded_transfer_paths": [
+      ".beads/.gitignore",
+      ".beads/config.yaml"
+    ],
+    "changed_files": [
+      {
+        "path": "crates/franken-speaker/src/button_adapter.rs",
+        "sha256": "99c3b5109277870a08b397f47609169eb8ec6bc3e8538a2acaf5cc60c73922c0",
+        "bytes": 17555,
+        "executable": false
+      },
+      {
+        "path": "crates/franken-speaker/src/settled_render.rs",
+        "sha256": "b10f632a2e5e8ef5d2b02f5229fd13245a8265f0632ee8f92c22dc3b052e47a7",
+        "bytes": 35378,
+        "executable": false
+      },
+      {
+        "path": "crates/franken-speaker/src/network_render/tests/controller_events.rs",
+        "sha256": "fa2db9470210e95352462432a2b1d0158bfdf7f0ea0ccf6d844cfb7436e945c2",
+        "bytes": 86322,
+        "executable": false
+      },
+      {
+        "path": "crates/franken-speaker/src/network_render/tests/controller_events/button_integration.rs",
+        "sha256": "b378048e1b116b521c353aca349428af65d118b20f66e81429ceaa1182854f5c",
+        "bytes": 23761,
+        "executable": false
+      },
+      {
+        "path": "tests/g02/run_cases.py",
+        "sha256": "fc1ed669a26edb313dec093fcfb86d43db3e4c2afb7ff3e81507b7edc81d7eb6",
+        "bytes": 26549,
+        "executable": false
+      },
+      {
+        "path": "tests/g02/test_g02.py",
+        "sha256": "bc2667fe519a4b21c7b9169199a85d98558862867cf32289003f121799042a5c",
+        "bytes": 43554,
+        "executable": false
+      },
+      {
+        "path": "docs/contracts/g02.md",
+        "sha256": "e6575b433132e6208b2275701c9b8cc59e3cd2aecba4a823ff6f2bf81e25443f",
+        "bytes": 37068,
+        "executable": false
+      }
+    ]
+  },
+  "runs": [
+    {
+      "native_id": "30107136981729293",
+      "exit": 0,
+      "transfer_files": 1628,
+      "mismatch_paths": [],
+      "receipt_root": "4ef98e298cce7948962f865b24fcc1926c6d150528b1aa8c4b8f2d5268282009",
+      "content_root": "8b99befb2629bb89075253cfa6bdac6d7c6ad5ecbb2fc4cc5a5d45eb37a10298",
+      "command_sha256": "89b35cd2d03c511d49168652a07ab8bfbcdb31bc530b644d053ccb34870ba868",
+      "raw_log_sha256": "9cc68094c8408e162b1947e1cc6b004f454a19bb6ccaa3085cd39b0a961b3323",
+      "terminal_acknowledged": true,
+      "wrapper_pid": 42293,
+      "wrapper_alive": false,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": {
+        "passed": 644,
+        "failed": 0,
+        "ignored": 1
+      },
+      "footer_count": 10,
+      "kind": "complete_speaker_package_test",
+      "payload": [
+        "env",
+        "CARGO_INCREMENTAL=0",
+        "CARGO_PROFILE_DEV_DEBUG=0",
+        "RUSTFLAGS=-D warnings -C debuginfo=0",
+        "cargo",
+        "+1.99.0",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "franken-speaker",
+        "-j1",
+        "--",
+        "--show-output",
+        "--test-threads=1"
+      ]
+    },
+    {
+      "native_id": "30107136981729294",
+      "exit": 0,
+      "transfer_files": 1628,
+      "mismatch_paths": [],
+      "receipt_root": "92d96e8392a13c89d2ad32f4329e23b13b265a2e4373391788aff7c4f1201bac",
+      "content_root": "cedcb808569b13fa9efbcef26f93ae323a6645ce01433805f29d3160abcfcd77",
+      "command_sha256": "eab08515760cdd1c65668e96f9e53be4b89995c0c3d31944281e965185b87633",
+      "raw_log_sha256": "0f1c0e9b1a88da30b4690fa6b780120a19b647950cda51dcb309fac12fef931d",
+      "terminal_acknowledged": true,
+      "wrapper_pid": 60736,
+      "wrapper_alive": false,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": null,
+      "footer_count": 0,
+      "kind": "workspace_all_target_clippy",
+      "payload": [
+        "env",
+        "CARGO_INCREMENTAL=0",
+        "CARGO_PROFILE_DEV_DEBUG=0",
+        "RUSTFLAGS=-D warnings -C debuginfo=0",
+        "cargo",
+        "+1.99.0",
+        "clippy",
+        "--locked",
+        "--offline",
+        "--workspace",
+        "--all-targets",
+        "-j1",
+        "--",
+        "-D",
+        "warnings"
+      ]
+    }
+  ],
+  "required_new_cases": [
+    {
+      "name": "owned_buttons_keep_initial_mute_until_observed_release_and_preserve_trim",
+      "passed": true,
+      "native_id": "30107136981729293"
+    },
+    {
+      "name": "buttons_cannot_be_configured_after_join_proposal_or_stop_even_if_absent",
+      "passed": true,
+      "native_id": "30107136981729293"
+    },
+    {
+      "name": "debounced_trim_changes_actual_protected_pcm_without_unmuting",
+      "passed": true,
+      "native_id": "30107136981729293"
+    },
+    {
+      "name": "local_button_mute_survives_clock_failure_and_reports_real_drain_custody",
+      "passed": true,
+      "native_id": "30107136981729293"
+    },
+    {
+      "name": "group_member_mute_and_button_local_mute_keep_distinct_owned_intents",
+      "passed": true,
+      "native_id": "30107136981729293"
+    },
+    {
+      "name": "ignored_release_and_channel_reset_do_not_touch_active_render_with_failed_clock",
+      "passed": true,
+      "native_id": "30107136981729293"
+    }
+  ],
+  "g02_judge": {
+    "schema": "ffw.g02.receipt.v1",
+    "tier": "full",
+    "counts": {
+      "blocked": 0,
+      "failed": 0,
+      "passed": 152
+    },
+    "exit_code": 0,
+    "planned_rust_tests": 97,
+    "planned_vectors": 51,
+    "vectors_sha256": "e7801ff81bda449b61a069ffc431feeedeb51f0df7eab729fbf06b6be544f03b",
+    "judged_logs": [
+      {
+        "path": "mono-binding-buttons-v3-workspace-31795.log",
+        "sha256": "4d17d5c2f9a5243abb323e61f0a38ec5a78c792f3d1d61deb49cf8c85c30fe5a"
+      },
+      {
+        "path": "owned-buttons-v3-speaker-31957.log",
+        "sha256": "9cc68094c8408e162b1947e1cc6b004f454a19bb6ccaa3085cd39b0a961b3323"
+      }
+    ],
+    "unattributed_logs": [],
+    "results": [
+      {
+        "detail": "",
+        "group": "meta",
+        "id": "G02-META-REFERENCE",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "meta",
+        "id": "G02-META-VECTORS-FRESH",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "meta",
+        "id": "G02-META-INVARIANT-MAP",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "meta",
+        "id": "G02-META-EXTERNAL-TESTS-EXIST",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GAIN-001",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GAIN-002",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GAIN-003",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GAIN-004",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GAIN-005",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GAIN-006",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GAIN-007",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-ROLE-001",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-ROLE-002",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-ROLE-003",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-ROLE-004",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-ROLE-005",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-ROLE-006",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-ROLE-007",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-ROLE-008",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-ROLE-009",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-ROLE-010",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-ROLE-011",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MAP-001",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MAP-002",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-001",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-002",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-003",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-004",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-005",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-006",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-007",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-008",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-009",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-010",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-011",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-012",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-013",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-014",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-015",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-016",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-017",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-018",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-019",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-020",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-021",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-022",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-023",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-024",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-MBR-025",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GRP-001",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GRP-002",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GRP-003",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GRP-004",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GRP-005",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "vector",
+        "id": "G02-GRP-006",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::gain_is_volume_times_trim_clamped_to_the_ceilings_before_any_ramp",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::endpoints_saturate_and_overflowing_steps_are_refused_with_nothing_changed",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::a_group_volume_change_preserves_the_room_trim_until_it_is_explicitly_reset",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::mute_wins_over_volume_and_each_reason_has_exactly_one_owner",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::the_reported_mute_reason_follows_the_declared_priority",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::local_buttons_adjust_the_trim_within_bounds_and_never_unmute",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::stale_and_unauthorized_commands_are_refused_with_nothing_changed",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::a_command_can_never_mint_an_epoch_and_declared_epochs_only_move_forward",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::retries_are_idempotent_and_a_relative_command_applies_exactly_once",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::a_rejoining_member_takes_the_groups_current_state_and_starts_muted",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::a_restored_member_is_silent_and_powerless_until_it_rejoins",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::roles_map_onto_the_admitted_layout_and_absent_roles_are_refused_by_name",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::each_role_feeds_the_board_the_signal_it_names",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::group_commands_skip_missing_members_and_a_rejoin_takes_the_current_volume",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::unknown_and_duplicate_members_are_refused_by_name_with_nothing_changed",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::the_view_keeps_desired_bounded_and_applied_gain_apart_and_explains_a_silent_unmute",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::a_group_mute_reaches_a_rejoining_member_through_the_snapshot",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::the_target_is_bounded_before_the_ramp_and_the_ramp_never_overshoots_it",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::a_new_target_mid_ramp_retargets_from_the_current_gain",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::mute_wins_over_a_volume_command_in_flight",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::reconnect_never_spikes_for_a_live_board_or_a_restarted_one",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::a_board_that_is_not_active_keeps_the_member_fault_muted_whatever_is_requested",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::tests::mono_sum_is_bounded_and_only_admitted_for_non_sub_layouts",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::a_command_reports_the_receipt_it_produced_when_applied_not_the_state_a_replay_finds_later",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::an_older_applied_command_keeps_its_result_while_apply_still_refuses_its_replay_as_stale",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::a_revision_nothing_carries_is_not_applied_if_newer_than_everything_and_skipped_if_a_newer_one_was_applied",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::a_refused_command_is_not_recorded_and_consumes_no_revision",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::results_beyond_the_retention_window_are_forgotten_with_the_oldest_remembered_revision_stated",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::inside_the_window_a_gap_is_skipped_and_below_it_everything_is_forgotten",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::the_epoch_rules_are_those_of_apply_and_a_new_epoch_forgets_the_old_results",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::a_member_that_joined_from_a_snapshot_cannot_report_the_revisions_the_snapshot_covers",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::asking_changes_nothing",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::a_group_reports_the_authority_and_each_member_and_an_absent_member_never_applied_it",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::a_member_added_late_cannot_report_what_happened_before_it_joined",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::outcome_tests::the_answers_match_a_model_over_the_full_log_through_gaps_refusals_snapshots_and_new_epochs",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::a_queued_command_is_accepted_not_completed_and_completes_on_the_sample_the_ramp_lands",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::a_caller_that_bypasses_the_member_cannot_make_a_stale_completion_appear",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::a_board_holding_a_different_gain_has_not_been_told_even_when_both_are_silent",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::an_older_command_with_the_same_target_is_still_superseded_so_the_newest_is_the_one_to_ask_about",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::a_newer_command_supersedes_an_unfinished_one_and_a_completed_newer_one_does_not_revive_it",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::a_local_change_after_acceptance_overtakes_the_command_but_its_own_target_returning_completes_it",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::a_group_mute_completes_when_the_output_is_silent_and_says_why",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::a_board_that_cannot_unmute_completes_silent_and_the_command_says_why",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::a_fault_the_member_has_not_seen_is_not_completion_and_once_seen_it_supersedes_the_command",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::a_pending_profile_switch_is_not_completion_while_the_board_drains_to_silence",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::ids_that_were_never_accepted_report_the_outcome_and_the_epoch_rules_apply",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::asking_for_progress_changes_neither_the_member_nor_the_board",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::progress_tests::over_random_operations_completed_means_the_board_is_at_rest_and_a_queued_command_never_completes",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::local_mute_tests::a_member_with_no_authority_can_still_be_muted_locally_and_the_remote_path_is_shown_dead",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::local_mute_tests::a_member_cut_off_from_its_controller_stops_its_own_sound_and_a_heal_does_not_undo_it",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::rejoin_tests::a_snapshot_older_than_what_the_member_has_applied_is_refused_and_changes_nothing",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::rejoin_tests::a_newer_epoch_takes_its_snapshot_at_any_revision_and_an_older_one_is_refused_at_any",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::rejoin_tests::an_out_of_range_snapshot_is_refused_as_out_of_range_before_it_is_judged_stale",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::rejoin_tests::a_refused_old_snapshot_leaves_retries_and_command_outcomes_exactly_as_they_were",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::rejoin_tests::a_rejoin_cannot_clear_a_fault_mute_and_only_the_board_returning_to_active_does",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::rejoin_tests::a_rejoin_keeps_the_fault_ceiling_so_the_ramp_is_never_handed_more_than_it",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_dsp::volume::rejoin_tests::a_restarted_member_is_silent_on_a_fail_muted_board_and_plays_only_the_groups_on_a_live_one",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::a_press_is_one_local_action_and_a_release_is_none_through_the_real_hal_channel",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::an_unknown_state_is_neither_a_press_nor_a_release",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::a_held_button_is_one_press_and_is_reported_stuck_once",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::a_bouncing_button_cannot_ratchet_the_volume_and_a_spaced_press_acts",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::losing_the_button_device_never_unmutes_and_is_not_a_release",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::a_fault_that_is_not_a_button_is_ignored",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::actual_hal_fault_reset_requires_release_before_a_held_mute_can_unmute",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::unknown_and_repeated_fault_preserve_release_and_repeat_guards",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::a_button_works_for_a_member_with_no_authority_and_the_remote_path_is_shown_dead",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::a_configuration_that_cannot_work_is_refused_and_a_working_one_is_accepted",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::a_local_mute_survives_cloud_retries_and_a_rejoin_and_unmuting_plays_the_groups_volume",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::a_fault_mute_that_overrides_a_requested_unmute_is_reported_and_the_board_stays_silent",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::the_sound_mapping_produces_exactly_the_expected_actions",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::a_mute_bound_to_the_trim_is_caught",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::a_press_that_also_releases_is_caught",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::button_adapter::tests::over_random_events_cloud_commands_and_rejoins_the_adapter_matches_a_plain_model_and_never_touches_the_group",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::admitted_roles_match_manual_per_channel_protected_oracle_through_finite_eof",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::wrong_roles_bridge_and_same_id_wrong_profile_never_activate",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::busy_left_role_cannot_rebind_and_stop_preserves_retained_custody",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::manual_role_oracle_detects_swaps_and_a_wrong_sub_input",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::pending_or_failed_protection_profile_switch_cannot_authorize_a_role",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::same_geometry_hal_and_dsp_require_the_same_validated_profile",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::missing_calibration_stays_constructible_but_cannot_start",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::rejected_busy_rejoin_does_not_reinterpret_or_interrupt_later_pcm",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::actual_left_role_program_submission_remains_retained_until_ack",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::retained_readiness_requires_matching_installed_profile_and_no_pending_switch",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::invalid_dsp_cancel_drain_preserves_retained_ack_and_timeout_custody",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::invalid_dsp_graceful_drain_still_refuses_before_source_or_submit",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::rejected_busy_mono_rejoin_preserves_cached_and_later_protected_pcm",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::mono_sum_cancels_opposite_channels_through_actual_protected_pcm",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::role_integration::mono_sum_protected_pcm_differs_from_stereo_left_and_right",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::button_integration::owned_buttons_keep_initial_mute_until_observed_release_and_preserve_trim",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::button_integration::buttons_cannot_be_configured_after_join_proposal_or_stop_even_if_absent",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::button_integration::debounced_trim_changes_actual_protected_pcm_without_unmuting",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::button_integration::local_button_mute_survives_clock_failure_and_reports_real_drain_custody",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::button_integration::group_member_mute_and_button_local_mute_keep_distinct_owned_intents",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:franken_speaker::network_render::tests::controller_events::button_integration::ignored_release_and_channel_reset_do_not_touch_active_render_with_failed_clock",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:g02_vectors::g02_vectors_match_the_independent_reference",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:g02_vectors::a_planted_wrong_expectation_is_detected",
+        "status": "passed"
+      },
+      {
+        "detail": "",
+        "group": "rust",
+        "id": "RUST:g02_vectors::g02_assumes_the_d02_synthetic_ramp_is_ten_milliseconds",
+        "status": "passed"
+      }
+    ],
+    "reused_dsp_evidence": {
+      "reused_native_id": "30107136981729289",
+      "old_inventory_sha256": "6f28f27fc11e6d52600244b3d0f31d91109c7b47571274e7ec56d25bc7f67967",
+      "final_inventory_sha256": "45c842342fe6c84ef0cbcaa1355aa88b139320ca5fdfc51a2fe1479088070d31",
+      "compared_files": 39,
+      "mismatches": [],
+      "scope": "unchanged DSP crate and local dependencies, root manifests/lock/toolchain and G02 vectors; reuse only their G02 observations, not old speaker qualification or a final workspace rerun"
+    },
+    "raw_receipt_sha256": "43144c2ef837edaabb3f0c059f897a3c1790f6bcc963dafd09f1bfcc3fa6205a"
+  },
+  "python_controls": {
+    "final_passed": 44,
+    "final_failed": 0,
+    "final_raw_log_sha256": "bc7b31b6e766201e01a84b687abfce20543685cfd05b0010a6c26958186bd6bd",
+    "baseline_passed": 40,
+    "baseline_failed": 1,
+    "v1_passed": 43,
+    "v1_failed": 1,
+    "v2_passed": 43,
+    "v2_failed": 1,
+    "assertions_preserved": true,
+    "py_compile_files": 2,
+    "py_compile_passed": true
+  },
+  "formatting": {
+    "toolchain": "1.99.0",
+    "edition": 2024,
+    "skip_children": true,
+    "files": 4,
+    "passed": true
+  },
+  "qualification": {
+    "native_host_library_and_localhost_synthetic_HAL": true,
+    "final_full_workspace_runtime_rerun": false,
+    "physical_audio_or_driver_ABI": false,
+    "provider_or_native_tailnet": false,
+    "persisted_local_volume": false,
+    "dynamic_role_transition": false,
+    "recovered_membership_or_current_authority": false,
+    "legacy_kernel_32MiB": false,
+    "full_original_bead": false
+  },
+  "limits": [
+    "Independent review consumes these same native executions, not a second run.",
+    "DSP observations from289 are reused only after39 exact unchanged dependency/source/vector comparisons; no old speaker or additive full-workspace result is claimed.",
+    "Action reports local intent separately from optional render reconciliation and actual retained-HAL ACK or timeout.",
+    "Native Tailnet and provider features remain required and unqualified; they are not replaced by this host-model qualification."
+  ],
+  "observed_sha256": "b5979fac5d416cfb8e38ef9c47e54e9d1835489542d671ebff630bdc6827ef8f"
+}

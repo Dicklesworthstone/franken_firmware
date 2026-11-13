@@ -1,0 +1,43 @@
+Selected actual output; ANSI and unrelated/private-path metadata omitted.
+Captions and earlier failure summaries are supervisor annotations.
+
+Native30107136981729293: complete speaker package.
+test network_render::tests::controller_events::button_integration::buttons_cannot_be_configured_after_join_proposal_or_stop_even_if_absent ... ok
+test network_render::tests::controller_events::button_integration::debounced_trim_changes_actual_protected_pcm_without_unmuting ... ok
+test network_render::tests::controller_events::button_integration::group_member_mute_and_button_local_mute_keep_distinct_owned_intents ... ok
+test network_render::tests::controller_events::button_integration::ignored_release_and_channel_reset_do_not_touch_active_render_with_failed_clock ... ok
+test network_render::tests::controller_events::button_integration::local_button_mute_survives_clock_failure_and_reports_real_drain_custody ... ok
+test network_render::tests::controller_events::button_integration::owned_buttons_keep_initial_mute_until_observed_release_and_preserve_trim ... ok
+test result: ok. 593 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 61.23s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.21s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.29s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Native30107136981729294: strict workspace all-target Clippy.
+    Finished `dev` profile [unoptimized] target(s) in 1m 04s
+Native receipt command_exit_code:0; ACK/custody checked separately.
+
+Actual G02 judge using final speaker293 and unchanged DSP observations from289.
+G02 e2e tier=full: QUALIFIED  planned=152 passed=152 failed=0 blocked=0
+
+Final Python judge controls:
+............................................
+----------------------------------------------------------------------
+Ran 44 tests in 0.741s
+
+OK
+
+Earlier source/Python outcomes retained (annotations):
+Baseline Python:40 passed/1 failed; stale expected128 versus actual131.
+v1 Python:43 passed/1 failed; original acceptance-map doc status check.
+v2 Python:43 passed/1 failed; original acceptance-map status grammar check.
+No assertion was removed or weakened. v3 changes only two status labels from v2.
+Source review NO-GO: local-panel test bypassed remote controller revision checks.
+Corrected child uses authenticated Controller with observed revisions1 and2.
+No native test was executed on v1 or v2.
