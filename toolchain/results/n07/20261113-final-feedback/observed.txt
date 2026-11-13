@@ -1,0 +1,136 @@
+# Sanitized exact native output excerpts; full private logs bound by SHA-256 in receipt.json.
+# Failed345/346 remain failures; neither executed tests.
+# Native348:14 required test lines, exact PCM marker, existing ignored lines and81 exact footer lines.
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.41s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.15s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 95 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test result: ok. 102 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.40s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.78s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+test result: ok. 690 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.34s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test convert::soft_float_tests::f32_to_s16_and_the_clamp_match_the_original_over_all_four_billion_bit_patterns ... ignored, exhaustive 2^32 sweep: run in release mode with --ignored
+test result: ok. 179 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.68s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 163 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.46s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.86s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.07s
+test result: ok. 248 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 119 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.68s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test network_render::tests::controller_events::final_feedback::clock_fault_after_natural_completion_revokes_feedback_without_fake_credit_or_pcm ... ok
+test network_render::tests::controller_events::final_feedback::committed_authenticated_stop_during_natural_drain_revokes_final_feedback ... ok
+test network_render::tests::controller_events::final_feedback::expired_canonical_lease_refuses_first_final_feedback_without_retiring_source_credit ... ok
+test network_render::tests::controller_events::final_feedback::explicit_stop_after_natural_completion_permanently_revokes_managed_final_feedback ... ok
+test network_render::tests::controller_events::final_feedback::managed_final_feedback_checks_control_lease_at_its_single_actual_send_clock_sample ... ok
+test network_render::tests::controller_events::final_feedback::real_decoded_source_retires_lost_final_credit_while_managed_hal_still_drains ... ok
+test network_render::tests::final_feedback_expiry_epoch_and_clock_fault_fail_closed ... ok
+test network_render::tests::final_feedback_grace_arithmetic_extremes_permanently_revoke ... ok
+test network_render::tests::final_feedback_grace_uses_actual_n03_lower_bound_and_excludes_boundary ... ok
+test network_render::tests::final_feedback_is_bounded_and_explicit_stop_is_irrevocable ... ok
+test network_render::tests::final_feedback_is_revoked_on_natural_drain_fault ... ok
+test network_render::tests::final_feedback_permit_receives_send_bound_and_denial_revokes ... ok
+test network_render::tests::final_feedback_recovers_real_lost_credit_after_natural_drain ... ok
+test network_render::tests::final_feedback_revokes_real_early_render_fault_before_completion ... ok
+FFW_FINAL_FEEDBACK_PCM frames=24000 samples=48000 packets=94 peak_lsb=1 rms_lsb=0.7097975063354337
+test result: ok. 663 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 69.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.02s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.93s
+test result: ok. 261 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.86s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.09s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.85s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+# Native349:24 required actual client tests, one expected negative-control canary,7 exact footers.
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test on_the_tailnet_the_composed_server_describes_nothing_subscribes_nobody_and_sends_nothing ... ok
+test the_composed_client_reaches_nothing_but_the_one_fixture_player ... ok
+test the_real_client_finds_describes_controls_and_hears_one_server ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.71s
+test a_restarted_device_keeps_its_identity_and_a_different_identity_is_a_different_device ... ok
+test a_tailnet_connection_is_refused_the_description_and_control_that_the_local_link_gets ... ok
+test malformed_searches_get_no_answer_and_the_clients_own_search_still_finds_the_device ... ok
+test only_the_zone_player_answer_is_a_player_for_the_client_and_other_services_are_silent ... ok
+test the_confined_client_refuses_any_host_or_url_but_the_fixture_player ... ok
+test the_real_client_finds_reads_and_cross_checks_the_device_over_loopback ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.05s
+test a_restarted_shim_never_honours_an_old_sid_before_or_after_a_fresh_subscription ... ok
+test a_shim_not_started_eventing_still_grants_the_subscription_and_delivers_nothing ... ok
+test a_stalled_callback_is_bounded_and_counted_while_control_keeps_answering ... ok
+test a_subscribe_naming_any_other_callback_is_answered_412_and_never_contacted ... ok
+test the_real_client_subscribes_and_a_real_listener_receives_ordered_events ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.51s
+test actual_client_discovers_same_protected_owner_across_restart_and_new_subscription ... ok
+test failed_owner_discovery_preflight_fences_until_real_owner_cleanup_then_succeeds ... ok
+test real_fsonos_eventing_changes_same_owner_protected_pcm_and_stops_with_ack ... ok
+test two_owner_client_rejects_unconfined_routes_and_requests_before_delegation ... ok
+test two_real_standalone_owners_are_discovered_controlled_and_rendered_independently ... ok
+FFW_TWO_OWNER_ISOLATION_CANARY observed=[true,true] expected=[true,false] message="assertion `left == right` failed: owner service mask mismatch\n  left: [true, true]\n right: [true, false]"
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.17s
+test the_real_client_is_refused_on_an_unauthenticated_tailnet_connection ... ok
+test the_real_client_reads_and_sets_volume_and_mute_on_the_real_endpoint_over_loopback ... ok
+test the_real_client_reports_each_refusal_as_the_error_it_is_and_nothing_changes ... ok
+test the_test_client_can_reach_only_the_fixture_player_and_has_no_discovery ... ok
+test with_no_listener_the_real_client_reports_a_network_error_and_never_a_success ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
