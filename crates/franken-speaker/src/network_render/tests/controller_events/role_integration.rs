@@ -284,11 +284,14 @@ fn expected_role_pcm(
                 ChannelRole::Stereo => (l, r),
                 ChannelRole::LeftMono => (l, l),
                 ChannelRole::RightMono => (r, r),
+                ChannelRole::MonoSum => {
+                    let mono = 0.5 * l + 0.5 * r;
+                    (mono, mono)
+                }
                 ChannelRole::SubLfe => {
                     let mid = 0.5 * (l + r);
                     (mid, mid)
                 }
-                other => panic!("unsupported reference role {other:?}"),
             };
             block.left[i] = a;
             block.right[i] = b;
@@ -356,6 +359,7 @@ fn admitted_roles_match_manual_per_channel_protected_oracle_through_finite_eof()
         ("S5", ChannelRole::Stereo),
         ("S5", ChannelRole::LeftMono),
         ("S5", ChannelRole::RightMono),
+        ("S5", ChannelRole::MonoSum),
         ("Sub", ChannelRole::SubLfe),
     ] {
         let board = role_board(model);
@@ -395,13 +399,6 @@ fn admitted_roles_match_manual_per_channel_protected_oracle_through_finite_eof()
 }
 
 fn refused_at_admission_or_join(board: &BoardProfile, role: ChannelRole) {
-    if role == ChannelRole::MonoSum {
-        assert!(matches!(
-            role_fixture(board, role, 512),
-            Err(AdmissionError::Binding)
-        ));
-        return;
-    }
     let mut rig = role_fixture(board, role, 512).unwrap();
     let cutover = ((CLOCK_ORIGIN + 500_000_000) * 48_000) / 1_000_000_000;
     assert!(
@@ -434,13 +431,12 @@ fn refused_at_admission_or_join(board: &BoardProfile, role: ChannelRole) {
 fn wrong_roles_bridge_and_same_id_wrong_profile_never_activate() {
     let s5 = role_board("S5");
     let sub = role_board("Sub");
-    for role in [ChannelRole::SubLfe, ChannelRole::MonoSum] {
-        refused_at_admission_or_join(&s5, role);
-    }
+    refused_at_admission_or_join(&s5, ChannelRole::SubLfe);
     for role in [
         ChannelRole::Stereo,
         ChannelRole::LeftMono,
         ChannelRole::RightMono,
+        ChannelRole::MonoSum,
     ] {
         refused_at_admission_or_join(&sub, role);
     }
@@ -449,6 +445,7 @@ fn wrong_roles_bridge_and_same_id_wrong_profile_never_activate() {
         ChannelRole::Stereo,
         ChannelRole::LeftMono,
         ChannelRole::RightMono,
+        ChannelRole::MonoSum,
         ChannelRole::SubLfe,
     ] {
         use franken_dsp::volume::{Role, RolePlan, RoleRefusal, VolumeError};
@@ -456,8 +453,8 @@ fn wrong_roles_bridge_and_same_id_wrong_profile_never_activate() {
             ChannelRole::Stereo => Role::Stereo,
             ChannelRole::LeftMono => Role::Left,
             ChannelRole::RightMono => Role::Right,
+            ChannelRole::MonoSum => Role::MonoSum,
             ChannelRole::SubLfe => Role::Sub,
-            other => panic!("unexpected role {other:?}"),
         };
         assert!(matches!(
             RolePlan::for_profile(&bridge, planned),
@@ -617,6 +614,10 @@ fn manual_role_oracle_detects_swaps_and_a_wrong_sub_input() {
     let (stereo, _) = expected_role_pcm(&s5, ChannelRole::Stereo, 512);
     let (left, _) = expected_role_pcm(&s5, ChannelRole::LeftMono, 512);
     let (right, _) = expected_role_pcm(&s5, ChannelRole::RightMono, 512);
+    let (mono, _) = expected_role_pcm(&s5, ChannelRole::MonoSum, 512);
+    assert_ne!(mono, stereo, "mono-vs-stereo routing must be observable");
+    assert_ne!(mono, left, "mono-vs-left routing must be observable");
+    assert_ne!(mono, right, "mono-vs-right routing must be observable");
     assert_ne!(stereo, left, "stereo-vs-left routing must be observable");
     assert_ne!(stereo, right, "stereo-vs-right routing must be observable");
     assert_ne!(left, right, "left-right swaps must be observable");
@@ -785,9 +786,9 @@ fn missing_calibration_stays_constructible_but_cannot_start() {
     assert!(!probe.calls().contains(&FakeCall::SetMute(false)));
 }
 
-fn left_role_after_busy_rejoin(attempt: bool) -> Vec<Vec<u8>> {
+fn role_after_busy_rejoin(role: ChannelRole, attempt: bool) -> Vec<Vec<u8>> {
     let board = role_board("S5");
-    let mut rig = role_fixture(&board, ChannelRole::LeftMono, 512).unwrap();
+    let mut rig = role_fixture(&board, role, 512).unwrap();
     role_activate(&mut rig, &board);
     enqueue_role_audio(&mut rig, 512);
     let mut timing = ScriptedTiming {
@@ -840,8 +841,8 @@ fn left_role_after_busy_rejoin(attempt: bool) -> Vec<Vec<u8>> {
 
 #[test]
 fn rejected_busy_rejoin_does_not_reinterpret_or_interrupt_later_pcm() {
-    let without_attempt = left_role_after_busy_rejoin(false);
-    let after_refusal = left_role_after_busy_rejoin(true);
+    let without_attempt = role_after_busy_rejoin(ChannelRole::LeftMono, false);
+    let after_refusal = role_after_busy_rejoin(ChannelRole::LeftMono, true);
     let (expected, frames) = expected_role_pcm(&role_board("S5"), ChannelRole::LeftMono, 512);
     assert!(frames >= 512);
     assert_eq!(
@@ -1325,4 +1326,105 @@ fn invalid_dsp_graceful_drain_still_refuses_before_source_or_submit() {
         assert_eq!(probe.use_after_free(), 0);
         assert_eq!(probe.modified_while_owned(), 0);
     }
+}
+
+#[test]
+fn rejected_busy_mono_rejoin_preserves_cached_and_later_protected_pcm() {
+    let without_attempt = role_after_busy_rejoin(ChannelRole::MonoSum, false);
+    let after_refusal = role_after_busy_rejoin(ChannelRole::MonoSum, true);
+    let (expected, frames) = expected_role_pcm(&role_board("S5"), ChannelRole::MonoSum, 512);
+    assert!(frames >= 512);
+    assert!(!expected.is_empty());
+    assert!(expected.iter().flatten().any(|byte| *byte != 0));
+    assert_eq!(after_refusal, without_attempt);
+    assert_eq!(after_refusal, expected);
+}
+
+/// Send exactly opposite signed channels through the actual network and render
+/// owners. Stereo remains an audible positive control for the same payload.
+fn opposed_channels_to_eof(role: ChannelRole) -> Vec<Vec<u8>> {
+    let board = role_board("S5");
+    let mut rig = role_fixture(&board, role, 512).unwrap();
+    role_activate(&mut rig, &board);
+    let mut frame = 0_u64;
+    while frame < 512 {
+        let count = (512 - frame).min(BLOCK_FRAMES) as usize;
+        let mut payload = Vec::with_capacity(count * 4);
+        for i in 0..count {
+            let left = stereo_sample(frame + i as u64).0;
+            payload.extend_from_slice(&left.to_be_bytes());
+            payload.extend_from_slice(&(-left).to_be_bytes());
+        }
+        let pts = rig.start_group_ns + frames_to_ns(frame);
+        let wire = rig
+            .sender
+            .send(OutboundFrame::media(frame, pts, pts - 5_333_333, payload))
+            .unwrap();
+        rig.socket.send_to(&wire, rig.address).unwrap();
+        let report = rig.owner.poll_media().unwrap();
+        assert_eq!((report.media_read, report.media_accepted), (1, 1));
+        frame += count as u64;
+    }
+    let mut timing = ScriptedTiming {
+        default_cost: 1,
+        ..ScriptedTiming::default()
+    };
+    let mut draining = false;
+    for step in 0..5000_u64 {
+        rig.local_now
+            .set(rig.start_local_ns - 15_000_000 + step * 100_000);
+        assert!(matches!(
+            rig.owner.render_step(&mut timing).unwrap(),
+            PlaybackStep::Render(_)
+        ));
+        if rig.owner.render_state() == RenderState::Draining {
+            draining = true;
+            break;
+        }
+    }
+    assert!(draining);
+    assert!(finish_drain(&mut rig.owner).acknowledged);
+    assert_eq!(rig.owner.received_frames_pulled(), 512);
+    assert_eq!(rig.probe.pending(), 0);
+    assert_eq!(rig.probe.use_after_free(), 0);
+    assert_eq!(rig.probe.modified_while_owned(), 0);
+    let captured = rig.probe.captured_submissions();
+    assert!(
+        captured.len() > 1,
+        "require actual program output after prime"
+    );
+    captured[1..].to_vec()
+}
+
+#[test]
+fn mono_sum_cancels_opposite_channels_through_actual_protected_pcm() {
+    let mono = opposed_channels_to_eof(ChannelRole::MonoSum);
+    let stereo = opposed_channels_to_eof(ChannelRole::Stereo);
+    assert_eq!(mono.len(), stereo.len());
+    assert!(
+        stereo.iter().flatten().any(|byte| *byte != 0),
+        "same input must be audible in stereo host model"
+    );
+    assert!(
+        mono.iter().flatten().all(|byte| *byte == 0),
+        "opposite signed channels must cancel before protection"
+    );
+}
+
+#[test]
+fn mono_sum_protected_pcm_differs_from_stereo_left_and_right() {
+    let board = role_board("S5");
+    let mono = render_role_to_eof(&board, ChannelRole::MonoSum, 512);
+    let stereo = render_role_to_eof(&board, ChannelRole::Stereo, 512);
+    let left = render_role_to_eof(&board, ChannelRole::LeftMono, 512);
+    let right = render_role_to_eof(&board, ChannelRole::RightMono, 512);
+    let (reference, frames) = expected_role_pcm(&board, ChannelRole::MonoSum, 512);
+    assert!(frames >= 512);
+    assert_eq!(mono, reference);
+    assert_ne!(mono, stereo);
+    assert_ne!(mono, left);
+    assert_ne!(mono, right);
+    // A Sub has a different admitted board and D02 crossover. Its stereo-mid
+    // input is mathematically equivalent to MonoSum for ordinary PCM, so this
+    // test does not claim a role distinction from that output alone.
 }

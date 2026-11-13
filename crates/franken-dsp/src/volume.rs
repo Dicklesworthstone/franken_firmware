@@ -118,6 +118,8 @@ pub enum Role {
     Left,
     /// Every driver plays the right channel.
     Right,
+    /// All non-sub drivers receive the equally weighted left/right mono mix.
+    MonoSum,
     /// A sub receives the bass-managed mono mix; the crossover is in the board's D02 calibration.
     Sub,
 }
@@ -129,6 +131,7 @@ impl Role {
             Self::Stereo => "stereo",
             Self::Left => "left",
             Self::Right => "right",
+            Self::MonoSum => "mono_sum",
             Self::Sub => "sub",
         }
     }
@@ -762,8 +765,10 @@ impl RolePlan {
         match role {
             Role::Sub if all_sub => Ok(Self { role }),
             Role::Sub if none_sub => refuse(RoleRefusal::NoSubwooferPath),
-            Role::Stereo | Role::Left | Role::Right if none_sub => Ok(Self { role }),
-            Role::Stereo | Role::Left | Role::Right if all_sub => {
+            Role::Stereo | Role::Left | Role::Right | Role::MonoSum if none_sub => {
+                Ok(Self { role })
+            }
+            Role::Stereo | Role::Left | Role::Right | Role::MonoSum if all_sub => {
                 refuse(RoleRefusal::SubwooferOnly)
             }
             _ => refuse(RoleRefusal::MixedSubLayout),
@@ -783,6 +788,10 @@ impl RolePlan {
             Role::Stereo => (left, right),
             Role::Left => (left, left),
             Role::Right => (right, right),
+            Role::MonoSum => {
+                let mono = 0.5 * left + 0.5 * right;
+                (mono, mono)
+            }
             Role::Sub => {
                 let mid = 0.5 * (left + right);
                 (mid, mid)

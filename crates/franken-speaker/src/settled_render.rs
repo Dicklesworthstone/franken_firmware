@@ -183,8 +183,6 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             || clock_leader != render.bound_clock_leader()
             || !control.fresh_group_is_healthy()
             || profile != render.protection_profile_id()
-            // MonoSum has no admitted G02 mapping in this bounded slice.
-            || role == ChannelRole::MonoSum
             || !ceiling.is_finite()
             || !(0.0..=1.0).contains(&ceiling)
         {
@@ -327,7 +325,7 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             ChannelRole::LeftMono => Role::Left,
             ChannelRole::RightMono => Role::Right,
             ChannelRole::SubLfe => Role::Sub,
-            ChannelRole::MonoSum => return Err(OwnerError::Binding),
+            ChannelRole::MonoSum => Role::MonoSum,
         };
         let plan = RolePlan::for_profile(&board, role).map_err(|_| OwnerError::Binding)?;
         if !self.render.can_bind_initial_role(plan) {

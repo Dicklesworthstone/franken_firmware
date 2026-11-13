@@ -121,6 +121,7 @@ fn role_of(name: &str) -> Role {
         "stereo" => Role::Stereo,
         "left" => Role::Left,
         "right" => Role::Right,
+        "mono_sum" => Role::MonoSum,
         "sub" => Role::Sub,
         other => panic!("unknown role `{other}`"),
     }
@@ -132,6 +133,10 @@ fn premap(role: Role, left: f32, right: f32) -> (f32, f32) {
         Role::Stereo => (left, right),
         Role::Left => (left, left),
         Role::Right => (right, right),
+        Role::MonoSum => {
+            let mono = 0.5 * left + 0.5 * right;
+            (mono, mono)
+        }
         Role::Sub => {
             let mid = 0.5 * (left + right);
             (mid, mid)

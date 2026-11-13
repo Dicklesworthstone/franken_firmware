@@ -1071,3 +1071,63 @@ fn a_board_that_is_not_active_keeps_the_member_fault_muted_whatever_is_requested
             .all(|&g| g == 0.0)
     );
 }
+
+#[test]
+fn mono_sum_is_bounded_and_only_admitted_for_non_sub_layouts() {
+    let s5 = fixture("S5");
+    let plan = RolePlan::for_profile(&s5, Role::MonoSum).unwrap();
+    assert_eq!(plan.role(), Role::MonoSum);
+    for (left, right, want) in [
+        (0.2_f32, -0.6_f32, 0.5_f32 * 0.2_f32 + 0.5_f32 * -0.6_f32),
+        (1.0, -1.0, 0.0),
+        (f32::MAX, f32::MAX, f32::MAX),
+        (-f32::MAX, -f32::MAX, -f32::MAX),
+        (f32::MAX, -f32::MAX, 0.0),
+    ] {
+        let (a, b) = plan.map(left, right);
+        assert!(a.is_finite() && b.is_finite());
+        assert_eq!((a, b), (want, want));
+    }
+    let mut input = StereoAudioBlock::silence(73);
+    input.frames = 3;
+    input.left[..3].copy_from_slice(&[1.0, 0.5, -0.25]);
+    input.right[..3].copy_from_slice(&[-1.0, 0.25, 0.5]);
+    let mut output = StereoAudioBlock::silence(0);
+    output.left.fill(9.0);
+    output.right.fill(9.0);
+    plan.map_block(&input, &mut output);
+    assert_eq!((output.start_frame, output.frames), (73, 3));
+    assert_eq!(&output.left[..3], &[0.0, 0.375, 0.125]);
+    assert_eq!(&output.right[..3], &[0.0, 0.375, 0.125]);
+    assert_eq!(output.left[3], 9.0);
+    assert_eq!(output.right[3], 9.0);
+
+    for (board, reason) in [
+        (fixture("Sub"), RoleRefusal::SubwooferOnly),
+        (fixture("BR100"), RoleRefusal::NoAudioOutput),
+        (
+            {
+                let mut mixed = fixture("S3");
+                mixed.channel_routing[2] = TransducerRole::SubwooferLfe;
+                mixed
+            },
+            RoleRefusal::MixedSubLayout,
+        ),
+        (
+            {
+                let mut invalid = fixture("S3");
+                invalid.channel_routing.pop();
+                invalid
+            },
+            RoleRefusal::InvalidLayout,
+        ),
+    ] {
+        assert_eq!(
+            RolePlan::for_profile(&board, Role::MonoSum),
+            Err(VolumeError::RoleUnavailable {
+                role: Role::MonoSum,
+                reason
+            })
+        );
+    }
+}
