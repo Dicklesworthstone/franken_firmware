@@ -1,0 +1,3 @@
+supervisor.powerpc.elf:   ELF 32-bit MSB executable, PowerPC or cisco 4500, version 1 (SYSV), statically linked, stripped
+runtime.powerpc.elf:      ELF 32-bit MSB executable, PowerPC or cisco 4500, version 1 (SYSV), statically linked, stripped
+vmlinux-3.16.0-6-powerpc: ELF 32-bit MSB executable, PowerPC or cisco 4500, version 1 (SYSV), statically linked, BuildID[sha1]=dfee48ff83a5b74e002b6ea15a16431aa3683f40, not stripped

@@ -1,0 +1,204 @@
+{
+  "schema": "ffw.p05.existing-guest-capture.v1",
+  "scope": "One distinct Linux3.16 QEMU guest with 32MiB emulated physical memory, unchanged existing runtime/initramfs; no build, physical hardware proof or original4.9 failure reversal",
+  "attempts": 1,
+  "execution": {
+    "normalized_argv": [
+      "qemu-system-ppc",
+      "-M",
+      "g3beige",
+      "-cpu",
+      "G3",
+      "-m",
+      "32M",
+      "-nographic",
+      "-no-reboot",
+      "-nic",
+      "none",
+      "-bios",
+      "$BIOS",
+      "-kernel",
+      "$KERNEL",
+      "-initrd",
+      "$INITRAMFS",
+      "-append",
+      "console=ttyPZ0,38400 rdinit=/init panic=-1"
+    ],
+    "qemu_sha256": "c2f7edde06c77ac35f5a3a93b3848c8681eb000217048e88b86ff22883dc94bf",
+    "qemu_version": "QEMU emulator version 11.1.3\nCopyright (c) 2003-2026 Fabrice Bellard and the QEMU Project developers\n",
+    "timeout_seconds": 600,
+    "capture_limit_bytes": 1048576,
+    "elapsed_seconds": 4.163210041122511,
+    "exit_code": 0,
+    "stop_reason": null,
+    "stdout_sha256": "c56b2fd6a695edad9680cbf378f42b0646c33556cedde5ff9e7eccca980f6fea",
+    "stdout_bytes": 17956,
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_bytes": 0,
+    "inputs_unchanged": true,
+    "leader_reaped_by_capture_guest": true,
+    "descendant_group_absence": "not independently observed",
+    "capture_complete": true
+  },
+  "inputs": {
+    "kernel": {
+      "file": "vmlinux-3.16.0-6-powerpc",
+      "sha256": "0e20e7ffd30fd89a2967131bd1d9100bb29384590a481ce4214f6c88c883b1c7",
+      "bytes": 10039440,
+      "sha256_after": "0e20e7ffd30fd89a2967131bd1d9100bb29384590a481ce4214f6c88c883b1c7"
+    },
+    "initramfs": {
+      "file": "runtime.cpio.gz",
+      "sha256": "8b4028c3b91d4e601e881d142beb33348e6f5932a9cfe9ed2ae07ab7ed8232c3",
+      "bytes": 983831,
+      "sha256_after": "8b4028c3b91d4e601e881d142beb33348e6f5932a9cfe9ed2ae07ab7ed8232c3"
+    },
+    "bios": {
+      "file": "openbios-ppc",
+      "sha256": "032884eab588cd8d45903ed7be718f7a23fecaa4fc45c2dbf18c1220f13218ef",
+      "bytes": 673104,
+      "sha256_after": "032884eab588cd8d45903ed7be718f7a23fecaa4fc45c2dbf18c1220f13218ef"
+    },
+    "init": {
+      "file": "supervisor.powerpc.elf",
+      "sha256": "faf5f35a17b11047092a907be5e3ae86097d82682fa44bdb0534b46235caf721",
+      "bytes": 27788,
+      "sha256_after": "faf5f35a17b11047092a907be5e3ae86097d82682fa44bdb0534b46235caf721"
+    },
+    "franken-speaker": {
+      "file": "runtime.powerpc.elf",
+      "sha256": "410ed6461d318666753ca906a01eb5b3ae5c5c3b92520043311dc74f2adc0fce",
+      "bytes": 1946688,
+      "sha256_after": "410ed6461d318666753ca906a01eb5b3ae5c5c3b92520043311dc74f2adc0fce"
+    }
+  },
+  "archive": {
+    "uncompressed_bytes": 1976832,
+    "compressed_bytes": 983831,
+    "archive_sha256": "8b4028c3b91d4e601e881d142beb33348e6f5932a9cfe9ed2ae07ab7ed8232c3",
+    "raw_cpio_sha256": "c24636b4700c548593f8a8fee1407ea3fe913833d41f5821e91b9fd4d6465319",
+    "init_sha256": "faf5f35a17b11047092a907be5e3ae86097d82682fa44bdb0534b46235caf721",
+    "init_size": 27788,
+    "entry_count": 16,
+    "devices": {
+      "dev/console": {
+        "mode": "0o20600",
+        "rdev": [
+          5,
+          1
+        ]
+      },
+      "dev/ttyS0": {
+        "mode": "0o20600",
+        "rdev": [
+          4,
+          64
+        ]
+      },
+      "dev/ttyPZ0": {
+        "mode": "0o20600",
+        "rdev": [
+          204,
+          192
+        ]
+      },
+      "dev/null": {
+        "mode": "0o20666",
+        "rdev": [
+          1,
+          3
+        ]
+      },
+      "dev/zero": {
+        "mode": "0o20666",
+        "rdev": [
+          1,
+          5
+        ]
+      },
+      "dev/random": {
+        "mode": "0o20600",
+        "rdev": [
+          1,
+          8
+        ]
+      },
+      "dev/urandom": {
+        "mode": "0o20666",
+        "rdev": [
+          1,
+          9
+        ]
+      }
+    }
+  },
+  "checker_sources": {
+    "toolchain/src/measure-p05-target.py": "800120772d0066bd0a271d7c60aba5dcafab1086e31487ead4206cb30e717c2d",
+    "toolchain/src/run-qemu-verification.py": "d0d6db9ad808c03fec3970378af593872e8dc813b63e866ecc1eefb8fa29f0f7",
+    "toolchain/src/mkinitramfs.py": "65d911f66097f466ff23aaaba85e18ffd77b6727f649b0eb54d6d19f0edb486b",
+    "toolchain/src/speaker_expect.py": "350abb73d8fe897159df133cec1e97ba55f10c64d44e2946d7ea0d558f9769d6",
+    "toolchain/src/platform_expect.py": "995bf9df395c445f5b3addeeccce456baa23a9e34a94aa284ec1134697cc8bd4"
+  },
+  "checker_sources_unchanged_after_analysis": true,
+  "recording_executor_sha256": "bed113c6f04d3ca101c1bf485309bce6417cec4c48d3f0762bd2e08664964e6d",
+  "private_preflight_sha256": "fdb647839394d767600078f1780a425d24fe475702c3a84df73b3c8931cff5dd",
+  "analysis": {
+    "file": "analysis.json",
+    "sha256": "563d713e54501cca36a4c6a9c86c3255c211adf073fb80237a37321a23cd5abd",
+    "exit_code": 0,
+    "evidence_kind": "supplied_transcript_analysis",
+    "raw_stdout_sha256": "c56b2fd6a695edad9680cbf378f42b0646c33556cedde5ff9e7eccca980f6fea",
+    "all_seven_gates_passed": true
+  },
+  "metrics": {
+    "census_samples": 12,
+    "max_vm_hwm_kib": 2284,
+    "min_mem_available_kib": 18560,
+    "all_threads_one": true,
+    "end_line": "FFW_P05_RUNTIME:END status=done ops=30 ok=30 failed=0 unsupported=0 partial=0 unknown=0 census_samples=12"
+  },
+  "kernel_provenance": {
+    "distribution": "Debian Jessie",
+    "package": "linux-image-3.16.0-6-powerpc",
+    "version": "3.16.56-1+deb8u1",
+    "url": "https://archive.debian.org/debian/pool/main/l/linux/linux-image-3.16.0-6-powerpc_3.16.56-1%2Bdeb8u1_powerpc.deb",
+    "package_bytes": 25742544,
+    "package_sha256": "e45aa67da39f7ee9815743a84af0133d9475ceb7c92d807177317ba26af646d9",
+    "config_bytes": 131740,
+    "config_sha256": "98d4074ecb593de6058167e418b93b580408aa34cf0606ca29972ec5c0b4ddae",
+    "packages_gzip_sha256": "18e24b9f1239f3c2c76e02233928c4eec69fefbdbfb4a48d4dea7cf03b50bfaf",
+    "release_url": "https://archive.debian.org/debian/dists/jessie/Release",
+    "release_signature_verified": false
+  },
+  "historical_failure": {
+    "record": "../20261109-caller-driven-guests/RUN.md",
+    "kernel": "Debian Linux4.9.88",
+    "emulated_ram_mib": 32,
+    "timeout_seconds": 600,
+    "observed_operations": 0,
+    "result": "retained failure; not reversed or attributed to runtime OOM",
+    "original_bios_sha256": null
+  },
+  "qualification": "One short caller-driven Asupersync probe, not speaker process, physical audio, stock kernel2.4, native service integration, full resource budget or P05/P03 completion",
+  "runtime_operations": {
+    "named_phases": 18,
+    "census_operations": 12,
+    "total_ok": 30,
+    "total_failed": 0,
+    "unsupported": 0,
+    "partial": 0,
+    "unknown": 0
+  },
+  "supervisor_optional_capabilities": {
+    "entropy": {
+      "status": "PASS",
+      "fd": 4,
+      "qualification": "observed selected provider access, not full cryptographic entropy qualification"
+    },
+    "getrandom": {
+      "status": "FAIL",
+      "return_code": -38,
+      "meaning": "ENOSYS; accepted optional-capability result in unchanged supervisor, retained explicitly"
+    }
+  }
+}

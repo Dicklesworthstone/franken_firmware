@@ -1,0 +1,70 @@
+{
+  "arch": "powerpc",
+  "elf": {
+    "arch": "powerpc",
+    "bytes": 1946688,
+    "pointer_bits": 32,
+    "sha256": "410ed6461d318666753ca906a01eb5b3ae5c5c3b92520043311dc74f2adc0fce",
+    "source_provenance": "not_attested_by_this_runner"
+  },
+  "evidence_kind": "supplied_transcript_analysis",
+  "execution": null,
+  "gates": [
+    {
+      "detail": "",
+      "gate_id": "P05R-TRANSCRIPT",
+      "status": "passed",
+      "title": "all 32 runtime markers in the declared order"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-ENV",
+      "status": "passed",
+      "title": "runtime BEGIN and supplied ELF agree"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-PHASES",
+      "status": "passed",
+      "title": "every required operation actually reports ok"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-CLEANUP",
+      "status": "passed",
+      "title": "child-side cancellation cleanup is actually observed"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-CENSUS",
+      "status": "passed",
+      "title": "twelve complete, consistent census samples, none above the start count, the runtime drop settled"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-END",
+      "status": "passed",
+      "title": "END matches independently counted operations"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-SUPERVISOR",
+      "status": "passed",
+      "title": "bootstrap setup, child hash/exit and ordered reboot"
+    }
+  ],
+  "path_hashes": [],
+  "profile": "caller-driven",
+  "result": "passed",
+  "revision_claim": "91509bcd8ac1f1cb00417b9b3a6d54875cbfce05",
+  "schema": "ffw.p05.runtime_receipt.v1",
+  "scope": "A runtime transcript is distinct from the atomic-cell guest. Native execution does not qualify BE execution. A supplied ELF hash binds bytes, not their compiler/source provenance. The supplied revision is an operator claim, not an attestation. Analysis only validates supplied transcript bytes; command exit and execution custody require the original execution receipt. This runner compiles nothing. Synthetic checker tests are not runtime or QEMU proof. A guest pass covers the named phases under the recorded QEMU kernel, not stock kernels, 32 MiB memory fit, physical drivers/audio, provider integrations, or completion of P05/P03. This is the caller-driven run: a runtime built with LegacyProfile::caller_driven, whose one scheduler worker is driven by the thread that calls block_on, with no blocking thread and no helper thread, selected by an initramfs marker because the unchanged supervisor passes the probe no argument. Its rows are observations on one such runtime in one guest: that its tasks, timers and drain ran on the calling thread, that no census row showed a thread above the starting count, that blocking work is refused, and that work spawned through a handle between block_on calls waits for the next block_on. It does not show that the mode is suitable for the speaker's I/O load, or that it is deadlock-free: a synchronous block inside a task stalls the whole runtime by design. Every row is ok and nothing is declared unsupported.",
+  "supervisor_elf": {
+    "arch": "powerpc",
+    "bytes": 27788,
+    "pointer_bits": 32,
+    "sha256": "faf5f35a17b11047092a907be5e3ae86097d82682fa44bdb0534b46235caf721",
+    "source_provenance": "not_attested_by_this_runner"
+  },
+  "transcript_sha256": "c56b2fd6a695edad9680cbf378f42b0646c33556cedde5ff9e7eccca980f6fea"
+}
