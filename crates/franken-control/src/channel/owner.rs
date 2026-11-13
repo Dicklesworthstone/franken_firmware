@@ -6,9 +6,10 @@
 
 use std::collections::BTreeSet;
 
-use franken_journal::{Journal, JournalError, Limits, Source, Storage};
+use franken_journal::{Journal, JournalError, Limits, Namespace, Source, Storage};
 use franken_session::{
-    AuthorityToken, GroupMembership, MembershipConfig, MembershipError, UnifiedGroupSession,
+    AuthorityToken, ChannelRole, GroupMembership, MembershipConfig, MembershipError,
+    UnifiedGroupSession,
 };
 
 use super::custody::{self, CustodyError, RestoreFailed, Revoked};
@@ -24,6 +25,156 @@ use crate::contracts::secret_store::SecretStore;
 use crate::fsonos::{Context, Handled, HttpRequest};
 
 const PROPOSAL_MARK: &[u8] = b"n06.prop";
+
+// One local desired member, not a live session or a full group snapshot.
+const RECOVERY_BINDING_KEY: &[u8] = b"n02.binding";
+const RECOVERY_BINDING_VERSION: u8 = 1;
+const MAX_RECOVERY_LABEL_BYTES: usize = 64;
+
+/// Stable provisioned identity and desired local member; no authority, output
+/// grant, live membership, calibrated profile or physical rollback proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryBinding {
+    group_id: String,
+    configured_issuer: PeerId,
+    incarnation: [u8; 16],
+    member_id: String,
+    profile_id: String,
+    role: ChannelRole,
+}
+
+impl RecoveryBinding {
+    #[must_use]
+    pub fn group_id(&self) -> &str {
+        &self.group_id
+    }
+    #[must_use]
+    pub fn configured_issuer(&self) -> &PeerId {
+        &self.configured_issuer
+    }
+    #[must_use]
+    pub const fn incarnation(&self) -> &[u8; 16] {
+        &self.incarnation
+    }
+    #[must_use]
+    pub fn member_id(&self) -> &str {
+        &self.member_id
+    }
+    #[must_use]
+    pub fn profile_id(&self) -> &str {
+        &self.profile_id
+    }
+    #[must_use]
+    pub const fn role(&self) -> ChannelRole {
+        self.role
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(246);
+        bytes.push(RECOVERY_BINDING_VERSION);
+        for label in [&self.group_id[..], self.configured_issuer.as_str()] {
+            bytes.push(label.len() as u8);
+            bytes.extend_from_slice(label.as_bytes());
+        }
+        bytes.extend_from_slice(&self.incarnation);
+        for label in [&self.member_id[..], &self.profile_id[..]] {
+            bytes.push(label.len() as u8);
+            bytes.extend_from_slice(label.as_bytes());
+        }
+        bytes.push(match self.role {
+            ChannelRole::Stereo => 1,
+            ChannelRole::LeftMono => 2,
+            ChannelRole::RightMono => 3,
+            ChannelRole::MonoSum => 4,
+            ChannelRole::SubLfe => 5,
+        });
+        bytes
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, RecoveryBindingError> {
+        fn label<'a>(bytes: &'a [u8], pos: &mut usize) -> Result<&'a str, RecoveryBindingError> {
+            let len = usize::from(*bytes.get(*pos).ok_or(RecoveryBindingError::Malformed)?);
+            *pos += 1;
+            let end = pos
+                .checked_add(len)
+                .ok_or(RecoveryBindingError::Malformed)?;
+            let value = std::str::from_utf8(
+                bytes
+                    .get(*pos..end)
+                    .ok_or(RecoveryBindingError::Malformed)?,
+            )
+            .map_err(|_| RecoveryBindingError::Malformed)?;
+            *pos = end;
+            Ok(value)
+        }
+        if bytes.first() != Some(&RECOVERY_BINDING_VERSION) {
+            return Err(RecoveryBindingError::Malformed);
+        }
+        let mut pos = 1;
+        let group = label(bytes, &mut pos)?;
+        let issuer = label(bytes, &mut pos)?;
+        let configured_issuer =
+            PeerId::parse(issuer).map_err(|_| RecoveryBindingError::Malformed)?;
+        let end = pos.checked_add(16).ok_or(RecoveryBindingError::Malformed)?;
+        let incarnation: [u8; 16] = bytes
+            .get(pos..end)
+            .ok_or(RecoveryBindingError::Malformed)?
+            .try_into()
+            .map_err(|_| RecoveryBindingError::Malformed)?;
+        pos = end;
+        let member = label(bytes, &mut pos)?;
+        let profile = label(bytes, &mut pos)?;
+        let role = match bytes.get(pos) {
+            Some(1) => ChannelRole::Stereo,
+            Some(2) => ChannelRole::LeftMono,
+            Some(3) => ChannelRole::RightMono,
+            Some(4) => ChannelRole::MonoSum,
+            Some(5) => ChannelRole::SubLfe,
+            _ => return Err(RecoveryBindingError::Malformed),
+        };
+        if pos + 1 != bytes.len()
+            || !valid_label(group)
+            || !valid_member(member)
+            || !valid_label(profile)
+            || incarnation == [0; 16]
+        {
+            return Err(RecoveryBindingError::Malformed);
+        }
+        Ok(Self {
+            group_id: group.to_owned(),
+            configured_issuer,
+            incarnation,
+            member_id: member.to_owned(),
+            profile_id: profile.to_owned(),
+            role,
+        })
+    }
+}
+
+fn valid_label(label: &str) -> bool {
+    !label.is_empty() && label.len() <= MAX_RECOVERY_LABEL_BYTES
+}
+fn valid_member(member: &str) -> bool {
+    valid_label(member)
+        && member.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+        })
+}
+
+/// Refusal to store or decode a stable provisioning binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecoveryBindingError {
+    Unavailable,
+    NotFresh,
+    InvalidGroup,
+    InvalidIncarnation,
+    InvalidMember,
+    InvalidProfile,
+    IssuerNotAdmitted,
+    Conflict,
+    Malformed,
+    Storage(JournalError),
+}
 
 #[derive(Debug)]
 pub enum BootError {
@@ -168,6 +319,82 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
         ))
     }
 
+    /// Store one desired local member's fixed provisioning identity. Issuer
+    /// enrollment is checked, but proves neither issuer role nor current authority.
+    /// The caller supplies the nonzero incarnation; uniqueness and physical
+    /// rollback resistance are not established here. Existing media never acquire
+    /// a missing binding through this method.
+    pub fn provision_recovery_binding(
+        &mut self,
+        group_id: &str,
+        issuer: &PeerId,
+        incarnation: [u8; 16],
+        member_id: &str,
+        profile_id: &str,
+        role: ChannelRole,
+    ) -> Result<(), RecoveryBindingError> {
+        if !self.healthy() {
+            return Err(RecoveryBindingError::Unavailable);
+        }
+        if !self.fresh_control_provisioning
+            || self.fresh_group_constructed
+            || self.ingress_started
+            || self.coordinator.is_some()
+        {
+            return Err(RecoveryBindingError::NotFresh);
+        }
+        if !valid_label(group_id) {
+            return Err(RecoveryBindingError::InvalidGroup);
+        }
+        if incarnation == [0; 16] {
+            return Err(RecoveryBindingError::InvalidIncarnation);
+        }
+        if !valid_member(member_id) {
+            return Err(RecoveryBindingError::InvalidMember);
+        }
+        if !valid_label(profile_id) {
+            return Err(RecoveryBindingError::InvalidProfile);
+        }
+        if self.authority().version_of(issuer).is_none() {
+            return Err(RecoveryBindingError::IssuerNotAdmitted);
+        }
+        let candidate = RecoveryBinding {
+            group_id: group_id.to_owned(),
+            configured_issuer: issuer.clone(),
+            incarnation,
+            member_id: member_id.to_owned(),
+            profile_id: profile_id.to_owned(),
+            role,
+        };
+        if let Some(existing) = self.recovery_binding()? {
+            return if existing == candidate {
+                Ok(())
+            } else {
+                Err(RecoveryBindingError::Conflict)
+            };
+        }
+        let result = self.journal.put(
+            Namespace::Records,
+            RECOVERY_BINDING_KEY,
+            &candidate.encode(),
+        );
+        self.latch_poisoned();
+        result.map(|_| ()).map_err(RecoveryBindingError::Storage)
+    }
+
+    /// Read the same-journal binding; `None` is absence, never recovery authority.
+    pub fn recovery_binding(&self) -> Result<Option<RecoveryBinding>, RecoveryBindingError> {
+        if !self.healthy() {
+            return Err(RecoveryBindingError::Unavailable);
+        }
+        self.journal
+            .state()
+            .records
+            .get(RECOVERY_BINDING_KEY)
+            .map(|bytes| RecoveryBinding::decode(bytes))
+            .transpose()
+    }
+
     /// Read-only authority for transport routing and immediately revalidated sender handoff.
     pub fn authority(&self) -> &PeerDirectory<K> {
         self.channel.authority()
@@ -223,6 +450,15 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
         }
         if group_id.is_empty() || issuer_id.is_empty() || epoch == 0 {
             return Err(FreshGroupError::InvalidIdentity);
+        }
+        if self
+            .recovery_binding()
+            .map_err(|_| FreshGroupError::NotFresh)?
+            .is_some_and(|binding| {
+                binding.group_id != group_id || binding.configured_issuer.as_str() != issuer_id
+            })
+        {
+            return Err(FreshGroupError::NotFresh);
         }
         let session = UnifiedGroupSession::new(group_id, issuer_id, epoch);
         if self.channel.session_sequence_exhausted(&session) {
@@ -639,6 +875,504 @@ mod tests {
             token("grp", "coord", EPOCH),
             0,
         )
+    }
+
+    fn bind_local(
+        owner: &mut Owner,
+        group: &str,
+        issuer: &PeerId,
+        incarnation: [u8; 16],
+        member: &str,
+        profile: &str,
+        role: ChannelRole,
+    ) -> Result<(), RecoveryBindingError> {
+        owner.provision_recovery_binding(group, issuer, incarnation, member, profile, role)
+    }
+
+    #[test]
+    fn recovery_binding_is_durable_write_once_and_does_not_restore_authority() {
+        let mut owner = blank();
+        let issuer = id("coord");
+        let other = id("other");
+        owner
+            .admit(&issuer, PeerRole::Controller, &key("coord"), Some(EPOCH), 1)
+            .unwrap();
+        owner
+            .admit(&other, PeerRole::Controller, &key("other"), Some(EPOCH), 1)
+            .unwrap();
+        assert_eq!(owner.recovery_binding(), Ok(None));
+        let before = owner.journal.state().clone();
+        bind_local(
+            &mut owner,
+            "grp",
+            &issuer,
+            [7; 16],
+            "kitchen",
+            "profile-a",
+            ChannelRole::LeftMono,
+        )
+        .unwrap();
+        let expected = owner.recovery_binding().unwrap().unwrap();
+        assert_eq!(
+            (
+                expected.group_id(),
+                expected.configured_issuer(),
+                expected.incarnation()
+            ),
+            ("grp", &issuer, &[7; 16])
+        );
+        assert_eq!(
+            (expected.member_id(), expected.profile_id(), expected.role()),
+            ("kitchen", "profile-a", ChannelRole::LeftMono)
+        );
+        assert_eq!(owner.journal.state().credentials, before.credentials);
+        assert_eq!(owner.journal.state().marks, before.marks);
+        let established = owner.journal.state().clone();
+        bind_local(
+            &mut owner,
+            "grp",
+            &issuer,
+            [7; 16],
+            "kitchen",
+            "profile-a",
+            ChannelRole::LeftMono,
+        )
+        .unwrap();
+        assert_eq!(owner.journal.state(), &established);
+        for result in [
+            bind_local(
+                &mut owner,
+                "other",
+                &issuer,
+                [7; 16],
+                "kitchen",
+                "profile-a",
+                ChannelRole::LeftMono,
+            ),
+            bind_local(
+                &mut owner,
+                "grp",
+                &other,
+                [7; 16],
+                "kitchen",
+                "profile-a",
+                ChannelRole::LeftMono,
+            ),
+            bind_local(
+                &mut owner,
+                "grp",
+                &issuer,
+                [8; 16],
+                "kitchen",
+                "profile-a",
+                ChannelRole::LeftMono,
+            ),
+            bind_local(
+                &mut owner,
+                "grp",
+                &issuer,
+                [7; 16],
+                "bedroom",
+                "profile-a",
+                ChannelRole::LeftMono,
+            ),
+            bind_local(
+                &mut owner,
+                "grp",
+                &issuer,
+                [7; 16],
+                "kitchen",
+                "profile-b",
+                ChannelRole::LeftMono,
+            ),
+            bind_local(
+                &mut owner,
+                "grp",
+                &issuer,
+                [7; 16],
+                "kitchen",
+                "profile-a",
+                ChannelRole::RightMono,
+            ),
+        ] {
+            assert_eq!(result, Err(RecoveryBindingError::Conflict));
+        }
+        assert_eq!(owner.journal.state(), &established);
+        let (mut reopened, _) = boot(owner.into_storage());
+        assert_eq!(reopened.recovery_binding(), Ok(Some(expected)));
+        assert_eq!(reopened.authority().version_of(&issuer), Some(1));
+        assert!(!reopened.fresh_group_is_healthy());
+        assert!(!reopened.lease_is_live(&fixture_session(EPOCH), 0));
+        assert_eq!(
+            bind_local(
+                &mut reopened,
+                "grp",
+                &issuer,
+                [7; 16],
+                "kitchen",
+                "profile-a",
+                ChannelRole::LeftMono
+            ),
+            Err(RecoveryBindingError::NotFresh)
+        );
+    }
+
+    #[test]
+    fn recovery_binding_bounds_roles_and_fresh_identity_consistency() {
+        let issuer = id(&"i".repeat(32));
+        for role in [
+            ChannelRole::Stereo,
+            ChannelRole::LeftMono,
+            ChannelRole::RightMono,
+            ChannelRole::MonoSum,
+            ChannelRole::SubLfe,
+        ] {
+            let binding = RecoveryBinding {
+                group_id: "g".repeat(64),
+                configured_issuer: issuer.clone(),
+                incarnation: [1; 16],
+                member_id: "m".repeat(64),
+                profile_id: "p".repeat(64),
+                role,
+            };
+            let bytes = binding.encode();
+            assert_eq!(bytes.len(), 246);
+            assert!(bytes.len() <= Limits::fleet_control_development().records.value_max);
+            assert_eq!(RecoveryBinding::decode(&bytes), Ok(binding));
+        }
+        let mut owner = blank();
+        let peer = id("coord");
+        assert_eq!(
+            bind_local(
+                &mut owner,
+                "grp",
+                &peer,
+                [1; 16],
+                "kitchen",
+                "p",
+                ChannelRole::Stereo
+            ),
+            Err(RecoveryBindingError::IssuerNotAdmitted)
+        );
+        owner
+            .admit(&peer, PeerRole::Controller, &key("coord"), Some(EPOCH), 1)
+            .unwrap();
+        assert_eq!(
+            bind_local(
+                &mut owner,
+                "",
+                &peer,
+                [1; 16],
+                "kitchen",
+                "p",
+                ChannelRole::Stereo
+            ),
+            Err(RecoveryBindingError::InvalidGroup)
+        );
+        assert_eq!(
+            bind_local(
+                &mut owner,
+                &"g".repeat(65),
+                &peer,
+                [1; 16],
+                "kitchen",
+                "p",
+                ChannelRole::Stereo
+            ),
+            Err(RecoveryBindingError::InvalidGroup)
+        );
+        assert_eq!(
+            bind_local(
+                &mut owner,
+                "grp",
+                &peer,
+                [0; 16],
+                "kitchen",
+                "p",
+                ChannelRole::Stereo
+            ),
+            Err(RecoveryBindingError::InvalidIncarnation)
+        );
+        for invalid in ["", "A", "bad/name", &"m".repeat(65)] {
+            assert_eq!(
+                bind_local(
+                    &mut owner,
+                    "grp",
+                    &peer,
+                    [1; 16],
+                    invalid,
+                    "p",
+                    ChannelRole::Stereo
+                ),
+                Err(RecoveryBindingError::InvalidMember)
+            );
+        }
+        for invalid in ["", &"p".repeat(65)] {
+            assert_eq!(
+                bind_local(
+                    &mut owner,
+                    "grp",
+                    &peer,
+                    [1; 16],
+                    "kitchen",
+                    invalid,
+                    ChannelRole::Stereo
+                ),
+                Err(RecoveryBindingError::InvalidProfile)
+            );
+        }
+        assert_eq!(owner.recovery_binding(), Ok(None));
+        bind_local(
+            &mut owner,
+            "grp",
+            &peer,
+            [1; 16],
+            "kitchen",
+            "p",
+            ChannelRole::Stereo,
+        )
+        .unwrap();
+        assert!(matches!(
+            owner.provision_fresh_group(
+                "wrong",
+                "coord",
+                EPOCH,
+                MembershipConfig::default(),
+                token("wrong", "coord", EPOCH),
+                0
+            ),
+            Err(FreshGroupError::NotFresh)
+        ));
+
+        let mut matching = blank();
+        matching
+            .admit(&peer, PeerRole::Controller, &key("coord"), Some(EPOCH), 1)
+            .unwrap();
+        bind_local(
+            &mut matching,
+            "grp",
+            &peer,
+            [1; 16],
+            "kitchen",
+            "p",
+            ChannelRole::Stereo,
+        )
+        .unwrap();
+        assert!(fresh_group(matching).is_ok());
+    }
+
+    #[test]
+    fn recovery_binding_maximum_fits_real_journal_and_reopens() {
+        let mut owner = blank();
+        let too_long = id(&"i".repeat(32));
+        assert_eq!(
+            owner.admit(&too_long, PeerRole::Controller, &key("max"), Some(EPOCH), 1),
+            Err(CustodyError::Journal(JournalError::InvalidKey))
+        );
+        assert_eq!(owner.recovery_binding(), Ok(None));
+        let issuer = id(&"i".repeat(29));
+        owner
+            .admit(&issuer, PeerRole::Controller, &key("max"), Some(EPOCH), 1)
+            .unwrap();
+        let group = "g".repeat(64);
+        let member = "m".repeat(64);
+        let profile = "p".repeat(64);
+        bind_local(
+            &mut owner,
+            &group,
+            &issuer,
+            [5; 16],
+            &member,
+            &profile,
+            ChannelRole::SubLfe,
+        )
+        .unwrap();
+        assert_eq!(
+            owner
+                .journal
+                .state()
+                .records
+                .get(RECOVERY_BINDING_KEY)
+                .unwrap()
+                .len(),
+            243
+        );
+        let (reopened, _) = boot(owner.into_storage());
+        let binding = reopened.recovery_binding().unwrap().unwrap();
+        assert_eq!(
+            (
+                binding.group_id(),
+                binding.member_id(),
+                binding.profile_id()
+            ),
+            (&group[..], &member[..], &profile[..])
+        );
+        assert_eq!(binding.configured_issuer(), &issuer);
+        assert_eq!(binding.role(), ChannelRole::SubLfe);
+    }
+
+    #[test]
+    fn recovery_binding_failed_sync_reopens_old_or_new_but_never_reports_success() {
+        let issuer = id("coord");
+        for persists in [false, true] {
+            let mut owner = blank();
+            owner
+                .admit(&issuer, PeerRole::Controller, &key("coord"), Some(EPOCH), 1)
+                .unwrap();
+            let next_sync = owner.journal.storage().ops_done() + 1;
+            owner.journal.storage_mut().sync_fail_at = Some(next_sync);
+            owner.journal.storage_mut().sync_fail_persists = persists;
+            assert!(matches!(
+                bind_local(
+                    &mut owner,
+                    "grp",
+                    &issuer,
+                    [1; 16],
+                    "kitchen",
+                    "p",
+                    ChannelRole::Stereo
+                ),
+                Err(RecoveryBindingError::Storage(JournalError::Storage(_)))
+            ));
+            assert_eq!(
+                owner.recovery_binding(),
+                Err(RecoveryBindingError::Unavailable)
+            );
+            let mut medium = owner.into_storage();
+            medium.restart();
+            let (reopened, _) = boot(medium);
+            let result = reopened.recovery_binding().unwrap();
+            assert_eq!(result.is_some(), persists);
+            if let Some(binding) = result {
+                assert_eq!(binding.group_id(), "grp");
+                assert_eq!(binding.member_id(), "kitchen");
+            }
+            assert!(!reopened.fresh_group_is_healthy());
+            assert!(!reopened.lease_is_live(&fixture_session(EPOCH), 0));
+        }
+    }
+
+    #[test]
+    fn recovery_binding_rejects_malformed_records_without_overwriting() {
+        let issuer = id("coord");
+        let mut owner = blank();
+        owner
+            .admit(&issuer, PeerRole::Controller, &key("coord"), Some(EPOCH), 1)
+            .unwrap();
+        let good = RecoveryBinding {
+            group_id: "grp".into(),
+            configured_issuer: issuer.clone(),
+            incarnation: [1; 16],
+            member_id: "kitchen".into(),
+            profile_id: "p".into(),
+            role: ChannelRole::Stereo,
+        }
+        .encode();
+        let mut invalids = vec![vec![], vec![2], good[..good.len() - 1].to_vec()];
+        let mut trailing = good.clone();
+        trailing.push(0);
+        invalids.push(trailing);
+        let mut bad_group = good.clone();
+        bad_group[2] = 0xff;
+        invalids.push(bad_group);
+        let mut bad_issuer = good.clone();
+        bad_issuer[6] = b'!';
+        invalids.push(bad_issuer);
+        let mut bad_role = good.clone();
+        *bad_role.last_mut().unwrap() = 6;
+        invalids.push(bad_role);
+        let mut zero_inc = good.clone();
+        zero_inc[11..27].fill(0);
+        invalids.push(zero_inc);
+        for bad in invalids {
+            owner
+                .journal
+                .put(Namespace::Records, RECOVERY_BINDING_KEY, &bad)
+                .unwrap();
+            assert_eq!(
+                owner.recovery_binding(),
+                Err(RecoveryBindingError::Malformed)
+            );
+            assert_eq!(
+                bind_local(
+                    &mut owner,
+                    "grp",
+                    &issuer,
+                    [1; 16],
+                    "kitchen",
+                    "p",
+                    ChannelRole::Stereo
+                ),
+                Err(RecoveryBindingError::Malformed)
+            );
+            assert_eq!(
+                owner.journal.state().records.get(RECOVERY_BINDING_KEY),
+                Some(&bad)
+            );
+        }
+    }
+
+    #[test]
+    fn recovery_binding_full_record_space_and_io_failure_stay_closed() {
+        let issuer = id("coord");
+        let mut full = blank();
+        full.admit(&issuer, PeerRole::Controller, &key("coord"), Some(EPOCH), 1)
+            .unwrap();
+        for key in [b"a", b"b", b"c", b"d"] {
+            full.journal.put(Namespace::Records, key, b"x").unwrap();
+        }
+        assert_eq!(
+            bind_local(
+                &mut full,
+                "grp",
+                &issuer,
+                [1; 16],
+                "kitchen",
+                "p",
+                ChannelRole::Stereo
+            ),
+            Err(RecoveryBindingError::Storage(JournalError::NamespaceFull))
+        );
+        assert_eq!(full.recovery_binding(), Ok(None));
+        let mut owner = blank();
+        owner
+            .admit(&issuer, PeerRole::Controller, &key("coord"), Some(EPOCH), 1)
+            .unwrap();
+        let op = owner.journal.storage().ops_done();
+        owner.journal.storage_mut().fail_op_at = Some(op);
+        assert!(matches!(
+            bind_local(
+                &mut owner,
+                "grp",
+                &issuer,
+                [1; 16],
+                "kitchen",
+                "p",
+                ChannelRole::Stereo
+            ),
+            Err(RecoveryBindingError::Storage(JournalError::Storage(_)))
+        ));
+        assert_eq!(
+            owner.recovery_binding(),
+            Err(RecoveryBindingError::Unavailable)
+        );
+        let mut medium = owner.into_storage();
+        medium.fail_op_at = None;
+        let (mut reopened, _) = boot(medium);
+        assert_eq!(reopened.recovery_binding(), Ok(None));
+        assert_eq!(reopened.authority().version_of(&issuer), Some(1));
+        assert_eq!(
+            bind_local(
+                &mut reopened,
+                "grp",
+                &issuer,
+                [1; 16],
+                "kitchen",
+                "p",
+                ChannelRole::Stereo
+            ),
+            Err(RecoveryBindingError::NotFresh)
+        );
     }
 
     #[test]
