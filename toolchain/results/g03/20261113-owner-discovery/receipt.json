@@ -1,0 +1,821 @@
+{
+  "schema": "ffw.g03.owner-discovery.qualification.v1",
+  "code_commit": "5c66e7402478283ee9f90de43516d4037bdafb0a",
+  "code_tree": "6209c51f61518ed98be185cb2978938628dc2e74",
+  "parent_commit": "76f42445acc729932ca9659662ce4b5253689afd",
+  "sdk_commit": "8f422c333269073a256fe59c6f50e7e8429a1bf9",
+  "native_source": {
+    "baseline": "c93f3e2d551c1a8e724ede47c687bdffe517fe8e",
+    "freeze_sha256": "68faffa12f432ef304f7c02bb4958bf92fea9ac3de5b7acd66ab49bb11197f00",
+    "firmware_files": 1648,
+    "transferred": 1646,
+    "excluded": [
+      ".beads/.gitignore",
+      ".beads/config.yaml"
+    ],
+    "firmware_inventory_sha256": "3a7b54d2bcd7c9ce7f053b23f23826a3049d8521160dd63385621e7be1ce439c",
+    "sibling_inventory_sha256": "e514a45d9d995a49aef69e257fc0ee800dc7fdbe7b271c69efb0f20cede4c586",
+    "commit_difference": [
+      "tests/g03/cases.json"
+    ],
+    "difference_qualification": "Registry-only successor; unchanged code inputs match native freeze, registry separately exercised by full offline judge"
+  },
+  "jobs": [
+    {
+      "native_id": "30107136981729316",
+      "exit": 0,
+      "transfer_files": 1646,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1646,
+          "content_root": "fdb42a03018ee5f881406ac04e9aca0adb06717c9b77397bde49a13a8233cbd1"
+        }
+      ],
+      "receipt_root": "610b27e693b8390e1134b49aaacd7d7e37cd965ab5915bf09abe99843241cf46",
+      "command_sha256": "eab08515760cdd1c65668e96f9e53be4b89995c0c3d31944281e965185b87633",
+      "raw_log_sha256": "70609e11031611e9152f7579d4e4ac0c8fdffac44290ec614749a7af2cbcef19",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": null,
+      "footer_count": 0,
+      "scope": "Clippy compile check only"
+    },
+    {
+      "native_id": "30107136981729317",
+      "exit": 101,
+      "transfer_files": 1646,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1646,
+          "content_root": "c7abf994233de27f1afd523f07eea43e5a9c68c04788c896f4fa3316bf2a2a43"
+        }
+      ],
+      "receipt_root": "a45d68f551a33e4a07a4cd65d757e51bfc750476dca51f11a59209a48065a418",
+      "command_sha256": "7990c424a3e076319542a3ce24f30c5815045217571a118080315097ef63991a",
+      "raw_log_sha256": "6c6c9dd6a4e191325aec389773e0272b52f05ca0650a55ae989662e2d4dafc78",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": null,
+        "staging_disposition": "N/A: no owned or configured retrieval-stage record on failed command",
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": {
+        "passed": 2972,
+        "failed": 5,
+        "ignored": 2,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 81,
+      "scope": "historical failed full workspace"
+    },
+    {
+      "native_id": "30107136981729318",
+      "exit": 0,
+      "transfer_files": 1646,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1646,
+          "content_root": "e9e9053a9cdab16b267fcb3787e264c5414349a7887524f76a6109bb711f549b"
+        }
+      ],
+      "receipt_root": "81f6caad9001075db2ef7360c978b60ae8f7c4132003102f9288c4ee1853dd8c",
+      "command_sha256": "bb9ad9c4d2da80ec2372b2ae069ff9fdaae8fdc3fa1f34859f42bd21d4267903",
+      "raw_log_sha256": "1f4c6bc57b81fcbd5141db41fb248339418ca79c0ac4b47808c16d9bac72c7a1",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 1
+      },
+      "footer_count": 1,
+      "scope": "one focused diagnostic attempt, original failure not reproduced"
+    },
+    {
+      "native_id": "30107136981729319",
+      "exit": 0,
+      "transfer_files": 1646,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1646,
+          "content_root": "e377b83e7aaf741ed05e4fc7d22115502f0b00eb73fd782108a68d181853fdd3"
+        }
+      ],
+      "receipt_root": "30fa97dcba49bf699d9444b85f5a6ec864537689413e8776817fe41e45c8daf7",
+      "command_sha256": "b460369838df70e3a19fb0e3c14d395ebaba8cdf54350280b22d4768eb443b61",
+      "raw_log_sha256": "ece4869eff2f06c8ddf9e1e5e05c31c3b31db22b3df8f27b49785bb6bd414814",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 2
+      },
+      "footer_count": 1,
+      "scope": "one focused diagnostic attempt, original failure not reproduced"
+    },
+    {
+      "native_id": "30107136981729320",
+      "exit": 0,
+      "transfer_files": 1646,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1646,
+          "content_root": "b1bdea89b7e3147f8cc24c1453a2f8f60e2f3f356330258e86e8f3ae937591e5"
+        }
+      ],
+      "receipt_root": "b874ec81133bf7b6369adfb1f67dcdaad2f8e3e395e165452e9db89e3ccc02aa",
+      "command_sha256": "eab08515760cdd1c65668e96f9e53be4b89995c0c3d31944281e965185b87633",
+      "raw_log_sha256": "a649404ff186eaf521ae38533ab82a01b8616fc4cdbc059d30b969aa36f7b786",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": null,
+      "footer_count": 0,
+      "scope": "Clippy compile check only"
+    },
+    {
+      "native_id": "30107136981729321",
+      "exit": 0,
+      "transfer_files": 1646,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1646,
+          "content_root": "ece469ee3f941c895fa49ebe7a1ed1e724babce27e1534cce92f4ba2c84c6229"
+        }
+      ],
+      "receipt_root": "8dbc233c62aa44875f510b2318fa51f3ca681b1e11652b74a9b7ef927addc084",
+      "command_sha256": "7990c424a3e076319542a3ce24f30c5815045217571a118080315097ef63991a",
+      "raw_log_sha256": "ef3d00e675ea1cc1c13328ff7d8c9b0db17cf620d61fe062d50a6b7452f0f6f2",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": {
+        "passed": 2977,
+        "failed": 0,
+        "ignored": 2,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 81,
+      "scope": "host runtime tests with modeled HAL"
+    },
+    {
+      "native_id": "30107136981729322",
+      "exit": 0,
+      "transfer_files": 1705,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1646,
+          "content_root": "8d21664534384d2455293997e5df584bbea4672c3a44f6eb1db121e8dfb77d56"
+        },
+        {
+          "relative_root": "frankensonos",
+          "mode": "workspace_metadata",
+          "files": 4,
+          "content_root": "8ae960cf7200bbfcf490d8e4e3026324544ab18e4db641208983bd087d16ac0b"
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-proto",
+          "mode": "full",
+          "files": 51,
+          "content_root": "7c98f5c30b6dbe61ab4424ffb6e96d2dde0802311f338aad78dfcab94712658f"
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-types",
+          "mode": "full",
+          "files": 4,
+          "content_root": "3fbf8d0aca6cd2f9699b5a7bb4c37210d517d453b1a43e808237261f47b86f6f"
+        }
+      ],
+      "receipt_root": "d891e03a85d6bfc339bc31014ce3dcfd7476e03725213cdd28100109450d3d7a",
+      "command_sha256": "4638cb1adf0a3cbce41f9375b2e29d18e886ec586e108e1d17620143fa3832ae",
+      "raw_log_sha256": "e9f534e56ff5b60c6c71be5251bd4111cb7f48afbef0d3df88f27e0f5092fec7",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": null,
+      "footer_count": 0,
+      "scope": "Clippy compile check only"
+    },
+    {
+      "native_id": "30107136981729323",
+      "exit": 0,
+      "transfer_files": 1705,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1646,
+          "content_root": "ebfb5448f33f0d4c2a57979efa10d4e479c181121ea840d2bb7400877b4cea2e"
+        },
+        {
+          "relative_root": "frankensonos",
+          "mode": "workspace_metadata",
+          "files": 4,
+          "content_root": "8ae960cf7200bbfcf490d8e4e3026324544ab18e4db641208983bd087d16ac0b"
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-proto",
+          "mode": "full",
+          "files": 51,
+          "content_root": "7c98f5c30b6dbe61ab4424ffb6e96d2dde0802311f338aad78dfcab94712658f"
+        },
+        {
+          "relative_root": "frankensonos/crates/fsonos-types",
+          "mode": "full",
+          "files": 4,
+          "content_root": "3fbf8d0aca6cd2f9699b5a7bb4c37210d517d453b1a43e808237261f47b86f6f"
+        }
+      ],
+      "receipt_root": "02e17d175e47d09b49277fc79ed6f51ae8731adbb653ece7cddb68f967e75aa2",
+      "command_sha256": "2bf2f26b65dc201d8e61a15393dd78ab23ba2d0a7b8b49a6247110bd26f1b562",
+      "raw_log_sha256": "7610155a9364b76b7ab5fbe9c36446c75963f8894ea599ae85bc151902c4c2d0",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": {
+        "passed": 22,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 7,
+      "scope": "host runtime tests with modeled HAL"
+    },
+    {
+      "native_id": "30107136981729324",
+      "exit": 0,
+      "transfer_files": 1646,
+      "roots": [
+        {
+          "relative_root": "franken_firmware",
+          "mode": "full",
+          "files": 1646,
+          "content_root": "3b3d19c7a0999b4c7ab48fbdceafcb6d253b4fa963affa27ea39dba90309a1c1"
+        }
+      ],
+      "receipt_root": "b523ba33e4bf812f8b8c0074090a716843bcd3de29ecff70eaa99bc18932122f",
+      "command_sha256": "905c5dffaec4894d8f553f6641db134eff5a0980b4931804059bc5fe50d026ca",
+      "raw_log_sha256": "1fd38d7c0f73f360ca372a2a1ce93f275301466349e499616d369ef9f960bc7c",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "counts": {
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 2,
+      "scope": "two compile-only rustdoc examples"
+    }
+  ],
+  "required_workspace_cases": {
+    "count": 45,
+    "checks": [
+      {
+        "name": "consumed_reply_does_not_count_notifications_as_lost",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "queued_reply_abandoned_after_successful_send_counts_both_vectors_once",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "begun_handler_outliving_caller_counts_actual_reply_loss_without_replay",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "reply_loss_with_no_notifications_and_counter_saturation_are_explicit",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "eventing_attachment_fences_raw_clones_and_releases_for_normal_use",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "attachment_refuses_queued_and_executing_work_but_reclaims_cancelled_queue",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "attachment_and_raw_publication_never_both_succeed",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "owner_and_mailbox_association_is_two_sided_and_generic_service_cannot_bypass",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "generic_mailbox_cannot_be_adopted_and_unbound_cleanup_is_refused",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "detached_eventing_stays_fenced_until_matching_cleanup_with_no_inflight_work",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "cleanup_panic_keeps_mailbox_fenced_instead_of_reopening_stale_subscriptions",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "detached_http_worker_is_not_delivery_terminal_and_cleanup_does_not_guess",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "transport_invalidation_removes_old_sids_without_reusing_the_namespace",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "eventing_opt_in_without_outbox_still_refuses_without_mailbox_work",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "plain_mailbox_with_real_outbox_is_refused_at_startup",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "opted_in_outbox_delivers_real_core_initial_notification",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "owner_eventing_delivers_real_callbacks_and_excludes_other_ingress_until_release",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "slow_callback_and_full_outbox_do_not_block_owner_control_or_acknowledged_stop",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "unavailable_callback_is_counted_without_blocking_local_mute_or_stop",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "committed_owner_response_after_http_timeout_counts_actual_undelivered_event",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "live_subscription_detach_fences_until_real_owner_cleanup_and_new_target",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "natural_http_exit_keeps_live_callback_fenced_until_actual_delivery_thread_exits",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "idle_owner_polling_does_not_refuse_sequential_publications",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "poisoned_unpublished_mailbox_is_unavailable_instead_of_idle",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "orderly_shutdown_closes_queue_before_returning_reconciled_accounting",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "orderly_shutdown_serializes_live_offers_with_final_drain_and_disconnect",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "discovery_get_and_topology_share_owner_device_without_changing_session",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "discovery_refuses_unconfigured_tailnet_and_mismatched_without_partial_mutation",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "discovery_reconfiguration_and_directory_drift_keep_read_and_event_identity_coherent",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "matching_real_core_is_preflighted_before_discovery_and_serves_later_get",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "missing_real_description_refuses_start_and_keeps_attachment_fenced",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "same_description_with_different_owner_location_must_refuse_discovery",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "different_real_owner_description_must_refuse_discovery",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "tailnet_policy_must_not_start_local_discovery_or_invoke_owner",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "queued_work_refuses_attachment_then_real_queued_owner_get_succeeds",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "unserviced_owner_times_out_and_stays_fenced",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "disconnected_owner_refuses_discovery_without_readiness",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "plain_mailbox_rejects_discoverable_eventing_without_owner_eventing_attachment",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "legacy_discovery_and_eventing_constructor_still_serves_its_description",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "same_description_and_location_with_different_owner_cache_age_must_refuse",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "a_tailnet_connection_is_not_given_the_description_and_a_plain_shim_has_none_to_give",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "a_composed_tailnet_shim_describes_nothing_grants_nothing_and_offers_nothing",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "source_group_processes_match_pcm_and_isolate_wrong_key",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "source_loopback_processes_match_independent_pcm_and_reject_wrong_key",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "no_production_file_but_the_harness_names_a_non_durable_stepper",
+        "results": [
+          "ok"
+        ]
+      }
+    ]
+  },
+  "required_client_cases": {
+    "count": 22,
+    "checks": [
+      {
+        "name": "the_real_client_finds_describes_controls_and_hears_one_server",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "on_the_tailnet_the_composed_server_describes_nothing_subscribes_nobody_and_sends_nothing",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "the_composed_client_reaches_nothing_but_the_one_fixture_player",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "the_real_client_finds_reads_and_cross_checks_the_device_over_loopback",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "only_the_zone_player_answer_is_a_player_for_the_client_and_other_services_are_silent",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "malformed_searches_get_no_answer_and_the_clients_own_search_still_finds_the_device",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "a_restarted_device_keeps_its_identity_and_a_different_identity_is_a_different_device",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "a_tailnet_connection_is_refused_the_description_and_control_that_the_local_link_gets",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "the_confined_client_refuses_any_host_or_url_but_the_fixture_player",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "the_real_client_subscribes_and_a_real_listener_receives_ordered_events",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "a_subscribe_naming_any_other_callback_is_answered_412_and_never_contacted",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "a_restarted_shim_never_honours_an_old_sid_before_or_after_a_fresh_subscription",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "a_stalled_callback_is_bounded_and_counted_while_control_keeps_answering",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "a_shim_not_started_eventing_still_grants_the_subscription_and_delivers_nothing",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "real_fsonos_eventing_changes_same_owner_protected_pcm_and_stops_with_ack",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "the_real_client_reads_and_sets_volume_and_mute_on_the_real_endpoint_over_loopback",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "the_real_client_reports_each_refusal_as_the_error_it_is_and_nothing_changes",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "the_real_client_is_refused_on_an_unauthenticated_tailnet_connection",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "with_no_listener_the_real_client_reports_a_network_error_and_never_a_success",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "the_test_client_can_reach_only_the_fixture_player_and_has_no_discovery",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "actual_client_discovers_same_protected_owner_across_restart_and_new_subscription",
+        "results": [
+          "ok"
+        ]
+      },
+      {
+        "name": "failed_owner_discovery_preflight_fences_until_real_owner_cleanup_then_succeeds",
+        "results": [
+          "ok"
+        ]
+      }
+    ]
+  },
+  "offline_final": {
+    "receipt_sha256": "919e0a3b5b1e15820f75b8cafa2c32550785ebd881310f82ab409fbf1bedde90",
+    "native_judged_log_sha256": "ef3d00e675ea1cc1c13328ff7d8c9b0db17cf620d61fe062d50a6b7452f0f6f2",
+    "counts": {
+      "blocked": 0,
+      "failed": 0,
+      "passed": 52
+    },
+    "planned": 52,
+    "rust_tests": 189,
+    "artifacts_verified": 28,
+    "case_registry_sha256": "822fd191544926f068584655a712cbc49a1078b0bd97de9eb589a5807d684c61",
+    "diagnostics": {
+      "bytes": 36085,
+      "critical_lost": false,
+      "dropped": 0,
+      "events": 105,
+      "sha256": "a86b770028f567c69cf3456b024c1513c417ef70420570df652fc7e32bea4a74",
+      "truncated": false,
+      "complete": true
+    },
+    "scope": "host-offline-reference-and-rust-unit-logs",
+    "actual_client_gate_open": true
+  },
+  "prior_offline_judges": [
+    {
+      "passed": 50,
+      "failed": 1,
+      "blocked": 0,
+      "reason": "Original registry exceeded unclaimed-test budget"
+    },
+    {
+      "passed": 50,
+      "failed": 2,
+      "blocked": 0,
+      "reason": "First successor used invalid SSDP schema namespace and still exceeded unclaimed-test budget"
+    }
+  ],
+  "python_diagnostics_tests": {
+    "passed": 30,
+    "failed": 0,
+    "scope": "25 oracle plus 5 existing group tests"
+  },
+  "unresolved": [
+    "Original MP3 process failures from native317 not causally explained; later passes do not erase them",
+    "Full G03 group/join/leave and full actual-client acceptance",
+    "Production network listener and multi-ingress event routing",
+    "Target resource, hardware, provider and native Tailnet qualifications"
+  ],
+  "independent_review": "Source review and same-execution receipt review; not independent runtime replication"
+}
