@@ -377,6 +377,24 @@ impl Device {
         })
     }
 
+    /// The validated member UUID, without the `uuid:` UDN prefix.
+    #[must_use]
+    pub fn uuid(&self) -> &str {
+        &self.uuid
+    }
+
+    /// The validated friendly and room name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The validated SSDP cache lifetime, in seconds.
+    #[must_use]
+    pub const fn max_age(&self) -> u32 {
+        self.max_age
+    }
+
     fn udn(&self) -> String {
         format!("uuid:{}", self.uuid)
     }

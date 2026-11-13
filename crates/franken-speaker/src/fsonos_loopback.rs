@@ -59,6 +59,9 @@ mod incarnation;
 #[cfg(test)]
 mod mailbox_eventing_tests;
 
+#[cfg(test)]
+mod mailbox_discovery_tests;
+
 pub use callback::{CallbackLimits, CallbackReport, CallbackStop, CallbackTarget};
 use discovery::Responder;
 pub use discovery::{
@@ -279,6 +282,8 @@ struct Config {
 struct Described {
     device: Device,
     room: String,
+    // Set only by the concrete mailbox constructor, never by public factories.
+    from_owner: bool,
 }
 
 /// What a shim does beyond SOAP, built before the worker thread starts and moved into it.
@@ -396,7 +401,8 @@ pub fn mailbox_control(client: HttpMailboxClient) -> Box<dyn HttpControl> {
 /// exclusively attaches to the mailbox: raw/cloned clients and other adapters
 /// cannot submit commands while it runs, avoiding lost or reordered events
 /// across independent HTTP response writers. Without an outbox this behaves
-/// like [`mailbox_control`]. Discovery remains unsupported.
+/// like [`mailbox_control`]. Use the concrete mailbox discovery constructor
+/// for owner-backed discovery; generic factories cannot select that mode.
 /// After worker exit the mailbox remains fenced until the actual endpoint
 /// owner calls `SettledRender::release_http_eventing` to invalidate old SIDs.
 ///
@@ -621,6 +627,84 @@ impl FsonosLoopback {
         )
     }
 
+    /// Start discovery/eventing through one exclusively attached owner mailbox.
+    /// The advertised identity is verified against the mailbox owner's actual
+    /// GET before readiness; no public control-plane factory can substitute
+    /// transport-local metadata. The mailbox may be serviced by a generic core
+    /// owner or by SettledRender; this API does not attest protected playback.
+    ///
+    /// Service the mailbox concurrently with this blocking constructor. Do not
+    /// call it on the owner thread while its mailbox cannot progress. Configure
+    /// the actual Endpoint's discovery Device before moving it into the owner.
+    ///
+    /// The advertised loopback player port is an explicit fixture route,
+    /// independent of this listener's ephemeral bound port.
+    ///
+    /// The concrete client is accepted (compile-only; the owner must run):
+    ///
+    /// ```no_run
+    /// use franken_speaker::fsonos_loopback::{
+    ///     CallbackLimits, CallbackTarget, DiscoveryIdentity, DiscoveryLimits,
+    ///     FsonosLoopback, LoopbackLimits, Policy, fixture_session,
+    /// };
+    /// use franken_speaker::settled_http::HttpMailboxClient;
+    /// fn start(identity: &DiscoveryIdentity, target: CallbackTarget, client: HttpMailboxClient) {
+    ///     let _ = FsonosLoopback::start_discoverable_eventing_with_mailbox(
+    ///         fixture_session().unwrap(), identity, Policy::LocalLink,
+    ///         LoopbackLimits::standard(), DiscoveryLimits::standard(),
+    ///         (target, CallbackLimits::standard()), client,
+    ///     );
+    /// }
+    /// ```
+    ///
+    /// A legacy control factory cannot be supplied in place of the mailbox:
+    ///
+    /// ```compile_fail,E0308
+    /// use franken_speaker::fsonos_loopback::{
+    ///     CallbackLimits, CallbackTarget, DiscoveryIdentity, DiscoveryLimits,
+    ///     FsonosLoopback, LoopbackLimits, Policy, fixture_session, mailbox_control,
+    /// };
+    /// use franken_speaker::settled_http::HttpMailboxClient;
+    /// fn wrong(identity: &DiscoveryIdentity, target: CallbackTarget, client: HttpMailboxClient) {
+    ///     let _ = FsonosLoopback::start_discoverable_eventing_with_mailbox(
+    ///         fixture_session().unwrap(), identity, Policy::LocalLink,
+    ///         LoopbackLimits::standard(), DiscoveryLimits::standard(),
+    ///         (target, CallbackLimits::standard()), mailbox_control(client),
+    ///     );
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    /// Refuses tailnet discovery, invalid identity/limits, unavailable or
+    /// mismatched owner metadata, and normal eventing startup failures.
+    pub fn start_discoverable_eventing_with_mailbox(
+        session: UnifiedGroupSession,
+        identity: &DiscoveryIdentity,
+        policy: Policy,
+        limits: LoopbackLimits,
+        discovery: DiscoveryLimits,
+        events: (CallbackTarget, CallbackLimits),
+        client: HttpMailboxClient,
+    ) -> Result<Self, String> {
+        if policy != Policy::LocalLink {
+            return Err("owner discovery requires local legacy ingress".into());
+        }
+        let mut described = Self::describe(identity, discovery)?;
+        described.from_owner = true;
+        Self::start_inner_with(
+            session,
+            &identity.uuid,
+            policy,
+            limits,
+            Some((described, discovery)),
+            Some(events),
+            (
+                host_incarnation,
+                Box::new(move |_, _, _| Ok(mailbox_eventing_control(client))),
+            ),
+        )
+    }
+
     /// Bind `127.0.0.1:0`, build the real control plane over `session` for `member_id` inside a worker thread, and start serving.
     ///
     /// # Errors
@@ -745,6 +829,7 @@ impl FsonosLoopback {
         Ok(Described {
             device: identity.device()?,
             room: identity.room.clone(),
+            from_owner: false,
         })
     }
 
@@ -966,10 +1051,21 @@ fn worker_main(
             return;
         }
     };
-    if extras.described.is_some() && !plane.supports_extras() {
+    let owner_description = extras
+        .described
+        .as_ref()
+        .is_some_and(|described| described.from_owner);
+    if extras.described.is_some()
+        && !plane.supports_extras()
+        && !(owner_description && extras.outbox.is_some())
+    {
         let _ = ready.send(Err(
             "control owner does not admit transport-local extras".into()
         ));
+        return;
+    }
+    if owner_description && cfg.policy != Policy::LocalLink {
+        let _ = ready.send(Err("owner discovery requires local legacy ingress".into()));
         return;
     }
     let delivery = extras
@@ -983,24 +1079,31 @@ fn worker_main(
     // What the group session does not hold, the topology answer reads from the endpoint's directory: where the served member's
     // description lives, and its room. Only that member is entered; any other member is listed without a location.
     let device = extras.described.map(|described| {
-        let directory = plane.directory_mut();
-        directory
-            .locations
-            .insert(member.to_string(), described.device.location());
-        directory
-            .zone_names
-            .insert(member.to_string(), described.room);
+        if !owner_description {
+            let directory = plane.directory_mut();
+            directory
+                .locations
+                .insert(member.to_string(), described.device.location());
+            directory
+                .zone_names
+                .insert(member.to_string(), described.room);
+        }
         described.device
     });
-    let _ = ready.send(Ok(()));
     let mut worker = Worker {
         plane,
         now_ns: START_NS,
         shared,
         cfg,
         device,
+        owner_description,
         outbox: extras.outbox,
     };
+    if owner_description && let Err(reason) = worker.preflight_owner_description() {
+        let _ = ready.send(Err(reason));
+        return;
+    }
+    let _ = ready.send(Ok(()));
     let cause = worker.run(listener);
     worker.shared.note(|report| report.stopped_by = cause);
 }
@@ -1014,6 +1117,7 @@ struct Worker {
     cfg: Config,
     /// The device whose description this worker serves; `None` unless the shim was started discoverable.
     device: Option<Device>,
+    owner_description: bool,
     /// Where this worker offers the core's notifications; `None` unless the shim was started eventing.
     outbox: Option<callback::Outbox>,
 }
@@ -1138,6 +1242,53 @@ impl Worker {
         outcome
     }
 
+    /// Verify owner metadata before this adapter publishes discovery readiness.
+    /// Any actual owner-produced notifications keep the existing outbox path.
+    fn preflight_owner_description(&mut self) -> Result<(), String> {
+        let device = self
+            .device
+            .as_ref()
+            .ok_or("owner discovery identity missing")?;
+        let expected_body = device.description_xml();
+        let expected_location = device.location();
+        let expected_cache = format!("max-age={}", device.max_age());
+        let request = HttpRequest {
+            method: "GET",
+            path: DESCRIPTION_PATH,
+            peer_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            ingress: Ingress::LocalLegacy,
+            headers: &[],
+            body: &[],
+        };
+        self.now_ns = self.now_ns.saturating_add(STEP_NS);
+        let handled = {
+            let mut session = self.shared.session();
+            self.plane
+                .handle_request(&mut session, self.now_ns, &request)
+        };
+        self.offer(&handled.notifications);
+        let response = &handled.response;
+        if response.status != 200 {
+            return Err(format!("owner discovery response: {}", response.status));
+        }
+        let header = |name: &str| {
+            let mut values = response
+                .headers
+                .iter()
+                .filter(|(key, _)| key.eq_ignore_ascii_case(name));
+            let first = values.next().map(|(_, value)| value.as_str());
+            if values.next().is_some() { None } else { first }
+        };
+        if response.body != expected_body
+            || header("Content-Type") != Some(DESCRIPTION_CONTENT_TYPE)
+            || header("Content-Location") != Some(expected_location.as_str())
+            || header("Cache-Control") != Some(expected_cache.as_str())
+        {
+            return Err("owner discovery identity mismatch".into());
+        }
+        Ok(())
+    }
+
     /// Whether this is a local-link `SUBSCRIBE` on a shim started eventing that names a callback other than the allowed one. The
     /// core would grant it (its only rule is that the callback names the peer's own address) and nothing could ever be delivered, so
     /// the shim answers the core's own 412 for a bad callback without calling it, and counts it. A renewal or an unsubscribe carries
@@ -1174,6 +1325,9 @@ impl Worker {
     /// `None` for everything else: another path or method, a shim not started discoverable, and any connection judged as the
     /// tailnet, all of which go to the endpoint and are answered (or refused) as before.
     fn description_for(&self, request: &Request) -> Option<Vec<u8>> {
+        if self.owner_description {
+            return None;
+        }
         let device = self.device.as_ref()?;
         if self.cfg.policy != Policy::LocalLink
             || request.head.method != "GET"

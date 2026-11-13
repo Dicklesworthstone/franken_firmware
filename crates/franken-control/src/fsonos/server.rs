@@ -105,6 +105,7 @@ use super::gena::{
     legacy_incarnation,
 };
 use super::soap::{Fault, Service, SoapCall, fault_envelope, parse_call, response_envelope};
+use super::ssdp;
 use super::state::{Directory, EventState, TransportState};
 use super::xml::XmlLimits;
 
@@ -258,6 +259,8 @@ impl EndpointConfig {
 pub enum EndpointError {
     #[error("the member id is not a valid member id")]
     MemberId,
+    #[error("the discovery UUID does not match the endpoint member id")]
+    DiscoveryIdentityMismatch,
     #[error("`{0}` must be at least 1")]
     Zero(&'static str),
 }
@@ -296,10 +299,19 @@ pub struct Endpoint {
     bridge: LegacyBridge,
     gena: SubscriptionTable,
     directory: Directory,
+    discovery: Option<Discovery>,
     transport: TransportState,
     legacy_seq: u64,
     #[cfg(test)]
     defect: Option<Defect>,
+}
+
+/// Cached bounded description and local metadata from one validated device.
+#[derive(Debug)]
+struct Discovery {
+    device: ssdp::Device,
+    location: String,
+    description: String,
 }
 
 impl Endpoint {
@@ -357,6 +369,7 @@ impl Endpoint {
             bridge,
             gena,
             directory: Directory::default(),
+            discovery: None,
             transport: TransportState::NoMediaPresent,
             legacy_seq: first_legacy_seq,
             #[cfg(test)]
@@ -474,6 +487,49 @@ impl Endpoint {
         self.transport = transport;
     }
 
+    /// Configure discovery for this member, or replace its location and name.
+    ///
+    /// The owner must stop any old advertiser before replacing its configuration.
+    /// Local directory entries are derived from the same validated device. Edits to
+    /// those entries through `directory_mut` are corrected before a state read or
+    /// event; other members' metadata remains under the caller's control.
+    ///
+    /// # Errors
+    /// Returns `DiscoveryIdentityMismatch` without changing the endpoint if the
+    /// device UUID is not this endpoint's configured member id.
+    pub fn configure_discovery(&mut self, device: ssdp::Device) -> Result<(), EndpointError> {
+        if device.uuid() != self.config.member_id {
+            return Err(EndpointError::DiscoveryIdentityMismatch);
+        }
+        let discovery = Discovery {
+            location: device.location(),
+            description: device.description_xml(),
+            device,
+        };
+        self.discovery = Some(discovery);
+        self.restore_local_discovery_metadata();
+        Ok(())
+    }
+
+    fn restore_local_discovery_metadata(&mut self) {
+        let Some(discovery) = &self.discovery else {
+            return;
+        };
+        let member = &self.config.member_id;
+        if self.directory.locations.get(member) != Some(&discovery.location) {
+            self.directory
+                .locations
+                .insert(member.clone(), discovery.location.clone());
+        }
+        if self.directory.zone_names.get(member).map(String::as_str)
+            != Some(discovery.device.name())
+        {
+            self.directory
+                .zone_names
+                .insert(member.clone(), discovery.device.name().to_string());
+        }
+    }
+
     pub fn directory_mut(&mut self) -> &mut Directory {
         &mut self.directory
     }
@@ -506,7 +562,8 @@ impl Endpoint {
     /// did to the session itself (a local change, a membership change, a move to a new epoch, a change to the
     /// directory made through [`Endpoint::directory_mut`]), and it is called for it after every command this module drives.
     pub fn publish(&mut self, now_ns: u64, session: &UnifiedGroupSession) -> Vec<Notification> {
-        let state = self.plant_topology_state(self.state(session));
+        let state = self.state(session);
+        let state = self.plant_topology_state(state);
         let sent = self.gena.publish(now_ns, &state);
         self.plant_topology_sent(sent)
     }
@@ -545,7 +602,8 @@ impl Endpoint {
         sent
     }
 
-    fn state(&self, session: &UnifiedGroupSession) -> EventState {
+    fn state(&mut self, session: &UnifiedGroupSession) -> EventState {
+        self.restore_local_discovery_metadata();
         EventState::read(
             session,
             &self.config.member_id,
@@ -561,6 +619,32 @@ impl Endpoint {
         request: &HttpRequest<'_>,
     ) -> Handled {
         match request.method {
+            "GET"
+                if request.path == ssdp::DESCRIPTION_PATH
+                    && (self.discovery.is_some() || request.ingress == Ingress::LocalLegacy) =>
+            {
+                if request.ingress == Ingress::Tailnet {
+                    Handled::of(HttpResponse::empty(401))
+                } else if let Some(discovery) = &self.discovery {
+                    Handled::of(HttpResponse {
+                        status: 200,
+                        headers: vec![
+                            (
+                                "CONTENT-TYPE".to_string(),
+                                ssdp::DESCRIPTION_CONTENT_TYPE.to_string(),
+                            ),
+                            ("CONTENT-LOCATION".to_string(), discovery.location.clone()),
+                            (
+                                "CACHE-CONTROL".to_string(),
+                                format!("max-age={}", discovery.device.max_age()),
+                            ),
+                        ],
+                        body: discovery.description.clone(),
+                    })
+                } else {
+                    Handled::of(HttpResponse::empty(404))
+                }
+            }
             "POST" if request.path == ACK_PATH => self
                 .plant_ack(ctx, request)
                 .unwrap_or_else(|| acknowledge(ctx, request)),
@@ -3025,6 +3109,184 @@ mod tests {
         let mut other = Rig::new();
         other.endpoint.plant(Defect::AckOnLegacy);
         assert_eq!(judge_ack_is_carried(&mut other), Ok(()));
+    }
+
+    const DISCOVERY_UUID: &str = "00000000-0000-4000-8000-00000000a001";
+    const OTHER_UUID: &str = "00000000-0000-4000-8000-00000000a002";
+
+    fn discovery_device(uuid: &str, port: u16, name: &str) -> ssdp::Device {
+        ssdp::Device::new(uuid, [127, 0, 0, 1], port, name, ssdp::MIN_MAX_AGE).unwrap()
+    }
+
+    fn discovery_rig() -> Rig {
+        let mut rig = Rig::with(roomy(), |c| c.member_id = DISCOVERY_UUID.to_string());
+        admit(&mut rig, DISCOVERY_UUID, 3);
+        rig
+    }
+
+    #[test]
+    fn discovery_get_and_topology_share_owner_device_without_changing_session() {
+        let mut rig = discovery_rig();
+        let device = discovery_device(DISCOVERY_UUID, 1400, "Kitchen & Den");
+        let location = device.location();
+        let expected = device.description_xml();
+        let revision = rig.session.state_revision;
+        let epoch = rig.session.current_epoch;
+        let member_count = rig.session.members.len();
+        let session_before = format!("{:?}", rig.session);
+        let lease_before = rig.channel.lease().cloned();
+        rig.endpoint.configure_discovery(device).unwrap();
+        let h = rig.bare("GET", ssdp::DESCRIPTION_PATH);
+        assert_eq!(h.response.status, 200);
+        assert_eq!(h.response.body, expected);
+        assert_eq!(
+            h.response.headers,
+            [
+                (
+                    "CONTENT-TYPE".to_string(),
+                    ssdp::DESCRIPTION_CONTENT_TYPE.to_string()
+                ),
+                ("CONTENT-LOCATION".to_string(), location.clone()),
+                (
+                    "CACHE-CONTROL".to_string(),
+                    format!("max-age={}", ssdp::MIN_MAX_AGE)
+                ),
+            ]
+        );
+        assert!(h.notifications.is_empty());
+        assert!(h.settled_others.is_empty());
+        assert!(
+            h.response
+                .body
+                .contains(&format!("<UDN>uuid:{DISCOVERY_UUID}</UDN>"))
+        );
+        let topology = read_topology(&mut rig);
+        assert!(topology.contains(&format!(
+            "UUID=\"{DISCOVERY_UUID}\" Location=\"{location}\" ZoneName=\"Kitchen &amp; Den\""
+        )));
+        assert_eq!(rig.session.state_revision, revision);
+        assert_eq!(rig.session.current_epoch, epoch);
+        assert_eq!(rig.session.members.len(), member_count);
+        assert_eq!(format!("{:?}", rig.session), session_before);
+        assert_eq!(rig.channel.lease(), lease_before.as_ref());
+    }
+
+    #[test]
+    fn discovery_refuses_unconfigured_tailnet_and_mismatched_without_partial_mutation() {
+        let mut rig = discovery_rig();
+        assert_eq!(rig.bare("GET", ssdp::DESCRIPTION_PATH).response.status, 404);
+        let denied = |rig: &mut Rig| {
+            rig.handle(&HttpRequest {
+                method: "GET",
+                path: ssdp::DESCRIPTION_PATH,
+                peer_ip: LAN.parse().unwrap(),
+                ingress: Ingress::Tailnet,
+                headers: &[],
+                body: b"",
+            })
+        };
+        let legacy = denied(&mut rig);
+        assert_eq!(legacy.response.status, 405);
+        assert!(legacy.response.body.is_empty());
+        assert!(legacy.response.headers.is_empty()); // In particular, no Allow header.
+        assert!(legacy.notifications.is_empty());
+        assert!(legacy.settled_others.is_empty());
+        let before = rig.endpoint.directory.clone();
+        assert_eq!(
+            rig.endpoint
+                .configure_discovery(discovery_device(OTHER_UUID, 1400, "Wrong")),
+            Err(EndpointError::DiscoveryIdentityMismatch)
+        );
+        assert_eq!(rig.endpoint.directory, before);
+        assert_eq!(rig.bare("GET", ssdp::DESCRIPTION_PATH).response.status, 404);
+        let valid = discovery_device(DISCOVERY_UUID, 1400, "Kitchen");
+        rig.endpoint.configure_discovery(valid.clone()).unwrap();
+        assert_eq!(denied(&mut rig).response.status, 401);
+        assert_eq!(rig.bare("GET", "/other").response.status, 405);
+        let before = rig.endpoint.directory.clone();
+        assert_eq!(
+            rig.endpoint
+                .configure_discovery(discovery_device(OTHER_UUID, 1401, "Wrong")),
+            Err(EndpointError::DiscoveryIdentityMismatch)
+        );
+        assert_eq!(rig.endpoint.directory, before);
+        assert_eq!(
+            rig.bare("GET", ssdp::DESCRIPTION_PATH).response.body,
+            valid.description_xml()
+        );
+    }
+
+    #[test]
+    fn discovery_reconfiguration_and_directory_drift_keep_read_and_event_identity_coherent() {
+        let mut rig = discovery_rig();
+        let first = discovery_device(DISCOVERY_UUID, 1400, "Kitchen");
+        rig.endpoint.configure_discovery(first).unwrap();
+        let subscription = rig.event("SUBSCRIBE", ZGT, &SUB);
+        assert_eq!(subscription.response.status, 200);
+        let second = discovery_device(DISCOVERY_UUID, 1500, "New & Room");
+        rig.endpoint.configure_discovery(second.clone()).unwrap();
+        let directory = rig.endpoint.directory_mut();
+        directory
+            .locations
+            .insert(DISCOVERY_UUID.to_string(), "http://wrong/".to_string());
+        directory
+            .zone_names
+            .insert(DISCOVERY_UUID.to_string(), "Wrong".to_string());
+        directory
+            .zone_names
+            .insert("den".to_string(), "Peer".to_string());
+        let sent = rig.endpoint.publish(rig.now, &rig.session);
+        let event = sent
+            .iter()
+            .find(|n| n.service == ZGT)
+            .expect("changed topology event");
+        let event_topology = text_of(&event.body, "ZoneGroupState").unwrap();
+        let topology = read_topology(&mut rig);
+        assert_eq!(event_topology, topology);
+        assert!(topology.contains(&format!(
+            "UUID=\"{DISCOVERY_UUID}\" Location=\"{}\" ZoneName=\"New &amp; Room\"",
+            second.location()
+        )));
+        assert!(topology.contains("ZoneName=\"Peer\""));
+        assert!(!topology.contains("http://wrong/"));
+        let response = rig.bare("GET", ssdp::DESCRIPTION_PATH).response;
+        assert_eq!(response.body, second.description_xml());
+        assert_eq!(
+            response.headers[1],
+            ("CONTENT-LOCATION".to_string(), second.location())
+        );
+        assert_eq!(
+            response.headers[2],
+            (
+                "CACHE-CONTROL".to_string(),
+                format!("max-age={}", second.max_age())
+            )
+        );
+        rig.endpoint.configure_discovery(second.clone()).unwrap();
+        assert_eq!(
+            rig.bare("GET", ssdp::DESCRIPTION_PATH).response.body,
+            second.description_xml()
+        );
+        let changed_age = ssdp::Device::new(
+            DISCOVERY_UUID,
+            [127, 0, 0, 1],
+            1500,
+            "New & Room",
+            ssdp::MIN_MAX_AGE + 1,
+        )
+        .unwrap();
+        assert_eq!(changed_age.description_xml(), second.description_xml());
+        rig.endpoint
+            .configure_discovery(changed_age.clone())
+            .unwrap();
+        let response = rig.bare("GET", ssdp::DESCRIPTION_PATH).response;
+        assert_eq!(response.body, second.description_xml());
+        assert_eq!(response.headers[1].1, second.location());
+        assert_eq!(
+            response.headers[2].1,
+            format!("max-age={}", changed_age.max_age())
+        );
+        assert_ne!(changed_age.max_age(), second.max_age());
     }
 
     // ---- topology events: the live session and the directory, through the endpoint -------------

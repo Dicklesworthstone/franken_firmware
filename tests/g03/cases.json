@@ -131,7 +131,8 @@
       "rust_tests": [
         "soap::every_fault_has_a_status_and_the_standard_upnp_code_where_one_exists",
         "soap::a_fault_envelope_has_the_shape_the_controller_side_reads",
-        "server::bad_arguments_are_402_and_change_nothing"
+        "server::bad_arguments_are_402_and_change_nothing",
+        "server::already_silent_soap_succeeds_but_exhaustion_is_a_fault"
       ]
     },
     {
@@ -375,7 +376,8 @@
         "gena::exactly_seventy_four_of_the_eighty_incarnation_bits_change_the_id",
         "gena::the_counter_is_the_last_six_bytes_and_a_different_incarnation_does_not_share_ids",
         "gena::the_counter_is_refused_before_it_would_outgrow_its_six_bytes",
-        "server::the_endpoint_takes_a_wide_boot_incarnation_and_its_nonce_constructor_keeps_the_old_ids"
+        "server::the_endpoint_takes_a_wide_boot_incarnation_and_its_nonce_constructor_keeps_the_old_ids",
+        "gena::transport_invalidation_removes_old_sids_without_reusing_the_namespace"
       ]
     },
     {
@@ -546,6 +548,16 @@
       "rust_tests": [
         "server::a_room_renamed_through_the_endpoint_is_announced_with_the_name_escaped_twice_and_no_one_else_hears",
         "server::a_directory_change_made_without_publishing_is_carried_by_the_next_publish_and_not_lost"
+      ]
+    },
+    {
+      "id": "G03-I36",
+      "statement": "An endpoint configured with a matching Device serves its owner description, content type, location and cache age on the local link and derives local topology reads/events from the same identity. Mismatched UUID configuration is refused atomically; local unconfigured GET is404, configured Tailnet GET is401, and unconfigured legacy Tailnet GET retains405. Reads do not mutate playback state or lease, and local directory drift is corrected before state publication.",
+      "vectors": [],
+      "rust_tests": [
+        "server::discovery_get_and_topology_share_owner_device_without_changing_session",
+        "server::discovery_refuses_unconfigured_tailnet_and_mismatched_without_partial_mutation",
+        "server::discovery_reconfiguration_and_directory_drift_keep_read_and_event_identity_coherent"
       ]
     },
     {

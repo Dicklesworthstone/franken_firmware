@@ -326,6 +326,11 @@ struct Rig {
 }
 
 fn rig() -> Rig {
+    rig_with_identity(None)
+}
+
+fn rig_with_identity(identity: Option<&shim::DiscoveryIdentity>) -> Rig {
+    let member = identity.map_or(MEMBER, |identity| identity.uuid.as_str());
     let now = Rc::new(Cell::new(50_000_000));
     let kernel = TestKernel {
         now: Rc::clone(&now),
@@ -485,13 +490,24 @@ fn rig() -> Rig {
         )
         .unwrap();
     fleet.reserve_legacy_peer(&bridge).unwrap();
-    let soap = Endpoint::new(
-        EndpointConfig::provisional(MEMBER),
+    let mut soap = Endpoint::new(
+        EndpointConfig::provisional(member),
         LegacyBridge::new(bridge, key_for("legacy-bridge")),
         1,
         1,
     )
     .unwrap();
+    if let Some(identity) = identity {
+        let device = franken_control::fsonos::ssdp::Device::new(
+            &identity.uuid,
+            Ipv4Addr::LOCALHOST.octets(),
+            shim::PLAYER_PORT,
+            &identity.room,
+            franken_control::fsonos::ssdp::MIN_MAX_AGE,
+        )
+        .unwrap();
+        soap.configure_discovery(device).unwrap();
+    }
     let initial_session = UnifiedGroupSession::new("grp", "coord", 1);
     let authority = AuthorityToken::issue(&initial_session, u64::MAX);
     let fresh = fleet
@@ -509,7 +525,7 @@ fn rig() -> Rig {
         soap,
         network,
         PendingMember {
-            member_id: MEMBER.into(),
+            member_id: member.into(),
             profile_id: board.profile_id.clone(),
             role: ChannelRole::Stereo,
             ceiling: 1.0,
@@ -859,4 +875,442 @@ fn real_fsonos_eventing_changes_same_owner_protected_pcm_and_stops_with_ack() {
         controlled, baseline,
         "same owner's committed control must change protected PCM"
     );
+}
+
+/// A real client confined to the responder and HTTP listener of this owner.
+/// It cannot multicast or issue HTTP to a different host.
+struct OwnedDiscoveryClient {
+    lan: Lan,
+}
+
+impl OwnedDiscoveryClient {
+    fn at(http: SocketAddr, search: SocketAddr) -> Self {
+        assert!(http.ip().is_loopback());
+        assert!(search.ip().is_loopback());
+        let lan = Lan::with_timeout(Duration::from_secs(3))
+            .unwrap()
+            .with_routes(vec![(PLAYER, http)])
+            .with_ssdp_target(search);
+        Self { lan }
+    }
+
+    fn subscribe(&self, callback: &str) -> Result<Subscription, ProtoError> {
+        self.lan
+            .subscribe(PLAYER, RENDERING_CONTROL.event_path, callback, 300)
+    }
+
+    fn renew(&self, sid: &str) -> Result<Subscription, ProtoError> {
+        self.lan
+            .renew(PLAYER, RENDERING_CONTROL.event_path, sid, 600)
+    }
+}
+
+impl Transport for OwnedDiscoveryClient {
+    fn soap_post(
+        &self,
+        host: IpAddr,
+        path: &str,
+        action: &str,
+        body: &str,
+    ) -> Result<String, ProtoError> {
+        if host != PLAYER {
+            return Err(ProtoError::Network {
+                target: host.to_string(),
+                detail: "not the loopback fixture".into(),
+            });
+        }
+        self.lan.soap_post(host, path, action, body)
+    }
+
+    fn http_get(&self, url: &str) -> Result<String, ProtoError> {
+        let prefix = format!("http://{PLAYER}:{}/", shim::PLAYER_PORT);
+        if !url.starts_with(&prefix) {
+            return Err(ProtoError::Network {
+                target: url.to_string(),
+                detail: "not the loopback fixture".into(),
+            });
+        }
+        self.lan.http_get(url)
+    }
+
+    fn ssdp_search(
+        &self,
+        mx_secs: u8,
+        wait: Duration,
+    ) -> Result<Vec<fsonos_proto::ssdp::Advert>, ProtoError> {
+        self.lan.ssdp_search(mx_secs, wait)
+    }
+}
+
+/// Run a single actual-client HTTP request while the protected owner services its mailbox.
+fn call_discovered<R: Send + 'static>(
+    rig: &mut Rig,
+    mailbox: &mut HttpMailboxOwner,
+    server: &FsonosLoopback,
+    f: impl FnOnce(&OwnedDiscoveryClient) -> R + Send + 'static,
+) -> R {
+    let http = server.addr();
+    let search = server.discovery_addr().unwrap();
+    let worker = thread::spawn(move || f(&OwnedDiscoveryClient::at(http, search)));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut served = false;
+    while Instant::now() < deadline {
+        match rig.owner.service_http(mailbox).unwrap() {
+            HttpService::Idle if worker.is_finished() => break,
+            HttpService::Idle => thread::sleep(Duration::from_millis(1)),
+            HttpService::Replied => {
+                served = true;
+                break;
+            }
+            other => panic!("owner did not serve discovered client: {other:?}"),
+        }
+    }
+    assert!(
+        served,
+        "the actual owner must service the discovered client"
+    );
+    worker.join().expect("actual client worker")
+}
+
+/// Startup performs owner preflight over this mailbox; starting on the owner
+/// thread would deadlock the very service needed to establish readiness.
+fn try_start_owned_discovery(
+    rig: &mut Rig,
+    mailbox: &mut HttpMailboxOwner,
+    client: franken_speaker::settled_http::HttpMailboxClient,
+    session: UnifiedGroupSession,
+    identity: shim::DiscoveryIdentity,
+    target: CallbackTarget,
+) -> Result<FsonosLoopback, String> {
+    let worker = thread::spawn(move || {
+        FsonosLoopback::start_discoverable_eventing_with_mailbox(
+            session,
+            &identity,
+            Policy::LocalLink,
+            LoopbackLimits::standard(),
+            shim::DiscoveryLimits::standard(),
+            (target, CallbackLimits::standard()),
+            client,
+        )
+    });
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut served = 0;
+    while !worker.is_finished() && Instant::now() < deadline {
+        match rig.owner.service_http(mailbox).unwrap() {
+            HttpService::Idle => thread::sleep(Duration::from_millis(1)),
+            HttpService::Replied => served += 1,
+            other => panic!("owner startup preflight failed: {other:?}"),
+        }
+    }
+    assert!(worker.is_finished(), "owner-backed startup did not finish");
+    assert!(served > 0, "startup must preflight the actual owner");
+    worker.join().unwrap()
+}
+
+fn start_owned_discovery(
+    rig: &mut Rig,
+    mailbox: &mut HttpMailboxOwner,
+    client: franken_speaker::settled_http::HttpMailboxClient,
+    session: UnifiedGroupSession,
+    identity: shim::DiscoveryIdentity,
+    target: CallbackTarget,
+) -> FsonosLoopback {
+    try_start_owned_discovery(rig, mailbox, client, session, identity, target)
+        .expect("owner-backed discovery starts")
+}
+
+fn discover_owner(
+    rig: &mut Rig,
+    mailbox: &mut HttpMailboxOwner,
+    server: &FsonosLoopback,
+    identity: &shim::DiscoveryIdentity,
+) {
+    let client = OwnedDiscoveryClient::at(server.addr(), server.discovery_addr().unwrap());
+    let adverts = client.ssdp_search(1, Duration::from_millis(700)).unwrap();
+    assert_eq!(adverts.len(), 1);
+    let advert = &adverts[0];
+    assert_eq!(advert.st, fsonos_proto::ssdp::SONOS_ST);
+    assert_eq!(advert.location, fsonos_proto::ssdp::description_url(PLAYER));
+    assert_eq!(
+        advert.usn.as_deref(),
+        Some(format!("uuid:{}::{}", identity.uuid, fsonos_proto::ssdp::SONOS_ST).as_str())
+    );
+    let location = advert.location.clone();
+    let document = call_discovered(rig, mailbox, server, move |client| {
+        client.http_get(&location)
+    })
+    .unwrap();
+    let described = fsonos_proto::description::parse_device_description(&document).unwrap();
+    assert_eq!(described.udn.0, identity.uuid);
+    assert_eq!(described.room_name, identity.room);
+    assert!(described.has_service(RENDERING_CONTROL.service_type));
+    let zones = call_discovered(rig, mailbox, server, |client| {
+        fsonos_proto::topology::get_zone_group_state(client, PLAYER)
+    })
+    .unwrap();
+    assert_eq!(zones.groups.len(), 1);
+    let group = &zones.groups[0];
+    assert_eq!(group.id, "grp:1");
+    assert_eq!(group.coordinator.0, "coord");
+    assert_eq!(group.members.len(), 1);
+    let member = &group.members[0];
+    assert_eq!(member.uuid.0, identity.uuid);
+    assert_eq!(member.location, advert.location);
+    assert_eq!(member.zone_name, identity.room);
+    assert_eq!(member.ip(), Some(PLAYER));
+}
+
+#[test]
+fn actual_client_discovers_same_protected_owner_across_restart_and_new_subscription() {
+    let identity = shim::DiscoveryIdentity::fixture();
+    let baseline = three_blocks_and_stop(rig_with_identity(Some(&identity)));
+    let mut rig = rig_with_identity(Some(&identity));
+    let sink = EventSink::start(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+    let target = || CallbackTarget::new(sink.local_addr(), &format!("/{TAG}")).unwrap();
+    let (client, mut mailbox) =
+        http_mailbox(HttpMailboxConfig::new(16 * 1024, 32, Duration::from_millis(800)).unwrap())
+            .unwrap();
+
+    // Seed the transport with a snapshot returned by this exact owner, not a
+    // second fixture session. The actual description is read on this owner.
+    let get = franken_control::fsonos::HttpRequest {
+        method: "GET",
+        path: franken_control::fsonos::ssdp::DESCRIPTION_PATH,
+        peer_ip: PLAYER,
+        ingress: franken_control::fsonos::Ingress::LocalLegacy,
+        headers: &[],
+        body: &[],
+    };
+    let pending = client.submit(&get).unwrap();
+    assert!(matches!(
+        rig.owner.service_http(&mut mailbox),
+        Ok(HttpService::Replied)
+    ));
+    let actual = pending.wait().unwrap();
+    assert_eq!(actual.result.unwrap().control.response.status, 200);
+    let server = start_owned_discovery(
+        &mut rig,
+        &mut mailbox,
+        client.clone(),
+        actual.session,
+        identity.clone(),
+        target(),
+    );
+    discover_owner(&mut rig, &mut mailbox, &server, &identity);
+    let callback = sink.callback_url(TAG);
+    let callback_first = callback.clone();
+    let first = call_discovered(&mut rig, &mut mailbox, &server, move |c| {
+        c.subscribe(&callback_first)
+    })
+    .unwrap();
+    let initial = next(&sink);
+    assert_eq!((initial.sid.as_str(), initial.seq), (first.sid.as_str(), 0));
+    assert_eq!(initial.last_change().unwrap().unwrap().volume(), Some(50));
+    assert_eq!(server.with_session(|s| s.state_revision), 1);
+    call_discovered(&mut rig, &mut mailbox, &server, |c| {
+        set_volume(c, PLAYER, 90)
+    })
+    .unwrap();
+    let changed = next(&sink);
+    assert_eq!((changed.sid.as_str(), changed.seq), (first.sid.as_str(), 1));
+    assert_eq!(changed.last_change().unwrap().unwrap().volume(), Some(90));
+    assert_eq!(
+        server.with_session(|s| (s.state_revision, s.members[&identity.uuid].volume_0_to_100)),
+        (2, 90)
+    );
+    let session = server.with_session(Clone::clone);
+    assert!(server.stop().reconciled());
+    assert_eq!(rig.owner.release_http_eventing(&mut mailbox).unwrap(), 1);
+    assert!(sink.recv_timeout(Duration::from_millis(300)).is_none());
+
+    let server = start_owned_discovery(
+        &mut rig,
+        &mut mailbox,
+        client,
+        session,
+        identity.clone(),
+        target(),
+    );
+    discover_owner(&mut rig, &mut mailbox, &server, &identity);
+    let old_sid = first.sid.clone();
+    let old =
+        call_discovered(&mut rig, &mut mailbox, &server, move |c| c.renew(&old_sid)).unwrap_err();
+    assert!(
+        matches!(old, ProtoError::Network { ref detail, .. } if detail == "SUBSCRIBE: HTTP 412")
+    );
+    assert!(sink.recv_timeout(Duration::from_millis(300)).is_none());
+    let second = call_discovered(&mut rig, &mut mailbox, &server, move |c| {
+        c.subscribe(&callback)
+    })
+    .unwrap();
+    assert_ne!(first.sid, second.sid);
+    let initial = next(&sink);
+    assert_eq!(
+        (initial.sid.as_str(), initial.seq),
+        (second.sid.as_str(), 0)
+    );
+    assert_eq!(initial.last_change().unwrap().unwrap().volume(), Some(90));
+    call_discovered(&mut rig, &mut mailbox, &server, |c| {
+        set_volume(c, PLAYER, 80)
+    })
+    .unwrap();
+    let changed = next(&sink);
+    assert_eq!(
+        (changed.sid.as_str(), changed.seq),
+        (second.sid.as_str(), 1)
+    );
+    assert_eq!(changed.last_change().unwrap().unwrap().volume(), Some(80));
+    assert_eq!(
+        server.with_session(|s| (s.state_revision, s.members[&identity.uuid].volume_0_to_100)),
+        (3, 80)
+    );
+    assert!(server.stop().reconciled());
+    assert_eq!(rig.owner.release_http_eventing(&mut mailbox).unwrap(), 1);
+    assert!(sink.recv_timeout(Duration::from_millis(300)).is_none());
+    let controlled = three_blocks_and_stop(rig);
+    assert_ne!(
+        controlled, baseline,
+        "same discovered owner's control changes nonzero protected PCM"
+    );
+}
+
+#[test]
+fn failed_owner_discovery_preflight_fences_until_real_owner_cleanup_then_succeeds() {
+    let identity = shim::DiscoveryIdentity::fixture();
+    let mut rig = rig_with_identity(Some(&identity));
+    let sink = EventSink::start(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+    let callback = sink.callback_url(TAG);
+    let target = || CallbackTarget::new(sink.local_addr(), &format!("/{TAG}")).unwrap();
+    let (client, mut mailbox) =
+        http_mailbox(HttpMailboxConfig::new(16 * 1024, 32, Duration::from_millis(800)).unwrap())
+            .unwrap();
+
+    // The actual endpoint has one live SID before the new worker attaches.
+    // This raw path returns the initial notification to this caller; it has no
+    // callback outbox, so do not present that vector as delivered.
+    let callback_header = format!("<{callback}>");
+    let headers = [
+        ("CALLBACK", callback_header.as_str()),
+        ("NT", "upnp:event"),
+        ("TIMEOUT", "Second-300"),
+    ];
+    let subscribe = franken_control::fsonos::HttpRequest {
+        method: "SUBSCRIBE",
+        path: RENDERING_CONTROL.event_path,
+        peer_ip: PLAYER,
+        ingress: franken_control::fsonos::Ingress::LocalLegacy,
+        headers: &headers,
+        body: &[],
+    };
+    let pending = client.submit(&subscribe).unwrap();
+    assert!(matches!(
+        rig.owner.service_http(&mut mailbox),
+        Ok(HttpService::Replied)
+    ));
+    let reply = pending.wait().unwrap();
+    let handled = reply.result.unwrap().control;
+    assert_eq!(handled.response.status, 200);
+    let old_sid = handled
+        .response
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("SID"))
+        .map(|(_, value)| value.clone())
+        .expect("actual owner-issued SID");
+    assert_eq!(handled.notifications.len(), 1);
+    assert_eq!(handled.notifications[0].sid, old_sid);
+    assert_eq!(handled.notifications[0].seq, 0);
+    assert!(sink.recv_timeout(Duration::from_millis(300)).is_none());
+    let owner_session = reply.session;
+
+    // Same actual member, but transport room differs from the owner's real
+    // configured device. The attached worker must fail its real GET preflight.
+    let mut mismatch = identity.clone();
+    mismatch.room = "Other room".into();
+    let failure = match try_start_owned_discovery(
+        &mut rig,
+        &mut mailbox,
+        client.clone(),
+        owner_session,
+        mismatch,
+        target(),
+    ) {
+        Ok(_) => panic!("mismatched actual owner must not advertise"),
+        Err(reason) => reason,
+    };
+    assert_eq!(failure, "owner discovery identity mismatch");
+    let get = franken_control::fsonos::HttpRequest {
+        method: "GET",
+        path: franken_control::fsonos::ssdp::DESCRIPTION_PATH,
+        peer_ip: PLAYER,
+        ingress: franken_control::fsonos::Ingress::LocalLegacy,
+        headers: &[],
+        body: &[],
+    };
+    assert!(matches!(
+        client.submit(&get),
+        Err(franken_speaker::settled_http::HttpMailboxError::Busy)
+    ));
+    assert!(sink.recv_timeout(Duration::from_millis(300)).is_none());
+
+    // The actual owner performs invalidation only after the delivery terminal
+    // fence has settled; this does not assume the fence was still pending at
+    // the instant startup returned an error.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let invalidated = loop {
+        match rig.owner.release_http_eventing(&mut mailbox) {
+            Ok(count) => break count,
+            Err(franken_speaker::settled_http::HttpMailboxError::Busy) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "actual callback terminal did not settle"
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            other => panic!("actual owner cleanup failed: {other:?}"),
+        }
+    };
+    assert_eq!(invalidated, 1, "the actual owner's live SID is invalidated");
+    let pending = client
+        .submit(&get)
+        .expect("owner cleanup reopens the mailbox");
+    assert!(matches!(
+        rig.owner.service_http(&mut mailbox),
+        Ok(HttpService::Replied)
+    ));
+    let reply = pending.wait().unwrap();
+    assert_eq!(reply.result.unwrap().control.response.status, 200);
+    let server = start_owned_discovery(
+        &mut rig,
+        &mut mailbox,
+        client,
+        reply.session,
+        identity.clone(),
+        target(),
+    );
+    discover_owner(&mut rig, &mut mailbox, &server, &identity);
+    let refused_sid = old_sid.clone();
+    let refused = call_discovered(&mut rig, &mut mailbox, &server, move |c| {
+        c.renew(&refused_sid)
+    })
+    .unwrap_err();
+    assert!(
+        matches!(refused, ProtoError::Network { ref detail, .. } if detail == "SUBSCRIBE: HTTP 412")
+    );
+    let sub = call_discovered(&mut rig, &mut mailbox, &server, move |c| {
+        c.subscribe(&callback)
+    })
+    .unwrap();
+    assert_ne!(sub.sid, old_sid);
+    let delivered = next(&sink);
+    assert_eq!(
+        (delivered.sid.as_str(), delivered.seq),
+        (sub.sid.as_str(), 0)
+    );
+    assert_eq!(delivered.last_change().unwrap().unwrap().volume(), Some(50));
+    assert!(server.stop().reconciled());
+    assert_eq!(rig.owner.release_http_eventing(&mut mailbox).unwrap(), 1);
+    assert!(sink.recv_timeout(Duration::from_millis(300)).is_none());
+    let pcm = three_blocks_and_stop(rig);
+    assert!(pcm.iter().flatten().any(|byte| *byte != 0));
 }
