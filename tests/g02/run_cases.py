@@ -68,6 +68,10 @@ d01.RUST_SOURCES = [
     ("crates/franken-dsp/src/volume/local_mute_tests.rs", "franken_dsp", "volume::local_mute_tests::"),
     ("crates/franken-dsp/src/volume/rejoin_tests.rs", "franken_dsp", "volume::rejoin_tests::"),
     ("crates/franken-speaker/src/button_adapter/tests.rs", "franken_speaker", "button_adapter::tests::"),
+    ("crates/franken-speaker/src/network_render/tests/controller_events/role_integration.rs",
+     "franken_speaker", "network_render::tests::controller_events::role_integration::"),
+    ("crates/franken-speaker/src/network_render/tests/controller_events/button_integration.rs",
+     "franken_speaker", "network_render::tests::controller_events::button_integration::"),
     ("crates/franken-dsp/tests/g02_vectors.rs", "g02_vectors", ""),
 ]
 Logs = d01.Logs
@@ -78,6 +82,12 @@ sha256_file = d01.sha256_file
 
 
 def derive_rust_tests() -> List[Tuple[str, str]]:
+    # D01 can skip absent optional source files. These G02 suites are required:
+    # deleting a child must fail instead of shrinking the acceptance denominator.
+    missing = [rel for rel, _stem, _prefix in d01.RUST_SOURCES
+               if not os.path.isfile(os.path.join(REPO, rel))]
+    if missing:
+        raise ValueError("required G02 Rust source missing: " + ", ".join(missing))
     return d01.derive_rust_tests(REPO)
 
 

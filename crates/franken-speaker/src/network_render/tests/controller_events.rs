@@ -2310,3 +2310,6 @@ mod role_integration;
 
 #[cfg(unix)]
 mod binding_integration;
+
+#[cfg(unix)]
+mod button_integration;

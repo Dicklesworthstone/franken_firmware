@@ -12,6 +12,7 @@ use franken_control::contracts::secret_store::SecretStore;
 use franken_control::fsonos::{Endpoint, Handled, HttpRequest, Notification, TransportState};
 use franken_dsp::volume::{MemberVolume, MuteReason, Role, RolePlan, VolumeError};
 use franken_hal::backend::DeviceBackend;
+use franken_hal::events::ChannelEvent;
 use franken_platform::ops::KernelOps;
 use franken_session::{
     AuthorityToken, ChannelRole, GroupMembership, GroupStopMarker, GroupTime, MemberLifecycleState,
@@ -20,6 +21,9 @@ use franken_session::{
 };
 use franken_stream::carrier::{DatagramPort, PollReport};
 
+use crate::button_adapter::{
+    ButtonAction, ButtonAdapter, ButtonBounds, ButtonMap, ButtonRole, ButtonStats,
+};
 use crate::network_render::{NetworkRender, NetworkRenderError, OwnerStep};
 use crate::render::{RenderState, StopReport, TickReport, TimingModel};
 
@@ -39,6 +43,21 @@ pub enum AdmissionError {
     Membership(MembershipError),
     Render(NetworkRenderError),
     Volume(VolumeError),
+}
+
+/// Why the owned physical-button adapter could not be used or configured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonInputError {
+    NotConfigured,
+    AlreadyConfigured,
+    ConfigurationClosed,
+}
+
+/// The local intent effect and any separate attempt to apply render policy.
+#[derive(Debug)]
+pub struct ButtonEventResult {
+    pub action: ButtonAction,
+    pub render: Option<Result<RenderApplication, OwnerError>>,
 }
 
 #[derive(Debug)]
@@ -148,6 +167,8 @@ pub struct SettledRender<
     profile: String,
     role: ChannelRole,
     volume: MemberVolume,
+    buttons: Option<ButtonAdapter>,
+    button_configuration_closed: bool,
     render: NetworkRender<P, O, B>,
     observed: CommittedVolume,
     observed_stop: Option<GroupStopMarker>,
@@ -247,6 +268,8 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             profile,
             role,
             volume,
+            buttons: None,
+            button_configuration_closed: false,
             render,
             observed,
             observed_stop,
@@ -367,6 +390,9 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
                 },
             )
             .map_err(OwnerError::Membership)?;
+        // A successful proposal closes button configuration even if a later
+        // role binding or cutover fails; no new adapter can reset its history.
+        self.button_configuration_closed = true;
         self.render
             .bind_initial_role(plan)
             .map_err(OwnerError::Render)?;
@@ -627,6 +653,77 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
         let notifications = self.soap.publish(now_ns, &self.session);
         self.transport_dirty = false;
         Ok(notifications)
+    }
+
+    /// Configure exactly once, before the first accepted join proposal.
+    pub fn configure_buttons(
+        &mut self,
+        map: ButtonMap,
+        bounds: ButtonBounds,
+    ) -> Result<(), ButtonInputError> {
+        if self.buttons.is_some() {
+            return Err(ButtonInputError::AlreadyConfigured);
+        }
+        if self.button_configuration_closed || self.active || self.stopping || self.join.is_some() {
+            return Err(ButtonInputError::ConfigurationClosed);
+        }
+        self.buttons = Some(ButtonAdapter::new_unknown(map, bounds));
+        Ok(())
+    }
+
+    /// Apply an admitted HAL event to this owner's local intent. The action is
+    /// separate from render policy application and never asserts a HAL ACK.
+    pub fn handle_button_event(
+        &mut self,
+        event: ChannelEvent,
+    ) -> Result<ButtonEventResult, ButtonInputError> {
+        let adapter = self
+            .buttons
+            .as_mut()
+            .ok_or(ButtonInputError::NotConfigured)?;
+        self.volume.observe_board(self.render.protection_status());
+        let action = adapter.on_event(event, &mut self.volume);
+        // MemberVolume tracks board/local/join mute; this owner also holds the
+        // group-member mute in its session. Include both in diagnostics.
+        let action = match action {
+            ButtonAction::LocalMute { muted, .. } => ButtonAction::LocalMute {
+                muted,
+                effective_mute: self.effective_mute(),
+            },
+            ButtonAction::TrimStep { trim_permille, .. } => ButtonAction::TrimStep {
+                trim_permille,
+                effective_mute: self.effective_mute(),
+            },
+            other => other,
+        };
+        let render = if matches!(
+            action,
+            ButtonAction::LocalMute { .. } | ButtonAction::TrimStep { .. }
+        ) {
+            Some(self.reconcile())
+        } else {
+            None
+        };
+        Ok(ButtonEventResult { action, render })
+    }
+
+    /// Report newly stuck buttons without advancing the renderer.
+    pub fn poll_buttons(&mut self, now: u64) -> Result<Vec<ButtonRole>, ButtonInputError> {
+        Ok(self
+            .buttons
+            .as_mut()
+            .ok_or(ButtonInputError::NotConfigured)?
+            .poll(now))
+    }
+
+    #[must_use]
+    pub fn button_stats(&self) -> Option<ButtonStats> {
+        self.buttons.as_ref().map(ButtonAdapter::stats)
+    }
+
+    #[must_use]
+    pub fn button_is_stuck(&self, role: ButtonRole) -> Option<bool> {
+        self.buttons.as_ref().map(|adapter| adapter.is_stuck(role))
     }
 
     pub fn local_mute(&mut self, muted: bool) -> Result<RenderApplication, OwnerError> {

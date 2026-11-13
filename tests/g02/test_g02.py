@@ -155,12 +155,12 @@ class ContractMatchesVectors(Base):
                     self.assertIn(name.split("::", 1)[1], self.text)
 
     def test_the_contract_states_the_plan_and_the_limits(self) -> None:
-        self.assertIn("128 cases: 4 meta, 51 vectors and 73 Rust tests", self.text)
+        self.assertIn("152 cases: 4 meta, 51 vectors and 97 Rust tests", self.text)
         self.assertIn("Numerical tests do not prove physical behavior", self.text)
         self.assertIn("second implementation of this contract by the same author", self.text)
         self.assertIn("scripts/e2e/g02 --tier full --judge", self.text)
         planned = len(runner.run("full", None)[0])
-        self.assertEqual(planned, 128)
+        self.assertEqual(planned, 152)
 
 
 class HandDerivedPins(Base):
@@ -497,6 +497,42 @@ class JudgeBehavior(Base):
         results = self.judge(cargo_log(self.doc, drop_cases=("G02-MBR-003",), drop_tests=(name,)))
         self.assertEqual(sorted(self.by(results, "blocked")), sorted(["G02-MBR-003", f"RUST:franken_dsp::{name}"]))
         self.assertEqual(self.by(results, "failed"), [])
+
+    def test_owned_role_and_button_cases_are_required_and_missing_logs_block(self) -> None:
+        names = (
+            "network_render::tests::controller_events::role_integration::admitted_roles_match_manual_per_channel_protected_oracle_through_finite_eof",
+            "network_render::tests::controller_events::button_integration::local_button_mute_survives_clock_failure_and_reports_real_drain_custody",
+        )
+        required = set(runner.derive_rust_tests())
+        for name in names:
+            with self.subTest(name=name):
+                self.assertIn(("franken_speaker", name), required)
+                result = self.judge(cargo_log(self.doc, drop_tests=(name,)))
+                self.assertEqual(self.by(result, "blocked"), [f"RUST:franken_speaker::{name}"])
+                self.assertEqual(self.by(result, "failed"), [])
+                self.assertEqual(runner.exit_code(result), 3)
+
+    def test_failed_owned_render_cases_cannot_pass_the_judge(self) -> None:
+        names = (
+            "network_render::tests::controller_events::role_integration::admitted_roles_match_manual_per_channel_protected_oracle_through_finite_eof",
+            "network_render::tests::controller_events::button_integration::local_button_mute_survives_clock_failure_and_reports_real_drain_custody",
+        )
+        for name in names:
+            with self.subTest(name=name):
+                text = cargo_log(self.doc)
+                before = f"test {name} ... ok"
+                self.assertEqual(text.count(before), 1)
+                result = self.judge(text.replace(before, f"test {name} ... FAILED"))
+                self.assertEqual(self.by(result, "failed"), [f"RUST:franken_speaker::{name}"])
+                self.assertEqual(runner.exit_code(result), 1)
+
+    def test_missing_required_owned_source_cannot_shrink_the_plan(self) -> None:
+        rel = "crates/franken-speaker/src/network_render/tests/controller_events/button_integration.rs"
+        real_isfile = os.path.isfile
+        missing = os.path.join(runner.REPO, rel)
+        with patch.object(runner.os.path, "isfile", side_effect=lambda path: False if path == missing else real_isfile(path)):
+            with self.assertRaisesRegex(ValueError, re.escape(rel)):
+                runner.derive_rust_tests()
 
     def test_a_divergence_is_reported_with_the_path_to_the_first_difference(self) -> None:
         def bend(obs: dict) -> dict:

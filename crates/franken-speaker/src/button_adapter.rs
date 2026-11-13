@@ -281,6 +281,15 @@ impl ButtonAdapter {
         }
     }
 
+    /// Attach to a channel whose initial mute-button state is unknown. Until a
+    /// real release is observed, a down may only establish local mute.
+    #[must_use]
+    pub const fn new_unknown(map: ButtonMap, bounds: ButtonBounds) -> Self {
+        let mut adapter = Self::new(map, bounds);
+        adapter.presses[ButtonRole::Mute.index()].require_release = true;
+        adapter
+    }
+
     /// Apply one event the HAL channel delivered. Only a debounced `Down` of a mapped button acts.
     pub fn on_event(&mut self, event: ChannelEvent, member: &mut MemberVolume) -> ButtonAction {
         match event {
