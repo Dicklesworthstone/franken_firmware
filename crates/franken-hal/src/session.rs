@@ -449,6 +449,7 @@ pub struct HalSession<B: DeviceBackend> {
     // in-flight storage alive) runs before the backend goes away.
     slots: Option<SlotTable>,
     backend: B,
+    profile_digest: [u8; 64],
     session_id: u64,
     /// How many flushes and resets the device has acknowledged since this session opened.
     generation: u64,
@@ -545,6 +546,16 @@ impl<B: DeviceBackend> HalSession<B> {
         profile
             .verify_integrity()
             .map_err(SessionError::ProfileRejected)?;
+        let profile_digest = profile
+            .integrity_sha256
+            .as_bytes()
+            .try_into()
+            .map_err(|_| {
+                SessionError::ProfileRejected(UnsupportedReasonCode::ProfileDigestMismatch {
+                    expected_sha256: profile.integrity_sha256.clone(),
+                    computed_sha256: profile.compute_digest(),
+                })
+            })?;
         if profile.amplifier_policy != AmplifierPolicy::AdmittedSafeStartupOrder {
             return Err(SessionError::AmplifierForbidden);
         }
@@ -582,6 +593,7 @@ impl<B: DeviceBackend> HalSession<B> {
         Ok(Self {
             slots: None,
             backend,
+            profile_digest,
             session_id: u64::from(session_id),
             generation: 0,
             phase: SessionPhase::Closed,
@@ -618,6 +630,12 @@ impl<B: DeviceBackend> HalSession<B> {
     }
 
     // ---- events
+
+    /// Immutable digest of the board profile validated when this owner opened.
+    #[must_use]
+    pub fn profile_digest(&self) -> &[u8] {
+        &self.profile_digest
+    }
 
     /// The next session event, oldest first. The queue is bounded: see [`Self::event_stats`] for
     /// exactly what it could not keep. Events are never audio.

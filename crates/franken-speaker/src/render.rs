@@ -53,6 +53,7 @@
 use franken_dsp::format::Endian;
 use franken_dsp::protection::{BoardStatus, ProtectedBoardDsp, ProtectedOutput, SourceEvent};
 use franken_dsp::resample::{DriftResampler, FrameSource, ResetReason};
+use franken_dsp::volume::RolePlan;
 use franken_dsp::{FRAMES_PER_BLOCK, MAX_HARDWARE_CHANNELS, StereoAudioBlock};
 use franken_hal::backend::{DeviceBackend, DriverError};
 use franken_hal::emit::{Critical, CriticalQueue, PushOutcome, SessionEventKind};
@@ -567,6 +568,7 @@ pub struct RenderLoop<B: DeviceBackend> {
     session: HalSession<B>,
     dsp: ProtectedBoardDsp,
     resampler: DriftResampler,
+    role_plan: Option<RolePlan>,
     cfg: RenderConfig,
     channels: usize,
     ring_depth: usize,
@@ -634,7 +636,7 @@ impl<B: DeviceBackend> RenderLoop<B> {
     /// reservation can still fail, and fails the same way.
     fn new_reserving(
         mut session: HalSession<B>,
-        dsp: ProtectedBoardDsp,
+        mut dsp: ProtectedBoardDsp,
         resampler: DriftResampler,
         cfg: RenderConfig,
         refuse: &mut dyn FnMut(LoopStorage) -> bool,
@@ -642,6 +644,8 @@ impl<B: DeviceBackend> RenderLoop<B> {
         if session.phase() != SessionPhase::Prepared {
             return Err(RenderError::SessionNotPrepared(session.phase()));
         }
+        dsp.bind_profile_digest(session.profile_digest())
+            .map_err(|_| RenderError::Geometry("the session and protection profiles disagree"))?;
         let Some(geometry) = session.geometry() else {
             return Err(RenderError::Geometry("the session has no geometry"));
         };
@@ -714,6 +718,7 @@ impl<B: DeviceBackend> RenderLoop<B> {
             session,
             dsp,
             resampler,
+            role_plan: None,
             cfg,
             channels,
             lead_ticks,
@@ -1010,6 +1015,28 @@ impl<B: DeviceBackend> RenderLoop<B> {
 
     // ---- lifecycle
 
+    /// Bind the member's admitted input mapping before any render has begun.
+    /// It is immutable thereafter, including across stop or reconnect.
+    pub(crate) fn can_bind_initial_role(&self, plan: RolePlan) -> bool {
+        self.state == RenderState::Ready
+            && !self.started_before
+            && self.busy.is_none()
+            && self.frames_rendered == 0
+            && self.role_plan.is_none_or(|old| old == plan)
+    }
+
+    pub(crate) fn bind_initial_role(&mut self, plan: RolePlan) -> Result<(), RenderError> {
+        if !self.can_bind_initial_role(plan) {
+            return Err(RenderError::WrongState(self.state));
+        }
+        self.role_plan = Some(plan);
+        Ok(())
+    }
+
+    pub(crate) fn has_initial_role(&self) -> bool {
+        self.role_plan.is_some()
+    }
+
     /// `Ready` or `Stopped` -> `Running`. Refused, with nothing touched, unless the protection DSP is
     /// active and admission succeeds; an injected start failure is such a refusal.
     pub fn start(&mut self, pre: StartPreconditions) -> Result<(), RenderError> {
@@ -1031,6 +1058,8 @@ impl<B: DeviceBackend> RenderLoop<B> {
             && self.stop_flush_supported()
             && self.presentation_mapping_valid()
             && matches!(self.dsp.status(), BoardStatus::Active)
+            && !self.dsp.has_pending_switch()
+            && self.dsp.profile_digest() == Some(self.session.profile_digest())
             && self.session.primed_silence_blocks() >= self.session.required_silence_blocks()
     }
 
@@ -1055,6 +1084,9 @@ impl<B: DeviceBackend> RenderLoop<B> {
         pre: StartPreconditions,
         silent: bool,
     ) -> Result<(), RenderError> {
+        self.dsp
+            .bind_profile_digest(self.session.profile_digest())
+            .map_err(|_| RenderError::Geometry("the session and protection profiles disagree"))?;
         if silent && (!self.session.silent_prepared_after_reset() || self.dsp.applied_gain() != 0.0)
         {
             return Err(RenderError::SilentStartUnproven);
@@ -1297,6 +1329,21 @@ impl<B: DeviceBackend> RenderLoop<B> {
             self.state,
             RenderState::Running | RenderState::Muted | RenderState::Draining
         ) {
+            return report;
+        }
+        // The public DSP control reference may replace the whole object.
+        // Identity gates every render or busy submit, including graceful drain.
+        // A cancel-only drain cannot render and must still service its flush ACK
+        // or timeout even when the DSP is mismatched or uncalibrated.
+        if !(self.state == RenderState::Draining && self.cancel_mode)
+            && (self
+                .dsp
+                .bind_profile_digest(self.session.profile_digest())
+                .is_err()
+                || self.dsp.profile_digest() != Some(self.session.profile_digest()))
+        {
+            self.fail(FaultReason::ProtectionFault);
+            report.state = self.state;
             return report;
         }
         let poll = self.session.step();
@@ -1588,6 +1635,14 @@ impl<B: DeviceBackend> RenderLoop<B> {
         self.block.frames = n;
         self.block.start_frame = self.frames_rendered;
         self.frames_rendered += to_u64(n);
+        if let Some(plan) = self.role_plan {
+            for (left, right) in self.block.left[..n]
+                .iter_mut()
+                .zip(&mut self.block.right[..n])
+            {
+                (*left, *right) = plan.map(*left, *right);
+            }
+        }
         let block_report = self.dsp.render_into(&self.block, &mut self.out);
         self.last_applied_gain = block_report.applied_gain;
         if !matches!(block_report.status, BoardStatus::Active)
@@ -1843,6 +1898,118 @@ mod tests {
             assert_eq!(l.state(), RenderState::Ready);
             assert_eq!(probe.calls().len(), before);
         }
+    }
+
+    #[test]
+    fn initial_role_is_idempotent_but_cannot_be_switched_or_rebound_after_start() {
+        use franken_dsp::volume::Role;
+        let (mut render, probe, _) = standard();
+        let board = profile();
+        let left = RolePlan::for_profile(&board, Role::Left).unwrap();
+        let right = RolePlan::for_profile(&board, Role::Right).unwrap();
+        render.session.prime_silence().unwrap();
+        let held = probe.pending_slots();
+        assert_eq!(held.len(), 1);
+        render.bind_initial_role(left).unwrap();
+        render.bind_initial_role(left).unwrap();
+        assert!(render.bind_initial_role(right).is_err());
+        assert_eq!(probe.pending_slots(), held);
+        assert_eq!(render.counters().frames_generated, 0);
+        render.start(READY).unwrap();
+        let calls = probe.calls();
+        assert!(render.bind_initial_role(left).is_err());
+        assert!(render.bind_initial_role(right).is_err());
+        assert_eq!(probe.calls(), calls);
+        assert_eq!(probe.pending_slots(), held);
+    }
+
+    #[test]
+    fn initial_sub_role_installs_the_admitted_plan_on_the_renderer() {
+        use franken_dsp::volume::Role;
+        let board = franken_board_profile::synthetic_test_fixture_catalog()
+            .into_iter()
+            .find(|profile| profile.model_number == "Sub")
+            .unwrap();
+        let mut config = fake_config();
+        config.geometry.channels = u32::from(board.hardware_channels);
+        let (backend, _) = FakeBackend::new(config);
+        let ledger = Arc::new(LeakLedger::new(64));
+        let mut session = HalSession::open(
+            board.clone(),
+            backend,
+            SessionConfig::with_ledger(ledger, 2),
+        )
+        .unwrap();
+        session.prepare().unwrap();
+        let calibration = synthetic_calibration_for(&board);
+        let dsp = ProtectedBoardDsp::admit(&board, Some(&calibration), Admission::HostSimulation);
+        let mut render = RenderLoop::new(
+            session,
+            dsp,
+            DriftResampler::new(ResamplerConfig::default()).unwrap(),
+            RenderConfig::standard(BLOCK),
+        )
+        .unwrap();
+        let sub = RolePlan::for_profile(&board, Role::Sub).unwrap();
+        assert_eq!(render.role_plan, None);
+        render.bind_initial_role(sub).unwrap();
+        assert_eq!(render.role_plan, Some(sub));
+        assert_eq!(render.role_plan.unwrap().role(), Role::Sub);
+        assert_eq!(render.counters().frames_generated, 0);
+    }
+
+    #[test]
+    fn replaced_mismatched_dsp_faults_before_busy_submit_or_new_source_pull() {
+        let mut config = fake_config();
+        config.completion_delay_ticks = 100;
+        let (mut render, probe, _) = build(config, RenderConfig::standard(BLOCK));
+        probe.capture_submissions(8);
+        render.session.prime_silence().unwrap();
+        let held = probe.pending_slots();
+        render.start(READY).unwrap();
+        let mut source = ToneSource::new();
+        let mut timing = ScriptedTiming {
+            default_cost: 2,
+            ..ScriptedTiming::default()
+        };
+        for _ in 0..10 {
+            render.tick(&mut source, &mut timing);
+            if render.block_in_progress() {
+                break;
+            }
+        }
+        assert!(render.block_in_progress());
+        let pulled = source.pos;
+        assert!(pulled > 0);
+        let captured = probe.captured_submissions();
+        let mut other = profile();
+        other.model_name.push_str(" fixture variant");
+        other = other.with_computed_digest();
+        assert!(other.verify_integrity().is_ok());
+        let calibration = synthetic_calibration_for(&other);
+        *render.dsp_mut() =
+            ProtectedBoardDsp::admit(&other, Some(&calibration), Admission::HostSimulation);
+        let report = render.tick(&mut source, &mut timing);
+        assert_eq!(report.state, RenderState::Faulted);
+        assert_eq!(render.fault(), Some(FaultReason::ProtectionFault));
+        assert_eq!(source.pos, pulled);
+        assert_eq!(probe.captured_submissions(), captured);
+        assert_eq!(probe.pending_slots(), held);
+        assert_eq!(probe.kernel_touch_pending(), (1, 0));
+        assert!(!render.stop_report().acknowledged);
+        // The identity refusal must not bypass the existing acknowledged-reset
+        // recovery path or release retained storage before that reset.
+        render.recover().unwrap();
+        assert_eq!(render.state(), RenderState::Ready);
+        assert_eq!(probe.pending(), 0);
+        assert_eq!(probe.use_after_free(), 0);
+        assert_eq!(probe.modified_while_owned(), 0);
+        assert!(matches!(
+            render.start(READY),
+            Err(RenderError::Geometry(
+                "the session and protection profiles disagree"
+            ))
+        ));
     }
 
     #[test]

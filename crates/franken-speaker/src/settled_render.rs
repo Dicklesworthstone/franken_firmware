@@ -10,7 +10,7 @@ use franken_control::channel::owner::{AgreementError, FleetControlOwner, FreshFl
 use franken_control::channel::pipeline::{Settlement, Storage, StoreFailed};
 use franken_control::contracts::secret_store::SecretStore;
 use franken_control::fsonos::{Endpoint, Handled, HttpRequest, Notification, TransportState};
-use franken_dsp::volume::{MemberVolume, MuteReason, VolumeError};
+use franken_dsp::volume::{MemberVolume, MuteReason, Role, RolePlan, VolumeError};
 use franken_hal::backend::DeviceBackend;
 use franken_platform::ops::KernelOps;
 use franken_session::{
@@ -183,8 +183,8 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             || clock_leader != render.bound_clock_leader()
             || !control.fresh_group_is_healthy()
             || profile != render.protection_profile_id()
-            // Other roles need actual PCM routing before they can be admitted.
-            || role != ChannelRole::Stereo
+            // MonoSum has no admitted G02 mapping in this bounded slice.
+            || role == ChannelRole::MonoSum
             || !ceiling.is_finite()
             || !(0.0..=1.0).contains(&ceiling)
         {
@@ -319,6 +319,20 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             return Err(OwnerError::JoinState);
         }
         let b = self.bounds(true)?;
+        if board.verify_integrity().is_err() || !self.render.matches_admitted_profile(&board) {
+            return Err(OwnerError::Binding);
+        }
+        let role = match self.role {
+            ChannelRole::Stereo => Role::Stereo,
+            ChannelRole::LeftMono => Role::Left,
+            ChannelRole::RightMono => Role::Right,
+            ChannelRole::SubLfe => Role::Sub,
+            ChannelRole::MonoSum => return Err(OwnerError::Binding),
+        };
+        let plan = RolePlan::for_profile(&board, role).map_err(|_| OwnerError::Binding)?;
+        if !self.render.can_bind_initial_role(plan) {
+            return Err(OwnerError::Binding);
+        }
         let spec = ProposalSpec {
             change: MembershipChange::Join {
                 member_id: self.member.clone(),
@@ -340,6 +354,9 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
                 },
             )
             .map_err(OwnerError::Membership)?;
+        self.render
+            .bind_initial_role(plan)
+            .map_err(OwnerError::Render)?;
         self.join = Some((id, token));
         Ok(id)
     }

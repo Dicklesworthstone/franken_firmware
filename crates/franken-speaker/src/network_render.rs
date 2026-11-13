@@ -596,7 +596,10 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
     /// The already-admitted buffer/format path is still prepared and its
     /// owned backend declares bounded stop/flush protocol support.
     pub(crate) fn pending_join_ready(&self) -> bool {
-        !self.terminal && self.software_silent_start && self.render.prepared_join_ready()
+        !self.terminal
+            && self.software_silent_start
+            && self.render.has_initial_role()
+            && self.render.prepared_join_ready()
     }
 
     pub(crate) fn bound_epoch(&self) -> u64 {
@@ -619,6 +622,36 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
 
     pub(crate) fn protection_status(&self) -> franken_dsp::protection::BoardStatus {
         self.render.dsp().status()
+    }
+
+    /// A member role must describe the exact installed calibrated board, not
+    /// a different profile that happens to reuse its public profile ID.
+    pub(crate) fn matches_admitted_profile(
+        &self,
+        profile: &franken_board_profile::BoardProfile,
+    ) -> bool {
+        let dsp = self.render.dsp();
+        !dsp.has_pending_switch()
+            && dsp.profile_id() == profile.profile_id
+            && dsp.profile_digest() == Some(profile.integrity_sha256.as_bytes())
+            && matches!(dsp.status(), franken_dsp::protection::BoardStatus::Active)
+    }
+
+    /// Bind the role before the first protected source block is rendered.
+    pub(crate) fn can_bind_initial_role(&self, plan: franken_dsp::volume::RolePlan) -> bool {
+        !self.terminal && self.render.can_bind_initial_role(plan)
+    }
+
+    pub(crate) fn bind_initial_role(
+        &mut self,
+        plan: franken_dsp::volume::RolePlan,
+    ) -> Result<(), NetworkRenderError> {
+        if self.terminal {
+            return Err(NetworkRenderError::Ended);
+        }
+        self.render
+            .bind_initial_role(plan)
+            .map_err(NetworkRenderError::Render)
     }
 
     /// Apply policy only after the same live clock and mapping gate used by

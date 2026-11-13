@@ -1151,6 +1151,129 @@ fn a_valid_profile_switch_drains_to_silence_swaps_and_carries_history() {
 }
 
 #[test]
+fn admitted_profile_digest_changes_only_when_a_validated_switch_installs() {
+    let profile = fixture("S3");
+    let absent = ProtectedBoardDsp::admit(&profile, None, Admission::HostSimulation);
+    assert_eq!(absent.profile_digest(), None);
+    let (_, mut dsp) = host(&profile);
+    assert_eq!(
+        dsp.profile_digest(),
+        Some(profile.integrity_sha256.as_bytes())
+    );
+    settle(&mut dsp);
+    for _ in 0..4 {
+        render(&mut dsp, &nyquist_left(0.5));
+    }
+    let thermal = dsp.thermal_level(0).unwrap();
+    assert!(thermal > 0.0);
+
+    let mut other = profile.clone();
+    other.model_name.push_str(" fixture variant");
+    other = other.with_computed_digest();
+    assert_eq!(other.profile_id, profile.profile_id);
+    assert_ne!(other.integrity_sha256, profile.integrity_sha256);
+    assert!(other.verify_integrity().is_ok());
+    let calibration = synthetic_calibration_for(&other);
+    let mut invalid = calibration.clone();
+    invalid.channels[2].sections[0].a2 = 1.5;
+    assert!(
+        dsp.request_profile_switch(&other, &invalid, Admission::HostSimulation)
+            .is_err()
+    );
+    assert_eq!(
+        dsp.profile_digest(),
+        Some(profile.integrity_sha256.as_bytes())
+    );
+    assert_eq!(dsp.thermal_level(0), Some(thermal));
+    assert!(matches!(dsp.status(), BoardStatus::FailMuted(_)));
+
+    dsp.request_profile_switch(&other, &calibration, Admission::HostSimulation)
+        .unwrap();
+    assert!(dsp.has_pending_switch());
+    assert_eq!(
+        dsp.profile_digest(),
+        Some(profile.integrity_sha256.as_bytes())
+    );
+    for _ in 0..16 {
+        if !dsp.has_pending_switch() {
+            break;
+        }
+        render(&mut dsp, &StereoAudioBlock::silence(0));
+    }
+    assert!(!dsp.has_pending_switch());
+    assert_eq!(
+        dsp.profile_digest(),
+        Some(other.integrity_sha256.as_bytes())
+    );
+    assert_eq!(dsp.status(), BoardStatus::Active);
+    assert!(dsp.thermal_level(0).unwrap() > 0.0);
+}
+
+#[test]
+fn profile_pin_rejects_retarget_and_pending_mismatch_but_allows_matching_calibration() {
+    let profile = fixture("S3");
+    let mut other = profile.clone();
+    other.model_name.push_str(" fixture variant");
+    other = other.with_computed_digest();
+    let calibration = synthetic_calibration_for(&profile);
+    let other_calibration = synthetic_calibration_for(&other);
+    let (_, mut dsp) = host(&profile);
+    settle(&mut dsp);
+    render(&mut dsp, &nyquist_left(0.5));
+    let thermal = dsp.thermal_level(0);
+    dsp.bind_profile_digest(profile.integrity_sha256.as_bytes())
+        .unwrap();
+    assert_eq!(
+        dsp.bind_profile_digest(other.integrity_sha256.as_bytes()),
+        Err(ProtectionError::ProfileBindingMismatch)
+    );
+    assert_eq!(
+        dsp.request_profile_switch(&other, &other_calibration, Admission::HostSimulation),
+        Err(ProtectionError::ProfileBindingMismatch)
+    );
+    assert_eq!(
+        dsp.profile_digest(),
+        Some(profile.integrity_sha256.as_bytes())
+    );
+    assert_eq!(dsp.status(), BoardStatus::Active);
+    assert_eq!(dsp.thermal_level(0), thermal);
+    assert!(!dsp.has_pending_switch());
+    dsp.request_profile_switch(&profile, &calibration, Admission::HostSimulation)
+        .unwrap();
+    assert!(dsp.has_pending_switch());
+
+    let (_, mut unbound) = host(&profile);
+    unbound
+        .request_profile_switch(&other, &other_calibration, Admission::HostSimulation)
+        .unwrap();
+    assert_eq!(
+        unbound.bind_profile_digest(profile.integrity_sha256.as_bytes()),
+        Err(ProtectionError::ProfileBindingMismatch)
+    );
+    assert!(unbound.has_pending_switch());
+    assert_eq!(
+        unbound.profile_digest(),
+        Some(profile.integrity_sha256.as_bytes())
+    );
+
+    let mut blank = ProtectedBoardDsp::admit(&profile, None, Admission::HostSimulation);
+    blank
+        .bind_profile_digest(profile.integrity_sha256.as_bytes())
+        .unwrap();
+    assert_eq!(blank.profile_digest(), None);
+    assert!(matches!(blank.status(), BoardStatus::FailMuted(_)));
+    blank
+        .request_profile_switch(&profile, &calibration, Admission::HostSimulation)
+        .unwrap();
+    render(&mut blank, &StereoAudioBlock::silence(0));
+    assert_eq!(
+        blank.profile_digest(),
+        Some(profile.integrity_sha256.as_bytes())
+    );
+    assert_eq!(blank.status(), BoardStatus::Active);
+}
+
+#[test]
 fn an_unsafe_profile_switch_leaves_the_board_fail_muted_until_a_valid_one_is_admitted() {
     let profile = fixture("S3");
     let (calibration, mut dsp) = host(&profile);

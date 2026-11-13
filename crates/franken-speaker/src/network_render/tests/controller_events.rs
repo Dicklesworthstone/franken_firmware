@@ -2304,3 +2304,6 @@ fn finite_tail_clock_failure_is_not_misreported_as_normal_finishing() {
     assert_eq!(rig.probe.use_after_free(), 0);
     assert_eq!(rig.probe.modified_while_owned(), 0);
 }
+
+#[cfg(unix)]
+mod role_integration;

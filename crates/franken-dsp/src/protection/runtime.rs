@@ -410,6 +410,10 @@ pub struct BlockReport {
 #[derive(Debug)]
 pub struct ProtectedBoardDsp {
     profile_id: String,
+    // The validated profile's SHA-256 hex bytes; fixed-size to avoid adding
+    // any allocation or deallocation to a calibrated switch in render_into.
+    profile_digest: Option<[u8; 64]>,
+    bound_profile_digest: Option<[u8; 64]>,
     provenance: Option<CalibrationProvenance>,
     status: BoardStatus,
     channel_count: usize,
@@ -425,7 +429,7 @@ pub struct ProtectedBoardDsp {
     ramp_step: f32,
     fault_ramp_step: f32,
     source_step: f32,
-    pending: Option<ValidatedBoard>,
+    pending: Option<(ValidatedBoard, [u8; 64])>,
     faults_total: u32,
 }
 
@@ -433,6 +437,8 @@ impl ProtectedBoardDsp {
     fn blank(profile_id: String, channel_count: usize) -> Self {
         Self {
             profile_id,
+            profile_digest: None,
+            bound_profile_digest: None,
             provenance: None,
             status: BoardStatus::FailMuted(ProtectionError::NoCalibration),
             channel_count,
@@ -463,9 +469,16 @@ impl ProtectedBoardDsp {
         let mut dsp = Self::blank(profile.profile_id.clone(), count);
         dsp.status = match calibration {
             None => BoardStatus::FailMuted(ProtectionError::NoCalibration),
-            Some(calibration) => match validate(profile, calibration, admission) {
-                Ok(board) => {
-                    dsp.install(board);
+            Some(calibration) => match validate(profile, calibration, admission).and_then(|board| {
+                let digest = profile
+                    .integrity_sha256
+                    .as_bytes()
+                    .try_into()
+                    .map_err(|_| ProtectionError::ProfileBindingMismatch)?;
+                Ok((board, digest))
+            }) {
+                Ok((board, digest)) => {
+                    dsp.install(board, digest);
                     BoardStatus::Active
                 }
                 Err(error) => BoardStatus::FailMuted(error),
@@ -477,7 +490,7 @@ impl ProtectedBoardDsp {
     /// Install a validated board, carrying board-lifetime protection history (thermal level and
     /// limiter gain) over channel-for-channel when a chain has existed before. Signal-path state
     /// starts at zero.
-    fn install(&mut self, board: ValidatedBoard) {
+    fn install(&mut self, board: ValidatedBoard, digest: [u8; 64]) {
         let previous = self.channels;
         let previous_count = self.channel_count;
         let carry = self.has_history;
@@ -504,6 +517,7 @@ impl ProtectedBoardDsp {
         self.fault_ramp_step = board.fault_ramp_step;
         self.source_step = board.source_step;
         self.provenance = Some(board.provenance);
+        self.profile_digest = Some(digest);
         self.status = BoardStatus::Active;
         self.chain_live = true;
         self.has_history = true;
@@ -512,6 +526,35 @@ impl ProtectedBoardDsp {
     #[must_use]
     pub fn profile_id(&self) -> &str {
         &self.profile_id
+    }
+
+    /// Digest of the currently installed validated board profile, if any.
+    #[must_use]
+    pub fn profile_digest(&self) -> Option<&[u8]> {
+        self.profile_digest.as_ref().map(|digest| &digest[..])
+    }
+
+    /// Permanently bind this DSP owner to its HAL profile. A not-yet-
+    /// calibrated DSP remains fail-muted until a matching profile is admitted.
+    pub fn bind_profile_digest(&mut self, digest: &[u8]) -> Result<(), ProtectionError> {
+        let digest: [u8; 64] = digest
+            .try_into()
+            .map_err(|_| ProtectionError::ProfileBindingMismatch)?;
+        if self
+            .bound_profile_digest
+            .is_some_and(|bound| bound != digest)
+            || self
+                .profile_digest
+                .is_some_and(|installed| installed != digest)
+            || self
+                .pending
+                .as_ref()
+                .is_some_and(|(_, pending)| *pending != digest)
+        {
+            return Err(ProtectionError::ProfileBindingMismatch);
+        }
+        self.bound_profile_digest = Some(digest);
+        Ok(())
     }
 
     #[must_use]
@@ -629,7 +672,21 @@ impl ProtectedBoardDsp {
         if profile.profile_id != self.profile_id {
             return Err(ProtectionError::ProfileBindingMismatch);
         }
-        match validate(profile, calibration, admission) {
+        if self
+            .bound_profile_digest
+            .as_ref()
+            .is_some_and(|bound| bound.as_slice() != profile.integrity_sha256.as_bytes())
+        {
+            return Err(ProtectionError::ProfileBindingMismatch);
+        }
+        match validate(profile, calibration, admission).and_then(|board| {
+            let digest = profile
+                .integrity_sha256
+                .as_bytes()
+                .try_into()
+                .map_err(|_| ProtectionError::ProfileBindingMismatch)?;
+            Ok((board, digest))
+        }) {
             Ok(board) => {
                 self.pending = Some(board);
                 Ok(())
@@ -700,8 +757,8 @@ impl ProtectedBoardDsp {
             self.source_fade = (self.source_fade + self.source_step).min(1.0);
         }
         if self.applied_gain == 0.0 {
-            if let Some(board) = self.pending.take() {
-                self.install(board);
+            if let Some((board, digest)) = self.pending.take() {
+                self.install(board, digest);
             } else if !active {
                 self.chain_live = false;
             }
