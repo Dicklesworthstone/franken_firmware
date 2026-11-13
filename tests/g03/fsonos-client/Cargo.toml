@@ -14,5 +14,13 @@ description = "Integration test only: the real fsonos-proto client against the r
 [workspace]
 
 [dev-dependencies]
+franken-board-profile = { path = "../../../crates/franken-board-profile" }
+franken-clock = { path = "../../../crates/franken-clock" }
+franken-control = { path = "../../../crates/franken-control" }
+franken-dsp = { path = "../../../crates/franken-dsp" }
+franken-hal = { path = "../../../crates/franken-hal" }
+franken-platform = { path = "../../../crates/franken-platform" }
+franken-session = { path = "../../../crates/franken-session" }
+franken-stream = { path = "../../../crates/franken-stream" }
 franken-speaker = { path = "../../../crates/franken-speaker", features = ["harness"] }
 fsonos-proto = { path = "../../../../frankensonos/crates/fsonos-proto" }
