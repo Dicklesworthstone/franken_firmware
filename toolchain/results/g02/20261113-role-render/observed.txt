@@ -1,0 +1,243 @@
+FFW G02 selected observed native output
+This is selected output, not complete raw logs; raw SHA-256 values are in receipt.json.
+Private paths and complete source-receipt arrays are omitted. Counts come from all actual Cargo footers.
+
+=== regression_old_gate / native 30107136981729283 ===
+Scope: Earlier identity gate with successor cleanup tests; targeted regression only
+Observed command exit: 101
+Actual user payload: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_DEV_DEBUG=0' 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 test --locked --offline -p franken-speaker -j1 invalid_dsp_ -- --show-output '--test-threads=1'
+    Finished `test` profile [unoptimized] target(s) in 1m 04s
+error: test failed, to rerun pass `-p franken-speaker --lib`
+test network_render::tests::controller_events::role_integration::invalid_dsp_cancel_drain_preserves_retained_ack_and_timeout_custody ... FAILED
+test network_render::tests::controller_events::role_integration::invalid_dsp_graceful_drain_still_refuses_before_source_or_submit ... ok
+thread 'network_render::tests::controller_events::role_integration::invalid_dsp_cancel_drain_preserves_retained_ack_and_timeout_custody' (1899183) panicked at crates/franken-speaker/src/network_render/tests/controller_events/role_integration.rs:1266:25:
+assertion `left == right` failed
+  left: Some(ProtectionFault)
+ right: Some(DrainTimedOut)
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 578 filtered out; finished in 0.01s
+
+=== final2_workspace / native 30107136981729284 ===
+Scope: Full workspace before two equivalent test syntax hunks
+Observed command exit: 0
+Actual user payload: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_DEV_DEBUG=0' 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 test --locked --offline --workspace -j1 -- --show-output '--test-threads=1'
+    Finished `test` profile [unoptimized] target(s) in 3m 01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+thread 'a_nested_window_that_unwinds_does_not_lose_a_peak_the_enclosing_window_already_reached' (1938362) panicked at crates/franken-alloc-probe/tests/heap_probe.rs:29:5:
+thread 'a_nested_window_that_unwinds_hands_its_own_peak_to_the_enclosing_window' (1938363) panicked at crates/franken-alloc-probe/tests/heap_probe.rs:29:5:
+thread 'windows_measure_exactly_after_a_nested_window_has_unwound_and_been_caught' (1938374) panicked at crates/franken-alloc-probe/tests/heap_probe.rs:29:5:
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.17s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.66s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+thread 'shared::private_tests::p05_poisoned_lock_keeps_the_whole_value' (1939931) panicked at crates/franken-atomic/src/shared.rs:239:13:
+thread 'shared::private_tests::p05_try_ops_work_on_a_poisoned_idle_lock' (1939933) panicked at crates/franken-atomic/src/shared.rs:277:13:
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 95 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+thread 'the_helpers_print_the_failure_and_what_was_retained_for_it' (1940479) panicked at crates/franken-baseline/tests/e02_cases.rs:262:9:
+thread 'the_helpers_print_the_failure_and_what_was_retained_for_it' (1940479) panicked at crates/franken-baseline/tests/e02_cases.rs:162:32:
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+test result: ok. 102 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.93s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.08s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 674 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.46s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test convert::soft_float_tests::f32_to_s16_and_the_clamp_match_the_original_over_all_four_billion_bit_patterns ... ignored, exhaustive 2^32 sweep: run in release mode with --ignored
+test protection::tests::admitted_profile_digest_changes_only_when_a_validated_switch_installs ... ok
+test protection::tests::profile_pin_rejects_retarget_and_pending_mismatch_but_allows_matching_calibration ... ok
+test result: ok. 178 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.29s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 163 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.09s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.03s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.29s
+test result: ok. 248 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 119 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.15s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+test network_render::tests::controller_events::committed_control_then_prestart_clock_fault_drains_without_clock_or_source ... ok
+test network_render::tests::controller_events::committed_empty_group_stop_cancels_pending_join_and_duplicate_does_not_repeat ... ok
+test network_render::tests::controller_events::coowner_start_failure_stays_faulted_without_submission_or_fabricated_ack ... ok
+test network_render::tests::controller_events::failed_clock_defers_transport_notification_without_fabricating_timestamp ... ok
+test network_render::tests::controller_events::failed_flush_on_prepared_or_active_owner_still_exposes_terminal_drain ... ok
+test network_render::tests::controller_events::failed_group_volume_store_never_publishes_the_rolled_back_value ... ok
+test network_render::tests::controller_events::failed_store_withholds_remote_stop_but_reapplies_local_stop ... ok
+test network_render::tests::controller_events::finite_tail_clock_failure_is_not_misreported_as_normal_finishing ... ok
+test network_render::tests::controller_events::finite_tail_volume_intent_is_deferred_without_early_flush_or_new_source_pcm ... ok
+test network_render::tests::controller_events::fresh_bundle_cannot_be_reprovisioned_after_parts_are_consumed ... ok
+test network_render::tests::controller_events::fresh_bundle_rejects_existing_media_used_owner_and_mismatched_authority ... ok
+test network_render::tests::controller_events::fresh_coowner_rechecks_network_epoch_leader_clock_and_admission_time ... ok
+test network_render::tests::controller_events::fresh_join_rejects_substitute_token_but_accepts_the_provisioned_token ... ok
+test network_render::tests::controller_events::fresh_owner_does_not_mint_ready_member_or_start_before_protocol_activation ... ok
+test network_render::tests::controller_events::gena_membership_activation_and_failed_store_local_silence_are_truthful ... ok
+test network_render::tests::controller_events::gena_signed_group_updates_only_actual_committed_state ... ok
+test network_render::tests::controller_events::gena_soap_notifications_stay_on_handled_without_double_publish ... ok
+test network_render::tests::controller_events::local_mute_and_stop_cancel_finishing_tail_and_require_actual_ack ... ok
+test network_render::tests::controller_events::missing_ack_never_reports_stopped_and_subscriber_removal_is_respected ... ok
+test network_render::tests::controller_events::natural_eof_publishes_transition_then_stopped_only_after_delayed_ack ... ok
+test network_render::tests::controller_events::provisioned_lease_expires_while_waiting_and_causes_actual_drain ... ok
+test network_render::tests::controller_events::readiness_requires_declared_stop_capability_and_later_noack_retains_custody ... ok
+test network_render::tests::controller_events::role_integration::actual_left_role_program_submission_remains_retained_until_ack ... ok
+test network_render::tests::controller_events::role_integration::admitted_roles_match_manual_per_channel_protected_oracle_through_finite_eof ... ok
+test network_render::tests::controller_events::role_integration::busy_left_role_cannot_rebind_and_stop_preserves_retained_custody ... ok
+test network_render::tests::controller_events::role_integration::invalid_dsp_cancel_drain_preserves_retained_ack_and_timeout_custody ... ok
+test network_render::tests::controller_events::role_integration::invalid_dsp_graceful_drain_still_refuses_before_source_or_submit ... ok
+test network_render::tests::controller_events::role_integration::manual_role_oracle_detects_swaps_and_a_wrong_sub_input ... ok
+test network_render::tests::controller_events::role_integration::missing_calibration_stays_constructible_but_cannot_start ... ok
+test network_render::tests::controller_events::role_integration::pending_or_failed_protection_profile_switch_cannot_authorize_a_role ... ok
+test network_render::tests::controller_events::role_integration::rejected_busy_rejoin_does_not_reinterpret_or_interrupt_later_pcm ... ok
+test network_render::tests::controller_events::role_integration::retained_readiness_requires_matching_installed_profile_and_no_pending_switch ... ok
+test network_render::tests::controller_events::role_integration::same_geometry_hal_and_dsp_require_the_same_validated_profile ... ok
+test network_render::tests::controller_events::role_integration::wrong_roles_bridge_and_same_id_wrong_profile_never_activate ... ok
+test network_render::tests::controller_events::signed_local_stop_still_silences_after_session_sequence_is_exhausted ... ok
+test render::tests::initial_role_is_idempotent_but_cannot_be_switched_or_rebound_after_start ... ok
+test render::tests::initial_sub_role_installs_the_admitted_plan_on_the_renderer ... ok
+test render::tests::replaced_mismatched_dsp_faults_before_busy_submit_or_new_source_pull ... ok
+test result: ok. 580 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 79.04s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.31s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.43s
+test result: ok. 258 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.06s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.82s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.35s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== final2_clippy_failed / native 30107136981729285 ===
+Scope: Actual strict Clippy failure: two test-only lints
+Observed command exit: 101
+Actual user payload: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_DEV_DEBUG=0' 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 clippy --locked --offline --workspace --all-targets -j1 -- -D warnings
+error: manually filling a slice
+   --> crates/franken-speaker/src/network_render/tests/controller_events/role_integration.rs:519:5
+    |
+519 | /     for channel in &mut false_sub.channel_routing {
+520 | |         *channel = franken_board_profile::TransducerRole::SubwooferLfe;
+521 | |     }
+    | |_____^ help: try: `&mut false_sub.channel_routing.fill(franken_board_profile::TransducerRole::SubwooferLfe);`
+    |
+error: very complex type used. Consider factoring parts into `type` definitions
+    --> crates/franken-speaker/src/network_render/tests/controller_events/role_integration.rs:1072:6
+     |
+1072 |   ) -> (
+     |  ______^
+1073 | |     RenderLoop<RetainedPurge>,
+1074 | |     FakeProbe,
+1075 | |     Rc<Cell<bool>>,
+error: could not compile `franken-speaker` (lib test) due to 2 previous errors
+
+  2026-11-13T00:20:20.625516Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=101 in 45888ms
+    at rch/src/hook/transfer_orchestration.rs:2985 on ThreadId(1)
+
+  2026-11-13T00:20:20.625862Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+
+=== final3_speaker / native 30107136981729286 ===
+Scope: Final source: complete affected speaker package
+Observed command exit: 0
+Actual user payload: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_DEV_DEBUG=0' 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 test --locked --offline -p franken-speaker -j1 -- --show-output '--test-threads=1'
+    Finished `test` profile [unoptimized] target(s) in 1m 05s
+test network_render::tests::controller_events::committed_control_then_prestart_clock_fault_drains_without_clock_or_source ... ok
+test network_render::tests::controller_events::committed_empty_group_stop_cancels_pending_join_and_duplicate_does_not_repeat ... ok
+test network_render::tests::controller_events::coowner_start_failure_stays_faulted_without_submission_or_fabricated_ack ... ok
+test network_render::tests::controller_events::failed_clock_defers_transport_notification_without_fabricating_timestamp ... ok
+test network_render::tests::controller_events::failed_flush_on_prepared_or_active_owner_still_exposes_terminal_drain ... ok
+test network_render::tests::controller_events::failed_group_volume_store_never_publishes_the_rolled_back_value ... ok
+test network_render::tests::controller_events::failed_store_withholds_remote_stop_but_reapplies_local_stop ... ok
+test network_render::tests::controller_events::finite_tail_clock_failure_is_not_misreported_as_normal_finishing ... ok
+test network_render::tests::controller_events::finite_tail_volume_intent_is_deferred_without_early_flush_or_new_source_pcm ... ok
+test network_render::tests::controller_events::fresh_bundle_cannot_be_reprovisioned_after_parts_are_consumed ... ok
+test network_render::tests::controller_events::fresh_bundle_rejects_existing_media_used_owner_and_mismatched_authority ... ok
+test network_render::tests::controller_events::fresh_coowner_rechecks_network_epoch_leader_clock_and_admission_time ... ok
+test network_render::tests::controller_events::fresh_join_rejects_substitute_token_but_accepts_the_provisioned_token ... ok
+test network_render::tests::controller_events::fresh_owner_does_not_mint_ready_member_or_start_before_protocol_activation ... ok
+test network_render::tests::controller_events::gena_membership_activation_and_failed_store_local_silence_are_truthful ... ok
+test network_render::tests::controller_events::gena_signed_group_updates_only_actual_committed_state ... ok
+test network_render::tests::controller_events::gena_soap_notifications_stay_on_handled_without_double_publish ... ok
+test network_render::tests::controller_events::local_mute_and_stop_cancel_finishing_tail_and_require_actual_ack ... ok
+test network_render::tests::controller_events::missing_ack_never_reports_stopped_and_subscriber_removal_is_respected ... ok
+test network_render::tests::controller_events::natural_eof_publishes_transition_then_stopped_only_after_delayed_ack ... ok
+test network_render::tests::controller_events::provisioned_lease_expires_while_waiting_and_causes_actual_drain ... ok
+test network_render::tests::controller_events::readiness_requires_declared_stop_capability_and_later_noack_retains_custody ... ok
+test network_render::tests::controller_events::role_integration::actual_left_role_program_submission_remains_retained_until_ack ... ok
+test network_render::tests::controller_events::role_integration::admitted_roles_match_manual_per_channel_protected_oracle_through_finite_eof ... ok
+test network_render::tests::controller_events::role_integration::busy_left_role_cannot_rebind_and_stop_preserves_retained_custody ... ok
+test network_render::tests::controller_events::role_integration::invalid_dsp_cancel_drain_preserves_retained_ack_and_timeout_custody ... ok
+test network_render::tests::controller_events::role_integration::invalid_dsp_graceful_drain_still_refuses_before_source_or_submit ... ok
+test network_render::tests::controller_events::role_integration::manual_role_oracle_detects_swaps_and_a_wrong_sub_input ... ok
+test network_render::tests::controller_events::role_integration::missing_calibration_stays_constructible_but_cannot_start ... ok
+test network_render::tests::controller_events::role_integration::pending_or_failed_protection_profile_switch_cannot_authorize_a_role ... ok
+test network_render::tests::controller_events::role_integration::rejected_busy_rejoin_does_not_reinterpret_or_interrupt_later_pcm ... ok
+test network_render::tests::controller_events::role_integration::retained_readiness_requires_matching_installed_profile_and_no_pending_switch ... ok
+test network_render::tests::controller_events::role_integration::same_geometry_hal_and_dsp_require_the_same_validated_profile ... ok
+test network_render::tests::controller_events::role_integration::wrong_roles_bridge_and_same_id_wrong_profile_never_activate ... ok
+test network_render::tests::controller_events::signed_local_stop_still_silences_after_session_sequence_is_exhausted ... ok
+test render::tests::initial_role_is_idempotent_but_cannot_be_switched_or_rebound_after_start ... ok
+test render::tests::initial_sub_role_installs_the_admitted_plan_on_the_renderer ... ok
+test render::tests::replaced_mismatched_dsp_faults_before_busy_submit_or_new_source_pull ... ok
+test result: ok. 580 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 61.40s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.26s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.36s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== final3_clippy / native 30107136981729287 ===
+Scope: Final source: strict workspace all-target Clippy
+Observed command exit: 0
+Actual user payload: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_DEV_DEBUG=0' 'RUSTFLAGS=-D warnings -C debuginfo=0' cargo +1.99.0 clippy --locked --offline --workspace --all-targets -j1 -- -D warnings
+    Finished `dev` profile [unoptimized] target(s) in 1m 14s
