@@ -178,6 +178,21 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             role,
             ceiling,
         } = pending;
+        // A stored single-member intent constrains this fresh constructor. It
+        // establishes configuration consistency only, not recovery authority.
+        if control
+            .recovery_binding()
+            .map_err(|_| AdmissionError::Binding)?
+            .is_some_and(|binding| {
+                binding.group_id() != session.group_id.as_str()
+                    || binding.configured_issuer().as_str() != session.coordinator_id.as_str()
+                    || binding.member_id() != member.as_str()
+                    || binding.profile_id() != profile.as_str()
+                    || binding.role() != role
+            })
+        {
+            return Err(AdmissionError::Binding);
+        }
         if member.is_empty()
             || session.current_epoch != render.bound_epoch()
             || clock_leader != render.bound_clock_leader()

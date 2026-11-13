@@ -2307,3 +2307,6 @@ fn finite_tail_clock_failure_is_not_misreported_as_normal_finishing() {
 
 #[cfg(unix)]
 mod role_integration;
+
+#[cfg(unix)]
+mod binding_integration;
