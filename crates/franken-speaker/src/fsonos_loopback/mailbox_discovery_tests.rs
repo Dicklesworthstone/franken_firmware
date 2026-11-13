@@ -517,4 +517,140 @@ mod tests {
             Err(HttpMailboxError::Busy)
         ));
     }
+    fn start_discovery_at(
+        client: HttpMailboxClient,
+        address: Ipv4Addr,
+        policy: Policy,
+        target: CallbackTarget,
+    ) -> JoinHandle<Result<FsonosLoopback, String>> {
+        thread::spawn(move || {
+            let identity = DiscoveryIdentity::fixture();
+            FsonosLoopback::start_discoverable_eventing_at_mailbox(
+                fixture_session_for(FIXTURE_DEVICE_UUID, FIXTURE_OTHER_UUID).unwrap(),
+                (&identity, address),
+                policy,
+                LoopbackLimits::standard(),
+                DiscoveryLimits::standard(),
+                (target, CallbackLimits::standard()),
+                client,
+            )
+        })
+    }
+
+    #[test]
+    fn explicit_loopback_player_uses_real_owner_metadata_and_local_sockets() {
+        let identity = DiscoveryIdentity::fixture();
+        let logical = Ipv4Addr::new(127, 0, 0, 2);
+        let device = identity.device_at_loopback(logical).unwrap();
+        let (client, mailbox) = mailbox_pair(Duration::from_millis(800));
+        let mut owner = CoreOwner::new(mailbox, Some(device.clone()));
+        let (_listener, target) = callback_target();
+        let server = drive_until(
+            &mut owner,
+            start_discovery_at(client, logical, Policy::LocalLink, target),
+        )
+        .unwrap();
+        assert_eq!(
+            server.addr().ip(),
+            std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)
+        );
+        assert_ne!(server.addr().port(), 0);
+        let discovery_address = server.discovery_addr().unwrap();
+        assert_eq!(
+            discovery_address.ip(),
+            std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)
+        );
+        assert_ne!(discovery_address.port(), 0);
+        let answer = discover(&server);
+        assert!(answer.contains(&device.location()));
+        assert!(device.location().contains("127.0.0.2:1400"));
+        let count_before = owner.requests.len();
+        let address = server.addr();
+        let request = thread::spawn(move || {
+            exchange(
+                address,
+                "GET /xml/device_description.xml HTTP/1.1\r\nHost: 127.0.0.2:1400\r\nConnection: close\r\n\r\n",
+            )
+        });
+        let wire = drive_until(&mut owner, request);
+        let (headers, body) = wire.split_once("\r\n\r\n").unwrap();
+        assert!(wire.starts_with("HTTP/1.1 200 "));
+        assert_eq!(body, device.description_xml());
+        assert!(headers.lines().any(|line| {
+            line.eq_ignore_ascii_case(&format!("Content-Location: {}", device.location()))
+        }));
+        assert_eq!(owner.requests.len(), count_before + 1);
+        assert!(server.stop().reconciled());
+    }
+
+    #[test]
+    fn explicit_logical_ip_mismatch_refuses_identical_xml_from_real_owner() {
+        let identity = DiscoveryIdentity::fixture();
+        let expected = identity
+            .device_at_loopback(Ipv4Addr::new(127, 0, 0, 2))
+            .unwrap();
+        let actual = identity.device().unwrap();
+        assert_eq!(expected.description_xml(), actual.description_xml());
+        assert_ne!(expected.location(), actual.location());
+        let (client, mailbox) = mailbox_pair(Duration::from_millis(800));
+        let mut owner = CoreOwner::new(mailbox, Some(actual));
+        let (_listener, target) = callback_target();
+        let error = drive_until(
+            &mut owner,
+            start_discovery_at(
+                client.clone(),
+                Ipv4Addr::new(127, 0, 0, 2),
+                Policy::LocalLink,
+                target,
+            ),
+        )
+        .err()
+        .expect("different owner logical address cannot pass preflight");
+        assert_eq!(error, "owner discovery identity mismatch");
+        assert!(matches!(
+            client.submit(&description_request()),
+            Err(HttpMailboxError::Busy)
+        ));
+    }
+
+    #[test]
+    fn invalid_logical_addresses_and_tailnet_never_invoke_or_attach_owner() {
+        for (address, policy) in [
+            (Ipv4Addr::UNSPECIFIED, Policy::LocalLink),
+            (Ipv4Addr::new(10, 0, 0, 1), Policy::LocalLink),
+            (Ipv4Addr::new(224, 0, 0, 1), Policy::LocalLink),
+            (Ipv4Addr::BROADCAST, Policy::LocalLink),
+            (Ipv4Addr::new(127, 0, 0, 0), Policy::LocalLink),
+            (Ipv4Addr::new(127, 255, 255, 255), Policy::LocalLink),
+            (Ipv4Addr::new(127, 0, 0, 2), Policy::UnauthenticatedTailnet),
+        ] {
+            let (client, mailbox) = mailbox_pair(Duration::from_millis(800));
+            let mut owner = CoreOwner::new(
+                mailbox,
+                Some(DiscoveryIdentity::fixture().device().unwrap()),
+            );
+            let (_listener, target) = callback_target();
+            let result = drive_until(
+                &mut owner,
+                start_discovery_at(client.clone(), address, policy, target),
+            );
+            let error = result
+                .err()
+                .expect("invalid logical address or policy admitted");
+            let expected = if policy == Policy::UnauthenticatedTailnet {
+                "owner discovery requires local legacy ingress"
+            } else {
+                "device identity: bad_loopback_address"
+            };
+            assert_eq!(error, expected);
+            assert!(owner.requests.is_empty());
+            // A real subsequent GET is admitted and serviced: failure did not
+            // consume the exclusive eventing attachment or replace the owner.
+            let worker =
+                thread::spawn(move || client.submit(&description_request()).unwrap().wait());
+            let response = drive_until(&mut owner, worker).unwrap();
+            assert_eq!(response.result.unwrap().control.response.status, 200);
+            assert_eq!(owner.requests.len(), 1);
+        }
+    }
 }

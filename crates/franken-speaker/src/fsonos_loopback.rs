@@ -686,11 +686,56 @@ impl FsonosLoopback {
         events: (CallbackTarget, CallbackLimits),
         client: HttpMailboxClient,
     ) -> Result<Self, String> {
+        Self::start_discoverable_eventing_at_mailbox(
+            session,
+            (identity, Ipv4Addr::LOCALHOST),
+            policy,
+            limits,
+            discovery,
+            events,
+            client,
+        )
+    }
+
+    /// Discover one actual mailbox owner at an explicit logical loopback player address.
+    ///
+    /// The address is advertised metadata on port 1400, not a socket bind address.
+    /// HTTP and discovery still bind only 127.0.0.1 on ephemeral ports. A real
+    /// client's explicit routes map distinct logical players to their respective
+    /// listeners, allowing multiple independent owners without a shared fixture
+    /// control plane. Configure the owner's Endpoint with the same identity's
+    /// [Device](franken_control::fsonos::ssdp::Device) from
+    /// [DiscoveryIdentity::device_at_loopback] before servicing its mailbox.
+    ///
+    /// As with [Self::start_discoverable_eventing_with_mailbox], service the
+    /// actual owner concurrently with this blocking constructor. The same
+    /// exclusive attachment and owner-serviced metadata preflight apply; an
+    /// explicit address does not attest protected playback or group membership.
+    ///
+    /// # Errors
+    /// Refuses non-loopback logical addresses, Tailnet policy, unusable bounds,
+    /// unavailable or mismatched owner metadata and normal startup failures.
+    pub fn start_discoverable_eventing_at_mailbox(
+        session: UnifiedGroupSession,
+        player: (&DiscoveryIdentity, Ipv4Addr),
+        policy: Policy,
+        limits: LoopbackLimits,
+        discovery: DiscoveryLimits,
+        events: (CallbackTarget, CallbackLimits),
+        client: HttpMailboxClient,
+    ) -> Result<Self, String> {
         if policy != Policy::LocalLink {
             return Err("owner discovery requires local legacy ingress".into());
         }
-        let mut described = Self::describe(identity, discovery)?;
-        described.from_owner = true;
+        if !discovery.usable() {
+            return Err("the discovery limits are unusable".into());
+        }
+        let (identity, logical_address) = player;
+        let described = Described {
+            device: identity.device_at_loopback(logical_address)?,
+            room: identity.room.clone(),
+            from_owner: true,
+        };
         Self::start_inner_with(
             session,
             &identity.uuid,

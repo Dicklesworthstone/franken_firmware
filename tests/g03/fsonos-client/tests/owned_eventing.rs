@@ -330,7 +330,19 @@ fn rig() -> Rig {
 }
 
 fn rig_with_identity(identity: Option<&shim::DiscoveryIdentity>) -> Rig {
+    rig_with_identity_at(identity, Ipv4Addr::LOCALHOST)
+}
+
+fn rig_with_identity_at(identity: Option<&shim::DiscoveryIdentity>, logical: Ipv4Addr) -> Rig {
     let member = identity.map_or(MEMBER, |identity| identity.uuid.as_str());
+    // Each standalone fixture is coordinated by its actual member.
+    let coordinator = member;
+    // Synthetic distinct standalone groups and endpoint boot namespaces for the two-owner fixture.
+    let (group_id, subscription_nonce) = match logical.octets() {
+        [127, 0, 0, 2] => ("owner-a", 1),
+        [127, 0, 0, 3] => ("owner-b", 2),
+        _ => ("grp", 1),
+    };
     let now = Rc::new(Cell::new(50_000_000));
     let kernel = TestKernel {
         now: Rc::clone(&now),
@@ -493,27 +505,20 @@ fn rig_with_identity(identity: Option<&shim::DiscoveryIdentity>) -> Rig {
     let mut soap = Endpoint::new(
         EndpointConfig::provisional(member),
         LegacyBridge::new(bridge, key_for("legacy-bridge")),
-        1,
+        subscription_nonce,
         1,
     )
     .unwrap();
     if let Some(identity) = identity {
-        let device = franken_control::fsonos::ssdp::Device::new(
-            &identity.uuid,
-            Ipv4Addr::LOCALHOST.octets(),
-            shim::PLAYER_PORT,
-            &identity.room,
-            franken_control::fsonos::ssdp::MIN_MAX_AGE,
-        )
-        .unwrap();
+        let device = identity.device_at_loopback(logical).unwrap();
         soap.configure_discovery(device).unwrap();
     }
-    let initial_session = UnifiedGroupSession::new("grp", "coord", 1);
+    let initial_session = UnifiedGroupSession::new(group_id, coordinator, 1);
     let authority = AuthorityToken::issue(&initial_session, u64::MAX);
     let fresh = fleet
         .provision_fresh_group(
-            "grp",
-            "coord",
+            group_id,
+            coordinator,
             1,
             MembershipConfig::default(),
             authority.clone(),
@@ -881,27 +886,76 @@ fn real_fsonos_eventing_changes_same_owner_protected_pcm_and_stops_with_ack() {
 /// It cannot multicast or issue HTTP to a different host.
 struct OwnedDiscoveryClient {
     lan: Lan,
+    allowed: Vec<IpAddr>,
 }
 
 impl OwnedDiscoveryClient {
     fn at(http: SocketAddr, search: SocketAddr) -> Self {
-        assert!(http.ip().is_loopback());
-        assert!(search.ip().is_loopback());
+        assert!(http.ip() == PLAYER && http.port() != 0);
+        assert!(search.ip() == PLAYER && search.port() != 0);
         let lan = Lan::with_timeout(Duration::from_secs(3))
             .unwrap()
             .with_routes(vec![(PLAYER, http)])
             .with_ssdp_target(search);
-        Self { lan }
+        Self {
+            lan,
+            allowed: vec![PLAYER],
+        }
+    }
+
+    fn two(
+        logical: [IpAddr; 2],
+        http: [SocketAddr; 2],
+        search: SocketAddr,
+    ) -> Result<Self, ProtoError> {
+        let a = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+        let b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3));
+        let local = |addr: SocketAddr| addr.ip() == PLAYER && addr.port() != 0;
+        if logical != [a, b]
+            || !local(http[0])
+            || !local(http[1])
+            || http[0] == http[1]
+            || !local(search)
+        {
+            return Err(Self::refused("invalid confined routes"));
+        }
+        let lan = Lan::with_timeout(Duration::from_secs(3))?
+            .with_routes(vec![(a, http[0]), (b, http[1])])
+            .with_ssdp_target(search);
+        Ok(Self {
+            lan,
+            allowed: vec![a, b],
+        })
+    }
+
+    fn refused(target: &str) -> ProtoError {
+        ProtoError::Network {
+            target: target.into(),
+            detail: "not the loopback fixture".into(),
+        }
+    }
+
+    fn subscribe_for(&self, host: IpAddr, callback: &str) -> Result<Subscription, ProtoError> {
+        if !self.allowed.contains(&host) {
+            return Err(Self::refused(&host.to_string()));
+        }
+        self.lan
+            .subscribe(host, RENDERING_CONTROL.event_path, callback, 300)
+    }
+
+    fn renew_for(&self, host: IpAddr, sid: &str) -> Result<Subscription, ProtoError> {
+        if !self.allowed.contains(&host) {
+            return Err(Self::refused(&host.to_string()));
+        }
+        self.lan.renew(host, RENDERING_CONTROL.event_path, sid, 600)
     }
 
     fn subscribe(&self, callback: &str) -> Result<Subscription, ProtoError> {
-        self.lan
-            .subscribe(PLAYER, RENDERING_CONTROL.event_path, callback, 300)
+        self.subscribe_for(PLAYER, callback)
     }
 
     fn renew(&self, sid: &str) -> Result<Subscription, ProtoError> {
-        self.lan
-            .renew(PLAYER, RENDERING_CONTROL.event_path, sid, 600)
+        self.renew_for(PLAYER, sid)
     }
 }
 
@@ -913,22 +967,22 @@ impl Transport for OwnedDiscoveryClient {
         action: &str,
         body: &str,
     ) -> Result<String, ProtoError> {
-        if host != PLAYER {
-            return Err(ProtoError::Network {
-                target: host.to_string(),
-                detail: "not the loopback fixture".into(),
-            });
+        if !self.allowed.contains(&host)
+            || (path != RENDERING_CONTROL.control_path
+                && path != fsonos_proto::soap::ZONE_GROUP_TOPOLOGY.control_path)
+        {
+            return Err(Self::refused(&host.to_string()));
         }
         self.lan.soap_post(host, path, action, body)
     }
 
     fn http_get(&self, url: &str) -> Result<String, ProtoError> {
-        let prefix = format!("http://{PLAYER}:{}/", shim::PLAYER_PORT);
-        if !url.starts_with(&prefix) {
-            return Err(ProtoError::Network {
-                target: url.to_string(),
-                detail: "not the loopback fixture".into(),
-            });
+        if !self
+            .allowed
+            .iter()
+            .any(|host| url == fsonos_proto::ssdp::description_url(*host))
+        {
+            return Err(Self::refused(url));
         }
         self.lan.http_get(url)
     }
@@ -1051,8 +1105,17 @@ fn discover_owner(
     assert_eq!(zones.groups.len(), 1);
     let group = &zones.groups[0];
     assert_eq!(group.id, "grp:1");
-    assert_eq!(group.coordinator.0, "coord");
+    assert_eq!(group.coordinator.0, identity.uuid);
     assert_eq!(group.members.len(), 1);
+    assert_eq!(
+        group
+            .members
+            .iter()
+            .filter(|member| member.uuid == group.coordinator)
+            .count(),
+        1,
+        "the parsed group's coordinator must occur exactly once among its members"
+    );
     let member = &group.members[0];
     assert_eq!(member.uuid.0, identity.uuid);
     assert_eq!(member.location, advert.location);
@@ -1313,4 +1376,566 @@ fn failed_owner_discovery_preflight_fences_until_real_owner_cleanup_then_succeed
     assert!(sink.recv_timeout(Duration::from_millis(300)).is_none());
     let pcm = three_blocks_and_stop(rig);
     assert!(pcm.iter().flatten().any(|byte| *byte != 0));
+}
+
+fn owner_snapshot(
+    rig: &mut Rig,
+    mailbox: &mut HttpMailboxOwner,
+    client: &franken_speaker::settled_http::HttpMailboxClient,
+) -> UnifiedGroupSession {
+    let get = franken_control::fsonos::HttpRequest {
+        method: "GET",
+        path: franken_control::fsonos::ssdp::DESCRIPTION_PATH,
+        peer_ip: PLAYER,
+        ingress: franken_control::fsonos::Ingress::LocalLegacy,
+        headers: &[],
+        body: &[],
+    };
+    let pending = client.submit(&get).unwrap();
+    assert!(matches!(
+        rig.owner.service_http(mailbox),
+        Ok(HttpService::Replied)
+    ));
+    let reply = pending.wait().unwrap();
+    assert_eq!(reply.result.unwrap().control.response.status, 200);
+    reply.session
+}
+
+fn start_owner_at(
+    rig: &mut Rig,
+    mailbox: &mut HttpMailboxOwner,
+    client: franken_speaker::settled_http::HttpMailboxClient,
+    session: UnifiedGroupSession,
+    identity: shim::DiscoveryIdentity,
+    logical: Ipv4Addr,
+    target: CallbackTarget,
+) -> Result<FsonosLoopback, String> {
+    let worker = thread::spawn(move || {
+        FsonosLoopback::start_discoverable_eventing_at_mailbox(
+            session,
+            (&identity, logical),
+            Policy::LocalLink,
+            LoopbackLimits::standard(),
+            shim::DiscoveryLimits::standard(),
+            (target, CallbackLimits::standard()),
+            client,
+        )
+    });
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut served = 0;
+    while !worker.is_finished() && Instant::now() < deadline {
+        match rig.owner.service_http(mailbox).unwrap() {
+            HttpService::Idle => thread::sleep(Duration::from_millis(1)),
+            HttpService::Replied => served += 1,
+            other => panic!("actual owner preflight failed: {other:?}"),
+        }
+    }
+    assert!(worker.is_finished(), "owner startup did not finish");
+    assert!(served > 0, "preflight must reach the actual owner");
+    worker.join().unwrap()
+}
+
+fn two_owner_call<R: Send + 'static>(
+    rigs: (&mut Rig, &mut Rig),
+    mailboxes: (&mut HttpMailboxOwner, &mut HttpMailboxOwner),
+    http: [SocketAddr; 2],
+    search: SocketAddr,
+    expect_service: [bool; 2],
+    f: impl FnOnce(&OwnedDiscoveryClient) -> R + Send + 'static,
+) -> R {
+    let logical = [
+        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)),
+    ];
+    let worker = thread::spawn(move || {
+        let client = OwnedDiscoveryClient::two(logical, http, search).unwrap();
+        f(&client)
+    });
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut seen = [false; 2];
+    while !worker.is_finished() && Instant::now() < deadline {
+        for (index, result) in [
+            rigs.0.owner.service_http(mailboxes.0),
+            rigs.1.owner.service_http(mailboxes.1),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            match result.unwrap() {
+                HttpService::Idle => {}
+                HttpService::Replied => seen[index] = true,
+                other => panic!("owner {index} could not serve client: {other:?}"),
+            }
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(worker.is_finished(), "actual client did not finish");
+    let result = worker.join().expect("actual client worker");
+    assert_eq!(seen, expect_service, "owner service mask mismatch");
+    result
+}
+
+#[test]
+fn two_owner_client_rejects_unconfined_routes_and_requests_before_delegation() {
+    let a = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+    let b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3));
+    let first = SocketAddr::from((Ipv4Addr::LOCALHOST, 9101));
+    let second = SocketAddr::from((Ipv4Addr::LOCALHOST, 9102));
+    let search = SocketAddr::from((Ipv4Addr::LOCALHOST, 9103));
+    assert!(OwnedDiscoveryClient::two([a, a], [first, second], search).is_err());
+    assert!(OwnedDiscoveryClient::two([a, b], [first, first], search).is_err());
+    assert!(
+        OwnedDiscoveryClient::two(
+            [a, b],
+            [first, SocketAddr::from(([192, 0, 2, 1], 9102))],
+            search
+        )
+        .is_err()
+    );
+    assert!(
+        OwnedDiscoveryClient::two(
+            [a, b],
+            [first, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))],
+            search
+        )
+        .is_err()
+    );
+    assert!(
+        OwnedDiscoveryClient::two(
+            [a, b],
+            [first, second],
+            SocketAddr::from(([192, 0, 2, 1], 9103))
+        )
+        .is_err()
+    );
+    let client = OwnedDiscoveryClient::two([a, b], [first, second], search).unwrap();
+    let blocked = |error| matches!(error, ProtoError::Network { ref detail, .. } if detail == "not the loopback fixture");
+    assert!(blocked(
+        client
+            .soap_post(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 4)), "/", "x", "")
+            .unwrap_err()
+    ));
+    assert!(blocked(
+        client
+            .subscribe_for(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), "http://127.0.0.1/")
+            .unwrap_err()
+    ));
+    assert!(blocked(
+        client.soap_post(a, "@192.0.2.1/", "x", "").unwrap_err()
+    ));
+    assert!(blocked(client.subscribe("http://127.0.0.1/").unwrap_err()));
+    for url in [
+        "http://127.0.0.2:1401/xml/device_description.xml",
+        "http://127.0.0.4:1400/xml/device_description.xml",
+        "http://192.0.2.1:1400/xml/device_description.xml",
+        "http://127.0.0.2:1400/other",
+    ] {
+        assert!(blocked(client.http_get(url).unwrap_err()));
+    }
+}
+
+#[test]
+fn two_real_standalone_owners_are_discovered_controlled_and_rendered_independently() {
+    let ip_a = Ipv4Addr::new(127, 0, 0, 2);
+    let ip_b = Ipv4Addr::new(127, 0, 0, 3);
+    let hosts = [IpAddr::V4(ip_a), IpAddr::V4(ip_b)];
+    let identity_a = shim::DiscoveryIdentity::fixture();
+    let identity_b = shim::DiscoveryIdentity {
+        uuid: shim::FIXTURE_OTHER_UUID.into(),
+        room: "Office".into(),
+    };
+    assert_ne!(identity_a.uuid, identity_b.uuid);
+    let baseline_a = three_blocks_and_stop(rig_with_identity_at(Some(&identity_a), ip_a));
+    let baseline_b = three_blocks_and_stop(rig_with_identity_at(Some(&identity_b), ip_b));
+    let mut a = rig_with_identity_at(Some(&identity_a), ip_a);
+    let mut b = rig_with_identity_at(Some(&identity_b), ip_b);
+    let sink_a = EventSink::start(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+    let sink_b = EventSink::start(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+    let make_target_a = || CallbackTarget::new(sink_a.local_addr(), &format!("/{TAG}")).unwrap();
+    let make_target_b = || CallbackTarget::new(sink_b.local_addr(), &format!("/{TAG}")).unwrap();
+    let config = HttpMailboxConfig::new(16 * 1024, 32, Duration::from_millis(800)).unwrap();
+    let (client_a, mut mailbox_a) = http_mailbox(config).unwrap();
+    let (client_b, mut mailbox_b) = http_mailbox(config).unwrap();
+    let session_a = owner_snapshot(&mut a, &mut mailbox_a, &client_a);
+    let session_b = owner_snapshot(&mut b, &mut mailbox_b, &client_b);
+    assert!(matches!(
+        a.owner.service_http(&mut mailbox_b),
+        Err(franken_speaker::settled_http::HttpMailboxError::Unavailable)
+    ));
+    assert!(matches!(
+        b.owner.service_http(&mut mailbox_a),
+        Err(franken_speaker::settled_http::HttpMailboxError::Unavailable)
+    ));
+
+    // Same UUID/name but wrong advertised location must fail the owner's real
+    // preflight, leave the attachment fenced, then clean up only owner A.
+    let failure = match start_owner_at(
+        &mut a,
+        &mut mailbox_a,
+        client_a.clone(),
+        session_a.clone(),
+        identity_a.clone(),
+        ip_b,
+        make_target_a(),
+    ) {
+        Ok(_) => panic!("wrong logical location was advertised"),
+        Err(reason) => reason,
+    };
+    assert_eq!(failure, "owner discovery identity mismatch");
+    let get = franken_control::fsonos::HttpRequest {
+        method: "GET",
+        path: franken_control::fsonos::ssdp::DESCRIPTION_PATH,
+        peer_ip: PLAYER,
+        ingress: franken_control::fsonos::Ingress::LocalLegacy,
+        headers: &[],
+        body: &[],
+    };
+    assert!(matches!(
+        client_a.submit(&get),
+        Err(franken_speaker::settled_http::HttpMailboxError::Busy)
+    ));
+    assert_eq!(a.owner.release_http_eventing(&mut mailbox_a).unwrap(), 0);
+    let server_a = start_owner_at(
+        &mut a,
+        &mut mailbox_a,
+        client_a.clone(),
+        session_a,
+        identity_a.clone(),
+        ip_a,
+        make_target_a(),
+    )
+    .unwrap();
+    let server_b = start_owner_at(
+        &mut b,
+        &mut mailbox_b,
+        client_b.clone(),
+        session_b,
+        identity_b.clone(),
+        ip_b,
+        make_target_b(),
+    )
+    .unwrap();
+    // A second adapter cannot reuse the already attached owner-A client.
+    // It must fail without asking either owner to service a new request.
+    let duplicate_session = server_a.with_session(Clone::clone);
+    let duplicate_identity = identity_a.clone();
+    let duplicate_client = client_a.clone();
+    let duplicate_target = make_target_a();
+    let duplicate = thread::spawn(move || {
+        FsonosLoopback::start_discoverable_eventing_at_mailbox(
+            duplicate_session,
+            (&duplicate_identity, ip_a),
+            Policy::LocalLink,
+            LoopbackLimits::standard(),
+            shim::DiscoveryLimits::standard(),
+            (duplicate_target, CallbackLimits::standard()),
+            duplicate_client,
+        )
+    });
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !duplicate.is_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(duplicate.is_finished(), "second attachment did not settle");
+    match duplicate.join().unwrap() {
+        Ok(_) => panic!("second adapter reused an attached owner mailbox"),
+        Err(reason) => assert_eq!(reason, "owner eventing attachment is unavailable"),
+    }
+    let http = [server_a.addr(), server_b.addr()];
+    let search_a = server_a.discovery_addr().unwrap();
+    let search_b = server_b.discovery_addr().unwrap();
+    assert_ne!(http[0], http[1]);
+    assert_ne!(search_a, search_b);
+    for (search, id, host) in [
+        (search_a, &identity_a, hosts[0]),
+        (search_b, &identity_b, hosts[1]),
+    ] {
+        let client = OwnedDiscoveryClient::two(hosts, http, search).unwrap();
+        let found = client.ssdp_search(1, Duration::from_millis(700)).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].location, fsonos_proto::ssdp::description_url(host));
+        assert_eq!(
+            found[0].usn.as_deref(),
+            Some(format!("uuid:{}::{}", id.uuid, fsonos_proto::ssdp::SONOS_ST).as_str())
+        );
+    }
+    let (doc_a, doc_b, zones_a, zones_b) = two_owner_call(
+        (&mut a, &mut b),
+        (&mut mailbox_a, &mut mailbox_b),
+        http,
+        search_a,
+        [true, true],
+        move |client| {
+            Ok::<_, ProtoError>((
+                client.http_get(&fsonos_proto::ssdp::description_url(hosts[0]))?,
+                client.http_get(&fsonos_proto::ssdp::description_url(hosts[1]))?,
+                fsonos_proto::topology::get_zone_group_state(client, hosts[0])?,
+                fsonos_proto::topology::get_zone_group_state(client, hosts[1])?,
+            ))
+        },
+    )
+    .unwrap();
+    for (doc, zones, identity, host, group) in [
+        (&doc_a, &zones_a, &identity_a, hosts[0], "owner-a:1"),
+        (&doc_b, &zones_b, &identity_b, hosts[1], "owner-b:1"),
+    ] {
+        let parsed = fsonos_proto::description::parse_device_description(doc).unwrap();
+        assert_eq!(parsed.udn.0, identity.uuid);
+        assert_eq!(parsed.room_name, identity.room);
+        assert!(parsed.has_service(RENDERING_CONTROL.service_type));
+        assert_eq!(zones.groups.len(), 1);
+        let actual = &zones.groups[0];
+        assert_eq!(actual.id, group);
+        assert_eq!(actual.coordinator.0, identity.uuid);
+        assert_eq!(actual.members.len(), 1);
+        assert_eq!(
+            actual
+                .members
+                .iter()
+                .filter(|member| member.uuid == actual.coordinator)
+                .count(),
+            1
+        );
+        assert_eq!(actual.members[0].uuid.0, identity.uuid);
+        assert_eq!(
+            actual.members[0].location,
+            fsonos_proto::ssdp::description_url(host)
+        );
+        assert_eq!(actual.members[0].zone_name, identity.room);
+        assert_eq!(actual.members[0].ip(), Some(host));
+    }
+    // Plant an extra *real* owner-B read before the expected owner-A read.
+    // Both SDK calls must succeed; only the exact service-mask oracle rejects it.
+    let planted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        two_owner_call(
+            (&mut a, &mut b),
+            (&mut mailbox_a, &mut mailbox_b),
+            http,
+            search_a,
+            [true, false],
+            move |client| {
+                let b = fsonos_proto::control::get_volume(client, hosts[1]).expect("real B read");
+                let a = fsonos_proto::control::get_volume(client, hosts[0]).expect("real A read");
+                (a, b)
+            },
+        )
+    }));
+    let error = planted.expect_err("an extra owner service must fail the mask oracle");
+    let message = error
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| error.downcast_ref::<&str>().copied())
+        .unwrap_or("");
+    assert!(message.contains("owner service mask mismatch"));
+    assert!(message.contains("left: [true, true]"));
+    assert!(message.contains("right: [true, false]"));
+    let bounded_message: String = message.chars().take(256).collect();
+    println!(
+        "FFW_TWO_OWNER_ISOLATION_CANARY observed=[true,true] expected=[true,false] message={bounded_message:?}"
+    );
+    let paired = two_owner_call(
+        (&mut a, &mut b),
+        (&mut mailbox_a, &mut mailbox_b),
+        http,
+        search_a,
+        [true, true],
+        move |client| {
+            Ok::<_, ProtoError>((
+                fsonos_proto::control::get_volume(client, hosts[1])?,
+                fsonos_proto::control::get_volume(client, hosts[0])?,
+            ))
+        },
+    )
+    .unwrap();
+    assert_eq!(paired, (50, 50));
+    let callbacks = [sink_a.callback_url(TAG), sink_b.callback_url(TAG)];
+    let (sub_a, sub_b) = two_owner_call(
+        (&mut a, &mut b),
+        (&mut mailbox_a, &mut mailbox_b),
+        http,
+        search_a,
+        [true, true],
+        move |client| {
+            Ok::<_, ProtoError>((
+                client.subscribe_for(hosts[0], &callbacks[0])?,
+                client.subscribe_for(hosts[1], &callbacks[1])?,
+            ))
+        },
+    )
+    .unwrap();
+    assert_ne!(sub_a.sid, sub_b.sid);
+    let first_a = next(&sink_a);
+    let first_b = next(&sink_b);
+    assert_eq!((first_a.sid.as_str(), first_a.seq), (sub_a.sid.as_str(), 0));
+    assert_eq!((first_b.sid.as_str(), first_b.seq), (sub_b.sid.as_str(), 0));
+    assert_eq!(first_a.last_change().unwrap().unwrap().volume(), Some(50));
+    assert_eq!(first_b.last_change().unwrap().unwrap().volume(), Some(50));
+    let wrong_sid = sub_a.sid.clone();
+    let wrong = two_owner_call(
+        (&mut a, &mut b),
+        (&mut mailbox_a, &mut mailbox_b),
+        http,
+        search_a,
+        [false, true],
+        move |c| c.renew_for(hosts[1], &wrong_sid),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(wrong, ProtoError::Network { ref detail, .. } if detail == "SUBSCRIBE: HTTP 412")
+    );
+    assert!(sink_a.recv_timeout(Duration::from_millis(300)).is_none());
+    assert!(sink_b.recv_timeout(Duration::from_millis(300)).is_none());
+    let fresh_a = two_owner_call(
+        (&mut a, &mut b),
+        (&mut mailbox_a, &mut mailbox_b),
+        http,
+        search_a,
+        [true, false],
+        move |c| fsonos_proto::control::get_volume(c, hosts[0]),
+    )
+    .unwrap();
+    assert_eq!(fresh_a, 50);
+
+    two_owner_call(
+        (&mut a, &mut b),
+        (&mut mailbox_a, &mut mailbox_b),
+        http,
+        search_a,
+        [true, false],
+        move |c| set_volume(c, hosts[0], 90),
+    )
+    .unwrap();
+    let changed_a = next(&sink_a);
+    assert_eq!(
+        (changed_a.sid.as_str(), changed_a.seq),
+        (sub_a.sid.as_str(), 1)
+    );
+    assert_eq!(changed_a.last_change().unwrap().unwrap().volume(), Some(90));
+    assert!(sink_b.recv_timeout(Duration::from_millis(300)).is_none());
+    let fresh_b = two_owner_call(
+        (&mut a, &mut b),
+        (&mut mailbox_a, &mut mailbox_b),
+        http,
+        search_b,
+        [false, true],
+        move |c| fsonos_proto::control::get_volume(c, hosts[1]),
+    )
+    .unwrap();
+    assert_eq!(fresh_b, 50);
+    assert_eq!(
+        server_b.with_session(|s| (
+            s.state_revision,
+            s.members[&identity_b.uuid].volume_0_to_100
+        )),
+        (1, 50)
+    );
+    two_owner_call(
+        (&mut a, &mut b),
+        (&mut mailbox_a, &mut mailbox_b),
+        http,
+        search_b,
+        [false, true],
+        move |c| set_volume(c, hosts[1], 70),
+    )
+    .unwrap();
+    let changed_b = next(&sink_b);
+    assert_eq!(
+        (changed_b.sid.as_str(), changed_b.seq),
+        (sub_b.sid.as_str(), 1)
+    );
+    assert_eq!(changed_b.last_change().unwrap().unwrap().volume(), Some(70));
+    assert!(sink_a.recv_timeout(Duration::from_millis(300)).is_none());
+    let fresh_a = two_owner_call(
+        (&mut a, &mut b),
+        (&mut mailbox_a, &mut mailbox_b),
+        http,
+        search_a,
+        [true, false],
+        move |c| fsonos_proto::control::get_volume(c, hosts[0]),
+    )
+    .unwrap();
+    assert_eq!(fresh_a, 90);
+    assert_eq!(
+        server_a.with_session(|s| (
+            s.state_revision,
+            s.members[&identity_a.uuid].volume_0_to_100
+        )),
+        (2, 90)
+    );
+    assert_eq!(
+        server_b.with_session(|s| (
+            s.state_revision,
+            s.members[&identity_b.uuid].volume_0_to_100
+        )),
+        (2, 70)
+    );
+
+    assert!(server_a.stop().reconciled());
+    assert_eq!(a.owner.release_http_eventing(&mut mailbox_a).unwrap(), 1);
+    assert!(matches!(
+        client_b.submit(&get),
+        Err(franken_speaker::settled_http::HttpMailboxError::Busy)
+    ));
+    two_owner_call(
+        (&mut a, &mut b),
+        (&mut mailbox_a, &mut mailbox_b),
+        http,
+        search_b,
+        [false, true],
+        move |c| set_volume(c, hosts[1], 60),
+    )
+    .unwrap();
+    let still_b = next(&sink_b);
+    assert_eq!((still_b.sid.as_str(), still_b.seq), (sub_b.sid.as_str(), 2));
+    assert_eq!(still_b.last_change().unwrap().unwrap().volume(), Some(60));
+    assert!(sink_a.recv_timeout(Duration::from_millis(300)).is_none());
+    // A's adapter is stopped, so read through its reopened associated mailbox.
+    // The real endpoint response and owner snapshot both prove A stayed at 90.
+    let action = fsonos_proto::soap::soap_action_header(&RENDERING_CONTROL, "GetVolume");
+    let body = fsonos_proto::soap::envelope(
+        &RENDERING_CONTROL,
+        "GetVolume",
+        "<InstanceID>0</InstanceID><Channel>Master</Channel>",
+    );
+    let headers = [("SOAPACTION", action.as_str())];
+    let read_a = franken_control::fsonos::HttpRequest {
+        method: "POST",
+        path: RENDERING_CONTROL.control_path,
+        peer_ip: PLAYER,
+        ingress: franken_control::fsonos::Ingress::LocalLegacy,
+        headers: &headers,
+        body: body.as_bytes(),
+    };
+    let pending = client_a
+        .submit(&read_a)
+        .expect("cleaned-up A mailbox accepts read");
+    assert!(matches!(
+        a.owner.service_http(&mut mailbox_a),
+        Ok(HttpService::Replied)
+    ));
+    let actual = pending.wait().unwrap();
+    assert_eq!(
+        (
+            actual.session.state_revision,
+            actual.session.members[&identity_a.uuid].volume_0_to_100
+        ),
+        (2, 90)
+    );
+    let response = actual.result.unwrap().control.response;
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        fsonos_proto::soap::parse_response(&response.body, "GetVolume")
+            .unwrap()
+            .require_u32("CurrentVolume")
+            .unwrap(),
+        90
+    );
+    assert!(server_b.stop().reconciled());
+    assert_eq!(b.owner.release_http_eventing(&mut mailbox_b).unwrap(), 1);
+    assert!(sink_b.recv_timeout(Duration::from_millis(300)).is_none());
+    let pcm_a = three_blocks_and_stop(a);
+    let pcm_b = three_blocks_and_stop(b);
+    assert_ne!(pcm_a, baseline_a);
+    assert_ne!(pcm_b, baseline_b);
+    assert_ne!(pcm_a, pcm_b);
 }

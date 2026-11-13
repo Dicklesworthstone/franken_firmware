@@ -209,6 +209,106 @@ fn an_identity_the_core_refuses_never_becomes_a_device_and_the_fixture_does() {
 }
 
 #[test]
+fn loopback_logical_address_changes_location_not_identity_or_document() {
+    let identity = DiscoveryIdentity {
+        uuid: FIXTURE_DEVICE_UUID.to_string(),
+        room: "Kitchen & <Den>".to_string(),
+    };
+    let default = identity.device().unwrap();
+    assert_eq!(
+        default,
+        identity.device_at_loopback(Ipv4Addr::LOCALHOST).unwrap()
+    );
+    let other = identity
+        .device_at_loopback(Ipv4Addr::new(127, 0, 0, 2))
+        .unwrap();
+    assert_eq!(default.uuid(), other.uuid());
+    assert_eq!(default.name(), other.name());
+    assert_eq!(default.max_age(), MIN_MAX_AGE);
+    assert_eq!(other.max_age(), MIN_MAX_AGE);
+    assert_ne!(default.location(), other.location());
+    assert_eq!(
+        other.location(),
+        format!("http://127.0.0.2:{PLAYER_PORT}{}", ssdp::DESCRIPTION_PATH)
+    );
+    assert_eq!(default.description_xml(), other.description_xml());
+    assert!(
+        other
+            .description_xml()
+            .contains("<roomName>Kitchen &amp; &lt;Den&gt;</roomName>")
+    );
+}
+
+#[test]
+fn nonloopback_network_and_broadcast_addresses_are_refused_by_the_identity_helper() {
+    let identity = DiscoveryIdentity::fixture();
+    for ip in [
+        Ipv4Addr::UNSPECIFIED,
+        Ipv4Addr::new(192, 0, 2, 1),
+        Ipv4Addr::new(224, 0, 0, 1),
+        Ipv4Addr::BROADCAST,
+        Ipv4Addr::new(127, 0, 0, 0),
+        Ipv4Addr::new(127, 255, 255, 255),
+    ] {
+        assert_eq!(
+            identity.device_at_loopback(ip).unwrap_err(),
+            "device identity: bad_loopback_address",
+            "{ip}"
+        );
+    }
+    for ip in [
+        Ipv4Addr::LOCALHOST,
+        Ipv4Addr::new(127, 0, 0, 2),
+        Ipv4Addr::new(127, 0, 0, 3),
+    ] {
+        assert!(identity.device_at_loopback(ip).is_ok(), "{ip}");
+    }
+}
+
+#[test]
+fn alternate_loopback_address_still_enforces_core_uuid_and_name_rules() {
+    let ip = Ipv4Addr::new(127, 0, 0, 2);
+    let valid = DiscoveryIdentity::fixture();
+    assert!(valid.device_at_loopback(ip).is_ok());
+    for (uuid, room, code) in [
+        ("not-a-uuid", FIXTURE_ROOM, "bad_uuid"),
+        (UPPER_CASE_ID, FIXTURE_ROOM, "bad_uuid"),
+        (FIXTURE_DEVICE_UUID, "", "bad_name"),
+        (FIXTURE_DEVICE_UUID, "Kit\r\nchen", "bad_name"),
+    ] {
+        let identity = DiscoveryIdentity {
+            uuid: uuid.to_string(),
+            room: room.to_string(),
+        };
+        assert_eq!(
+            identity.device_at_loopback(ip).unwrap_err(),
+            format!("device identity: {code}")
+        );
+    }
+}
+
+#[test]
+fn alternate_logical_location_is_advertised_from_the_original_loopback_socket() {
+    let device = DiscoveryIdentity::fixture()
+        .device_at_loopback(Ipv4Addr::new(127, 0, 0, 2))
+        .unwrap();
+    let responder = Responder::start(device.clone(), limits()).expect("the responder starts");
+    assert_eq!(responder.addr().ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+    assert_ne!(responder.addr().port(), 0);
+    let asker = client();
+    send(&asker, responder.addr(), &search(TYPE));
+    let responses = collect(&asker);
+    assert_eq!(responses.len(), 1);
+    assert!(responses[0].contains(&format!("LOCATION: {}\r\n", device.location())));
+    assert!(responses[0].contains(&format!("USN: uuid:{FIXTURE_DEVICE_UUID}::{TYPE}\r\n")));
+    wait_until("counted", || responder.report().received == 1);
+    let report = responder.report();
+    assert_eq!(report.answered, 1);
+    assert_eq!(report.replies_sent, 1);
+    assert!(report.reconciled());
+}
+
+#[test]
 fn unusable_limits_are_refused_and_the_standard_ones_are_not() {
     assert!(DiscoveryLimits::standard().usable());
     assert!(limits().usable());

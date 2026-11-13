@@ -66,9 +66,25 @@ impl DiscoveryIdentity {
     /// The core's device for this identity, on the loopback address and the player port. The core validates every field, so a value
     /// that could break a header or the document is refused here, before anything is bound.
     pub(super) fn device(&self) -> Result<Device, String> {
+        self.device_at_loopback(Ipv4Addr::LOCALHOST)
+    }
+
+    /// Build the same validated device at a logical IPv4 loopback address.
+    /// The advertised port remains 1400; this does not bind a socket.
+    ///
+    /// # Errors
+    /// Refuses non-loopback addresses, the loopback network and broadcast
+    /// addresses, and identities the core device validator refuses.
+    pub fn device_at_loopback(&self, ip: Ipv4Addr) -> Result<Device, String> {
+        if !ip.is_loopback()
+            || ip == Ipv4Addr::new(127, 0, 0, 0)
+            || ip == Ipv4Addr::new(127, 255, 255, 255)
+        {
+            return Err("device identity: bad_loopback_address".to_string());
+        }
         Device::new(
             &self.uuid,
-            Ipv4Addr::LOCALHOST.octets(),
+            ip.octets(),
             PLAYER_PORT,
             &self.room,
             MIN_MAX_AGE,
