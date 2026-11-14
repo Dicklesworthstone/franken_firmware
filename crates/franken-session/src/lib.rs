@@ -41,7 +41,7 @@ pub use membership::{
     LeaseVoter, LeaseWin, MAX_GROUP_MEMBERS, MAX_TERMINAL_HISTORY, MembershipChange,
     MembershipConfig, MembershipError, MembershipIntent, MissingAckPolicy, OutputBound,
     OutputResolution, ProposalPhase, ProposalSpec, ProposalStatus, QuorumConfig, QuorumRound,
-    ReadinessReport,
+    ReadinessReport, RenewalWindow,
 };
 pub use source::{
     Admitted, CommandClass, MAX_SOURCE_LABEL_BYTES, SourceArbiter, SourceCommand, SourceConfig,

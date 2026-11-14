@@ -17,7 +17,7 @@ use franken_platform::ops::KernelOps;
 use franken_session::{
     AuthorityToken, ChannelRole, GroupMembership, GroupStopMarker, GroupTime, MemberLifecycleState,
     MembershipChange, MembershipError, ProposalSpec, ProposalStatus, ReadinessReport,
-    UnifiedGroupSession,
+    RenewalWindow, UnifiedGroupSession,
 };
 use franken_stream::carrier::{DatagramPort, PollReport};
 
@@ -72,6 +72,7 @@ pub enum OwnerError {
     JoinState,
     LocalReadinessUnproven,
     LeaseExpired,
+    RenewalTooLate,
     Clock,
     Membership(MembershipError),
     Render(NetworkRenderError),
@@ -146,6 +147,7 @@ struct CommittedVolume {
 
 #[derive(Clone, Copy)]
 struct ClockBounds {
+    earliest_ns: u64,
     latest_ns: u64,
     earliest_frame: u64,
     latest_frame: u64,
@@ -314,6 +316,7 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             .zip(view.group_ns.checked_add(view.uncertainty_ns))
             .and_then(|(earliest, latest_ns)| {
                 Some(ClockBounds {
+                    earliest_ns: earliest,
                     latest_ns,
                     earliest_frame: frames_at(earliest)?,
                     latest_frame: frames_at(latest_ns)?,
@@ -912,6 +915,93 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
                 Err(OwnerError::Render(error))
             }
         }
+    }
+
+    /// Renew this active configured-issuer owner's lease under trusted local
+    /// provisioning. This is not a wire-authenticated request or a quorum win.
+    /// `publication_budget_ns` is the caller-admitted worst-case group-time
+    /// interval from the final clock sample through the synchronous swaps. It
+    /// must be nonzero and fit inside every old lease's conservative lifetime.
+    /// A target must qualify that bound; a host fixture does not establish it.
+    /// N03 timing/authority, output grants, epoch and protection are unchanged.
+    pub fn renew_owned_lease(
+        &mut self,
+        expected: &AuthorityToken,
+        expires_at_ns: u64,
+        publication_budget_ns: u64,
+    ) -> Result<AuthorityToken, OwnerError> {
+        if publication_budget_ns == 0
+            || expected != &self.authority
+            || !self.active
+            || self.stopping
+            || self.render.is_terminal()
+        {
+            return Err(OwnerError::Binding);
+        }
+        if self.reconcile()? == RenderApplication::Stopping {
+            return Err(OwnerError::Binding);
+        }
+        let (join_id, join_token) = self.join.as_ref().ok_or(OwnerError::JoinState)?;
+        if join_token != expected || !self.control.lease_matches(expected) {
+            let _ = self.request_stop();
+            return Err(OwnerError::Binding);
+        }
+        // Allocate every replacement before the final clock sample. No I/O,
+        // allocation, callback or fallible work follows the control install.
+        let candidate = AuthorityToken {
+            expires_at_ns,
+            ..self.authority.clone()
+        };
+        let held = candidate.clone();
+        let control = candidate.clone();
+        let join = (*join_id, candidate.clone());
+        let b = self.bounds(false)?;
+        if !self
+            .membership
+            .lease_is_live(&self.session, expected, b.latest_ns)
+            || !self.control.lease_is_live(&self.session, b.latest_ns)
+            || self.join.as_ref().is_none_or(|(_, token)| {
+                !self
+                    .membership
+                    .lease_is_live(&self.session, token, b.latest_ns)
+            })
+        {
+            let _ = self.request_stop();
+            return Err(OwnerError::LeaseExpired);
+        }
+        let commit_ns = b
+            .latest_ns
+            .checked_add(publication_budget_ns)
+            .ok_or(OwnerError::RenewalTooLate)?;
+        if !self
+            .membership
+            .lease_is_live(&self.session, expected, commit_ns)
+            || !self.control.lease_is_live(&self.session, commit_ns)
+            || self.join.as_ref().is_none_or(|(_, token)| {
+                !self
+                    .membership
+                    .lease_is_live(&self.session, token, commit_ns)
+            })
+        {
+            return Err(OwnerError::RenewalTooLate);
+        }
+        self.membership
+            .validate_configured_renewal(
+                &self.session,
+                expected,
+                &candidate,
+                RenewalWindow {
+                    earliest_ns: b.earliest_ns,
+                    latest_ns: commit_ns,
+                },
+            )
+            .map_err(OwnerError::Membership)?;
+        self.control
+            .install_lease(&self.session, control, commit_ns)
+            .map_err(OwnerError::Membership)?;
+        self.authority = held;
+        self.join = Some(join);
+        Ok(candidate)
     }
 
     /// Opt this fresh owner into explicit whole-block output grants before

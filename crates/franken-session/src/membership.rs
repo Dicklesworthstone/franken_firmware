@@ -158,6 +158,8 @@ pub enum MembershipError {
     LeaseTooLong { expires_at_ns: u64, max_ns: u64 },
     #[error("lease expiry {expires_at_ns} ns does not extend the current {current_ns} ns")]
     LeaseNotExtended { expires_at_ns: u64, current_ns: u64 },
+    #[error("the lease renewal time window is invalid or overflows")]
+    InvalidRenewalWindow,
     #[error("epoch {epoch} is held by `{held_by}`; `{announced_by}` also claims it")]
     ConflictingLeaders {
         epoch: u64,
@@ -219,6 +221,7 @@ impl MembershipError {
             Self::NoQuorum { .. } => "NO_QUORUM",
             Self::LeaseTooLong { .. } => "LEASE_TOO_LONG",
             Self::LeaseNotExtended { .. } => "LEASE_NOT_EXTENDED",
+            Self::InvalidRenewalWindow => "INVALID_RENEWAL_WINDOW",
             Self::ConflictingLeaders { .. } => "CONFLICTING_LEADERS",
             Self::WinNotApplicable => "WIN_NOT_APPLICABLE",
             Self::OutputHorizonExceeded { .. } => "OUTPUT_HORIZON_EXCEEDED",
@@ -381,6 +384,15 @@ impl Default for LeaseTerms {
             max_output_horizon_ns: 10_000_000_000,
         }
     }
+}
+
+/// Conservative group-time bounds supplied by the trusted renewal owner.
+/// `latest_ns` includes its admitted publication work budget; `earliest_ns`
+/// caps the new lease horizon without treating uncertainty as extra lease time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenewalWindow {
+    pub earliest_ns: u64,
+    pub latest_ns: u64,
 }
 
 /// Who may mint a new epoch. The two must never be mixed in one group: an issuer that bumps the
@@ -1140,6 +1152,14 @@ impl QuorumRound {
     }
 }
 
+#[cfg(test)]
+mod lease_renewal {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/membership/configured_renewal_tests.rs"
+    ));
+}
+
 /// The membership cutover engine for one group. Methods that read the group take the session;
 /// only activation (in [`GroupMembership::tick`]) and [`GroupMembership::advance_epoch`] change it.
 #[derive(Debug)]
@@ -1621,6 +1641,47 @@ impl GroupMembership {
         }
         session.begin_epoch(new_epoch);
         Ok(AuthorityToken::issue(session, token.expires_at_ns))
+    }
+
+    /// Validate a trusted configured-issuer renewal without publishing it.
+    /// Tokens are public data, not credentials; only the trusted owner may use
+    /// this operation after obtaining its configured issuer's renewal intent.
+    /// It cannot substitute for a quorum win or revive an expired authority.
+    /// No grant, proposal, epoch or session state changes here, and no allocation
+    /// occurs, so the enclosing owner can publish all its copies together.
+    pub fn validate_configured_renewal(
+        &self,
+        session: &UnifiedGroupSession,
+        current: &AuthorityToken,
+        candidate: &AuthorityToken,
+        window: RenewalWindow,
+    ) -> Result<(), MembershipError> {
+        self.require_discovered()?;
+        if self.config.epoch_mint != EpochMint::ConfiguredIssuer {
+            return Err(MembershipError::QuorumRequired);
+        }
+        if window.earliest_ns > window.latest_ns {
+            return Err(MembershipError::InvalidRenewalWindow);
+        }
+        self.authorize(session, current, window.latest_ns)?;
+        self.authorize(session, candidate, window.latest_ns)?;
+        if candidate.expires_at_ns <= current.expires_at_ns {
+            return Err(MembershipError::LeaseNotExtended {
+                expires_at_ns: candidate.expires_at_ns,
+                current_ns: current.expires_at_ns,
+            });
+        }
+        let max_ns = window
+            .earliest_ns
+            .checked_add(self.config.lease.max_lease_ns)
+            .ok_or(MembershipError::InvalidRenewalWindow)?;
+        if candidate.expires_at_ns > max_ns {
+            return Err(MembershipError::LeaseTooLong {
+                expires_at_ns: candidate.expires_at_ns,
+                max_ns,
+            });
+        }
+        Ok(())
     }
 
     /// Extend the holder's own lease to what a voter quorum acknowledged. The holder must still be

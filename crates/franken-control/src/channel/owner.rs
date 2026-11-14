@@ -417,6 +417,13 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
         })
     }
 
+    /// Exact installed-token identity for a serialized owner's conditional
+    /// replacement. Equality is not credential verification or lease liveness.
+    #[must_use]
+    pub fn lease_matches(&self, expected: &AuthorityToken) -> bool {
+        self.channel.lease() == Some(expected)
+    }
+
     /// Whether this owner's constructed fresh group can still be used.
     /// Only the consuming fresh-group constructor sets this state; existing
     /// media and arbitrary sessions do not establish it. A storage failure
@@ -1481,6 +1488,28 @@ mod tests {
         assert!(!owner.lease_is_live(&UnifiedGroupSession::new("grp", "other", EPOCH), 0));
         assert!(!owner.lease_is_live(&UnifiedGroupSession::new("grp", "coord", EPOCH + 1), 0));
         assert!(!blank().lease_is_live(&session, 0));
+        assert!(owner.lease_matches(&actual));
+        assert!(!blank().lease_matches(&actual));
+        for candidate in [
+            AuthorityToken {
+                expires_at_ns: actual.expires_at_ns + 1,
+                ..actual.clone()
+            },
+            AuthorityToken {
+                group_id: "other".into(),
+                ..actual.clone()
+            },
+            AuthorityToken {
+                issuer_id: "other".into(),
+                ..actual.clone()
+            },
+            AuthorityToken {
+                epoch: actual.epoch + 1,
+                ..actual.clone()
+            },
+        ] {
+            assert!(!owner.lease_matches(&candidate));
+        }
     }
 
     #[test]

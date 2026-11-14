@@ -31,6 +31,16 @@ fn role_fixture_with_switch(
     final_frame: u64,
     prior: PriorSwitch,
 ) -> Result<ControllerRig, AdmissionError> {
+    role_fixture_with_lease(board, role, final_frame, prior, None)
+}
+
+fn role_fixture_with_lease(
+    board: &BoardProfile,
+    role: ChannelRole,
+    final_frame: u64,
+    prior: PriorSwitch,
+    expires_at_ns: Option<u64>,
+) -> Result<ControllerRig, AdmissionError> {
     let net = network();
     let address = net.endpoint.carrier().media_addr().unwrap();
     let start_local_ns = net
@@ -135,7 +145,7 @@ fn role_fixture_with_switch(
     )
     .unwrap();
     let session = UnifiedGroupSession::new("grp", "coord", TEST_EPOCH);
-    let token = AuthorityToken::issue(&session, u64::MAX);
+    let token = AuthorityToken::issue(&session, expires_at_ns.unwrap_or(u64::MAX));
     let (control, soap, storage_fail) = test_fleet_unleased();
     let bundle = provision_bundle(control, token.clone()).unwrap();
     let owner = SettledRender::admit_fresh_group(
@@ -1433,5 +1443,12 @@ mod output_grants {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/src/network_render/tests/controller_events/role_integration/output_grants.rs"
+    ));
+}
+
+mod lease_renewal {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/network_render/tests/controller_events/role_integration/lease_renewal.rs"
     ));
 }
