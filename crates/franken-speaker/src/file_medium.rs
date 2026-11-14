@@ -471,6 +471,7 @@ impl<M: Storage> Storage for FaultingMedium<M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use franken_journal::Journal;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
@@ -559,6 +560,57 @@ mod tests {
         // the published check value of CRC-32/ISO-HDLC
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
         assert_eq!(crc32(b""), 0);
+    }
+
+    #[test]
+    fn resumable_commit_matches_sync_file_bytes_through_compaction_and_reopen() {
+        let scratch = Scratch::new();
+        let lim = Limits::tiny();
+        let sync_path = fresh(&scratch, "sync.img", &lim);
+        let cursor_path = fresh(&scratch, "cursor.img", &lim);
+        let (mut sync, _) = Journal::open(
+            FileMedium::open_existing(&sync_path, &lim).unwrap(),
+            lim.clone(),
+        )
+        .unwrap();
+        let (mut stepped, _) = Journal::open(
+            FileMedium::open_existing(&cursor_path, &lim).unwrap(),
+            lim.clone(),
+        )
+        .unwrap();
+        for value in 1..=80 {
+            let ops = [franken_journal::Op::Raise {
+                key: b"floor".to_vec(),
+                value,
+            }];
+            let expected = sync.commit(&ops).unwrap();
+            let old = stepped.state().clone();
+            {
+                let mut cursor = stepped.begin_commit(&ops).unwrap();
+                let mut calls = 0;
+                loop {
+                    calls += 1;
+                    assert!(calls < 100, "bounded tiny-medium commit must finish");
+                    if let Some(result) = cursor.advance() {
+                        assert_eq!(result.unwrap(), expected);
+                        break;
+                    }
+                    assert_eq!(
+                        cursor.state(),
+                        &old,
+                        "no state before acknowledged publication"
+                    );
+                }
+            }
+            assert_eq!(stepped.state(), sync.state());
+            assert_eq!(bytes_of(&cursor_path), bytes_of(&sync_path));
+        }
+        assert!(stepped.compactions() > 1);
+        drop(stepped);
+        drop(sync);
+        let (reopened, _) =
+            Journal::open(FileMedium::open_existing(&cursor_path, &lim).unwrap(), lim).unwrap();
+        assert_eq!(reopened.state().marks.get(b"floor".as_slice()), Some(&80));
     }
 
     #[test]

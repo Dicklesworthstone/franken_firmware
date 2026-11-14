@@ -16,6 +16,10 @@ use crate::storage::{Storage, StorageFault};
 use crate::{JournalError, Limits};
 use std::collections::BTreeMap;
 
+#[path = "commit_cursor.rs"]
+mod commit_cursor;
+pub use commit_cursor::CommitCursor;
+
 /// Where a commit got to. After a failure it names the last step that completed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -435,43 +439,24 @@ impl<S: Storage> Journal<S> {
     /// [`JournalError::WearExhausted`] when a compaction is needed and the wear budget is spent,
     /// [`JournalError::Poisoned`] after an earlier fault, or the storage fault itself.
     pub fn commit(&mut self, ops: &[Op]) -> Result<Commit, JournalError> {
-        if self.poisoned {
-            return Err(JournalError::Poisoned);
+        let mut cursor = self.begin_commit(ops)?;
+        loop {
+            if let Some(result) = cursor.advance() {
+                return result;
+            }
         }
-        self.phase = Phase::Idle;
-        if self.pending_retire.is_some() {
-            self.retire()?;
-        }
-        let mut trial = self.state.clone();
-        for op in ops {
-            apply_op(&self.lim, &mut trial, op, false)?;
-        }
-        if trial == self.state {
-            return Ok(Commit::Noop);
-        }
-        self.phase = Phase::Staged;
-        let payload = encode_ops(ops)?;
-        if payload.len() > self.lim.max_txn_payload {
-            return Err(JournalError::TxnTooLarge);
-        }
-        let frame = encode_frame(KIND_TXN, self.next_seq, &payload)?;
-        if self.next_seq < MAX_SEQ && self.write_off + frame.len() <= self.lim.segment_bytes {
-            let offset = self.active * self.lim.segment_bytes + self.write_off;
-            self.do_program(offset, &frame)?;
-            self.phase = Phase::Written;
-            self.do_sync()?;
-            self.phase = Phase::Synced;
-            self.bytes_programmed += frame.len() as u64;
-            self.write_off += frame.len();
-            self.next_seq += 1;
-            self.state = trial;
-            self.frames_written += 1;
-            self.phase = Phase::Published;
-            return Ok(Commit::Appended);
-        }
-        self.compact(&trial)?;
-        self.phase = Phase::Published;
-        Ok(Commit::Compacted)
+    }
+
+    /// Begin a transaction without performing storage I/O. The cursor retains
+    /// exclusive journal custody until completion or cancellation.
+    ///
+    /// # Errors
+    /// [`JournalError::Poisoned`] after an earlier uncertain storage outcome.
+    pub fn begin_commit<'a>(
+        &'a mut self,
+        ops: &'a [Op],
+    ) -> Result<CommitCursor<'a, S>, JournalError> {
+        CommitCursor::new(self, ops)
     }
 
     // ---- the named operations: each is one transaction

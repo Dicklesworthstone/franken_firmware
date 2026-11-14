@@ -32,6 +32,7 @@ franken-control.workspace = true
 
 [dev-dependencies]
 franken-test-support.workspace = true
+franken-journal = { path = "../franken-journal" }
 
 [features]
 default = []

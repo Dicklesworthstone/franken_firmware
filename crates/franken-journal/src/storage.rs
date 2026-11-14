@@ -8,6 +8,59 @@
 
 use crate::codec::ERASED;
 use std::fmt;
+use std::task::{Context, Poll};
+
+/// One journal operation. Buffers belong to the cursor and remain unchanged
+/// across `Pending` polls of the same operation.
+pub enum StorageOperation<'a> {
+    Read { offset: usize, out: &'a mut [u8] },
+    Program { offset: usize, data: &'a [u8] },
+    Erase { segment: usize },
+    Sync,
+}
+
+impl StorageOperation<'_> {
+    /// Execute synchronously. This may block; it is the compatibility path,
+    /// not an asynchronous file-I/O implementation.
+    ///
+    /// # Errors
+    /// The underlying storage fault.
+    pub fn execute(self, storage: &mut impl Storage) -> Result<(), StorageFault> {
+        match self {
+            Self::Read { offset, out } => storage.read(offset, out),
+            Self::Program { offset, data } => storage.program(offset, data),
+            Self::Erase { segment } => storage.erase(segment),
+            Self::Sync => storage.sync(),
+        }
+    }
+}
+
+/// Storage that can suspend an operation without blocking its caller.
+///
+/// `Pending` must register the supplied waker. Re-polling must resume the
+/// same operation, never submit it twice. A completed read fills the entire
+/// buffer; a completed sync has the same durability contract as `Storage`.
+/// Buffers may not be retained by reference after a poll returns. Dropping a
+/// cursor may abandon an in-flight operation: the backend must retain its
+/// owned resources until completion and must quiesce before reuse/recovery.
+/// Implementing this by calling blocking methods does not provide isolation.
+pub trait PollStorage: Storage {
+    fn poll_operation(
+        &mut self,
+        cx: &mut Context<'_>,
+        operation: StorageOperation<'_>,
+    ) -> Poll<Result<(), StorageFault>>;
+}
+
+impl<T: PollStorage + ?Sized> PollStorage for &mut T {
+    fn poll_operation(
+        &mut self,
+        cx: &mut Context<'_>,
+        operation: StorageOperation<'_>,
+    ) -> Poll<Result<(), StorageFault>> {
+        (**self).poll_operation(cx, operation)
+    }
+}
 
 /// A storage failure. These carry no data from the medium.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

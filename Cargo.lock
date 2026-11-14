@@ -695,6 +695,7 @@ dependencies = [
  "franken-control",
  "franken-dsp",
  "franken-hal",
+ "franken-journal",
  "franken-platform",
  "franken-platform-linux",
  "franken-session",
