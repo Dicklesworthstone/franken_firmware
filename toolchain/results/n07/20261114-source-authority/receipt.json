@@ -1,0 +1,350 @@
+{
+  "schema": "ffw.n07.source-authority.evidence.v1",
+  "baseline": "e4fd66d85d4eb43bcf0a8294ca416130f9f00330",
+  "source_commit": "8e4fba851e58f5d01aec0e968e043ee9fafcb6f9",
+  "candidate": {
+    "freeze_sha256": "7f3b6c982c065d7a6ec5ebac34f7b8259cf4c5a3a9cbfc19c628e400b1b43585",
+    "inventory_sha256": "d8daefb51ad3d1383595e49fdbe013f7c845dcac4484406a0ca6ba07545aa932",
+    "files": 1672,
+    "transferred_files": 1670,
+    "overlays": [
+      {
+        "path": "crates/franken-speaker/src/source_runtime.rs",
+        "sha256": "79e26489f7c08b666da694bad4e1ae057c72dc904ff76c8914b8c744317cb484",
+        "bytes": 53503
+      },
+      {
+        "path": "crates/franken-speaker/src/source_runtime_cli.rs",
+        "sha256": "190486ec6f83b9cc88ea091b7f511c75aa17ed0417f00f23709a59a1e1fab858",
+        "bytes": 68920
+      },
+      {
+        "path": "crates/franken-speaker/src/network_render/tests/controller_events/final_feedback.rs",
+        "sha256": "e386a75f65c07f2d92ba9f883d9bc0f63915d33aec11d105e49136cb5820ca20",
+        "bytes": 21386
+      },
+      {
+        "path": "docs/contracts/n07.md",
+        "sha256": "71e79ce0711b6ed216db95a85ee6a34f41a78f97cbd04398a1ad839dc4163d4d",
+        "bytes": 57950
+      },
+      {
+        "path": "crates/franken-session/src/source.rs",
+        "sha256": "4ad6cca979218b08292fc01c55300eee52e270ff2b2d6f5321c111ec9995f8e6",
+        "bytes": 19899
+      },
+      {
+        "path": "crates/franken-speaker/src/source_runtime/authority_tests.rs",
+        "sha256": "2ac658d0798ee60a6d270b9ca9168cdcaab56468ea2d88370d35b5430137dac3",
+        "bytes": 20329
+      }
+    ]
+  },
+  "required_tests": [
+    "source_authority_live_and_upper_bound_equality_before_decode",
+    "source_authority_expiring_across_decode_or_before_pump_stops_wire",
+    "source_authority_renewal_rejects_bad_candidates_and_cannot_resurrect",
+    "source_command_candidate_is_checked_at_current_conservative_bound",
+    "group_command_requires_live_source_authority_without_mutation_on_expiry",
+    "source_authority_static_margin_and_upper_overflow_fail_closed",
+    "source_authority_expiry_cannot_flush_held_tail_after_eof",
+    "timely_renewal_completes_actual_udp_mp3_and_receiver_credit"
+  ],
+  "references": [
+    {
+      "path": "crates/franken-codec/tests/vectors/mp3_48000.mp3",
+      "sha256": "aa911fba4c8f1a17083e85127eee7e749b0b2f8e4284260d4fccb64b2aef868a",
+      "bytes": 8877
+    },
+    {
+      "path": "crates/franken-codec/tests/vectors/mp3_48000.ref.s16",
+      "sha256": "4e20de020e5cbc629e58d92097a6f46934160f1f68f9eb4619b073947d35a90b",
+      "bytes": 96000
+    }
+  ],
+  "format": {
+    "exit": 0,
+    "toolchain": "Rust 1.99.0 rustfmt component",
+    "edition": 2024,
+    "files": 5,
+    "skip_children": true,
+    "component_version": "rustfmt 1.10.0-stable (b940084d7e 2026-09-28)"
+  },
+  "control": {
+    "label": "guard-disabled expected failure, not a product pass or baseline execution",
+    "freeze_sha256": "548f03787cce5f00b9ee8bae51068f98a1cb55791331e7bf202e5d993d99880b",
+    "inventory_sha256": "372f69e39608fcc9e52c6e9996f6170745459be5c1223cc4d1d26511f86bc96a",
+    "mutation": "Only retained token observe guard removed; constructor, token data, candidate checks, source/transport/test assertions unchanged",
+    "expected_named_outcomes": [
+      {
+        "name": "source_authority_live_and_upper_bound_equality_before_decode",
+        "outcome": "FAILED"
+      },
+      {
+        "name": "source_authority_expiring_across_decode_or_before_pump_stops_wire",
+        "outcome": "FAILED"
+      },
+      {
+        "name": "source_authority_renewal_rejects_bad_candidates_and_cannot_resurrect",
+        "outcome": "FAILED"
+      },
+      {
+        "name": "source_command_candidate_is_checked_at_current_conservative_bound",
+        "outcome": "ok"
+      },
+      {
+        "name": "group_command_requires_live_source_authority_without_mutation_on_expiry",
+        "outcome": "FAILED"
+      },
+      {
+        "name": "source_authority_static_margin_and_upper_overflow_fail_closed",
+        "outcome": "FAILED"
+      },
+      {
+        "name": "source_authority_expiry_cannot_flush_held_tail_after_eof",
+        "outcome": "FAILED"
+      },
+      {
+        "name": "timely_renewal_completes_actual_udp_mp3_and_receiver_credit",
+        "outcome": "ok"
+      }
+    ],
+    "predicted_filtered": 678,
+    "actual_filtered": 671,
+    "denominator_correction": {
+      "baseline_native": "30107136981729353",
+      "baseline_log_sha256": "80c0aa9e69caebe185f77b67a98540d86636d5becdcb850a7ac0045355a71e77",
+      "baseline_speaker_cases": 671,
+      "added": 8,
+      "current_speaker_cases": 679,
+      "actual_run": 8,
+      "actual_filtered": 671,
+      "erroneous_prediction_preserved": true,
+      "review": "GrayDeer33754 and33757",
+      "source_assertions_or_manifest_changed": false,
+      "rerun": false,
+      "explanation": "Prior350 instrumented seven focused cases over663 existing; those instrumented cases were incorrectly included in a later baseline estimate. Native353 actually has671 speaker cases. Its harness running671 and17 results precede the Cargo stderr header; using that header clipped17 names. Running-to-footer extraction recovers all671 unique names."
+    },
+    "first_failure_scope": "Each failed case stops at its first failed assertion; later branches are not claimed observed.",
+    "native_id": "30107136981729354",
+    "exit": 101,
+    "transfer_files": 1670,
+    "receipt_root": "e7987a5c2662465b2a175700185192b66397ea823cec550e99b27348c35ad053",
+    "command_sha256": "b02daebe28f8d370381598734c7da734fa0abb0ab42be5843789dc41d86f3e23",
+    "content_root": "97e46d554e34f84e76a63c4185f1f740904fd2d155e89f784305d892cdc1faae",
+    "raw_log_sha256": "e8bb4fbbd7798e8fde0c78ed6981c7100e7d7484f9e8df3d1e810b21723ee06b",
+    "terminal_acknowledged": true,
+    "strict_remote": true,
+    "wrapper_alive": false,
+    "custody": {
+      "execution_started": true,
+      "staging_released": null,
+      "sources_released": true,
+      "pair_released": true,
+      "tree_retired": true,
+      "retired": true
+    },
+    "artifacts_skipped": true,
+    "counts": [
+      2,
+      6,
+      0,
+      0,
+      671
+    ],
+    "footer_count": 1,
+    "required_tests": [
+      {
+        "name": "source_authority_live_and_upper_bound_equality_before_decode",
+        "passed": 0
+      },
+      {
+        "name": "source_authority_expiring_across_decode_or_before_pump_stops_wire",
+        "passed": 0
+      },
+      {
+        "name": "source_authority_renewal_rejects_bad_candidates_and_cannot_resurrect",
+        "passed": 0
+      },
+      {
+        "name": "source_command_candidate_is_checked_at_current_conservative_bound",
+        "passed": 1
+      },
+      {
+        "name": "group_command_requires_live_source_authority_without_mutation_on_expiry",
+        "passed": 0
+      },
+      {
+        "name": "source_authority_static_margin_and_upper_overflow_fail_closed",
+        "passed": 0
+      },
+      {
+        "name": "source_authority_expiry_cannot_flush_held_tail_after_eof",
+        "passed": 0
+      },
+      {
+        "name": "timely_renewal_completes_actual_udp_mp3_and_receiver_credit",
+        "passed": 1
+      }
+    ]
+  },
+  "validation": {
+    "clippy": {
+      "native_id": "30107136981729355",
+      "exit": 0,
+      "transfer_files": 1670,
+      "receipt_root": "a038c1a43fd5de6b0951eb87d3ff5ccbe798eb68d0a558cd0895fa0215a10731",
+      "command_sha256": "eab08515760cdd1c65668e96f9e53be4b89995c0c3d31944281e965185b87633",
+      "content_root": "830848077a4951b66b6c5e5c37cde05ae0c1ac744ea52f6d6e54840bd5e0683b",
+      "raw_log_sha256": "eaacd06bb272015b1b3c2d1c33bc2c601f5df7f437fc57bf6277a8e6b708d1f7",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "artifacts_skipped": false,
+      "counts": null,
+      "footer_count": 0,
+      "required_tests": [
+        {
+          "name": "source_authority_live_and_upper_bound_equality_before_decode",
+          "passed": 0
+        },
+        {
+          "name": "source_authority_expiring_across_decode_or_before_pump_stops_wire",
+          "passed": 0
+        },
+        {
+          "name": "source_authority_renewal_rejects_bad_candidates_and_cannot_resurrect",
+          "passed": 0
+        },
+        {
+          "name": "source_command_candidate_is_checked_at_current_conservative_bound",
+          "passed": 0
+        },
+        {
+          "name": "group_command_requires_live_source_authority_without_mutation_on_expiry",
+          "passed": 0
+        },
+        {
+          "name": "source_authority_static_margin_and_upper_overflow_fail_closed",
+          "passed": 0
+        },
+        {
+          "name": "source_authority_expiry_cannot_flush_held_tail_after_eof",
+          "passed": 0
+        },
+        {
+          "name": "timely_renewal_completes_actual_udp_mp3_and_receiver_credit",
+          "passed": 0
+        }
+      ]
+    },
+    "workspace": {
+      "native_id": "30107136981729356",
+      "exit": 0,
+      "transfer_files": 1670,
+      "receipt_root": "285186c4932c7a3dbb36f2f01081dd09941d4c7202ce166b531b3865d2971249",
+      "command_sha256": "7990c424a3e076319542a3ce24f30c5815045217571a118080315097ef63991a",
+      "content_root": "ee0093d6952c70952b7c1648e4aa7e84e2cc8491043515982720fffe9e9b5992",
+      "raw_log_sha256": "69d8b6a2684b1ec450b082adbe91f2447f47b83399678c09b74e9d7eb869af86",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "artifacts_skipped": false,
+      "counts": [
+        3037,
+        0,
+        2,
+        0,
+        0
+      ],
+      "footer_count": 81,
+      "required_tests": [
+        {
+          "name": "source_authority_live_and_upper_bound_equality_before_decode",
+          "passed": 1
+        },
+        {
+          "name": "source_authority_expiring_across_decode_or_before_pump_stops_wire",
+          "passed": 1
+        },
+        {
+          "name": "source_authority_renewal_rejects_bad_candidates_and_cannot_resurrect",
+          "passed": 1
+        },
+        {
+          "name": "source_command_candidate_is_checked_at_current_conservative_bound",
+          "passed": 1
+        },
+        {
+          "name": "group_command_requires_live_source_authority_without_mutation_on_expiry",
+          "passed": 1
+        },
+        {
+          "name": "source_authority_static_margin_and_upper_overflow_fail_closed",
+          "passed": 1
+        },
+        {
+          "name": "source_authority_expiry_cannot_flush_held_tail_after_eof",
+          "passed": 1
+        },
+        {
+          "name": "timely_renewal_completes_actual_udp_mp3_and_receiver_credit",
+          "passed": 1
+        }
+      ]
+    },
+    "speaker_case_lineage": {
+      "baseline": 671,
+      "added": 8,
+      "current": 679,
+      "missing": 0,
+      "extra": 0
+    },
+    "udp": {
+      "frames": 24000,
+      "packets": 94,
+      "tail_frames": 192,
+      "peak_lsb": 1,
+      "rms_lsb": 0.7097975063354337,
+      "reports_sent": 94,
+      "reports_accepted": 94
+    },
+    "scope": "Host execution; actual codec/localhost authenticated UDP/reports, scripted group clock and trusted fixture token; independent pre-DSP scalar PCM reference."
+  },
+  "review": {
+    "source": "GrayDeer33746 combined exact-source GO;33744 strengthened child GO;33739 initial NO-GO preserved",
+    "control": "GrayDeer33754 same-execution expected failure;33757 exact count boundary",
+    "clippy": "GrayDeer33762 same-execution GO",
+    "workspace": "GrayDeer33771 same-execution GO",
+    "public_capsule": "GrayDeer33778 scoped GO on RUN e815784a, observed5a02f1e7 and receiptf3d0d25a; successor changes only this review field"
+  },
+  "limits": [
+    "Token authentication, quorum renewal and revocation delivery remain the canonical control owner responsibility.",
+    "No full source/control/output-grant bridge or enforcement on direct SourceMedia callers.",
+    "No target/QEMU/board memory/deadline/physical radio/audio/provider/native-tailnet qualification.",
+    "No new candidate SDK run; existing full workspace process tests are separate host checks.",
+    "Original N07 acceptance and dependencies remain open."
+  ],
+  "process_record": {
+    "consumer": "Owner and independent publication reviewer",
+    "gate": "Revision-bound publication evidence required by AGENTS.md",
+    "observed_defect": "Retained source authority was absent; initial added oracle gaps and an erroneous filtered-count forecast were detected.",
+    "retirement": "Retain as historical proof; stop active maintenance after this publication wave."
+  }
+}
