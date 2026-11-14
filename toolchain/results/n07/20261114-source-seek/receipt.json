@@ -1,0 +1,222 @@
+{
+  "schema": "ffw.n07.source-seek.evidence.v1",
+  "baseline": "aa759e64b5212902484aa55381798c9bfdff7ac1",
+  "source_commit": "fea2e12afcb0c1eed26d289aa36a4b33be523334",
+  "candidate": {
+    "freeze_sha256": "dc74e7059f5403b8ac6926c4b0adb9e5f37bf96a4bb62581bc85d87e479c2303",
+    "inventory_sha256": "45950f50db22decb4046296a6ab22834cae6da3f6d73c71a6a46601620979627",
+    "files": 1676,
+    "transferred_files": 1674,
+    "overlays": [
+      {
+        "path": "crates/franken-speaker/src/source_runtime.rs",
+        "sha256": "b68f3f2cd9913a8411230a017773896157127ba2c715142a221cbf71d5bcbc1f",
+        "bytes": 59514
+      },
+      {
+        "path": "crates/franken-speaker/src/source_media.rs",
+        "sha256": "acff05c764da0348b94e6154b8ea75dba51f9b3d5bf64256b148e406e1ee1af2",
+        "bytes": 130759
+      },
+      {
+        "path": "docs/contracts/n07.md",
+        "sha256": "155b2b29c99dd85c7e8b040ac7cf549853493f9bfef6b0a0e1660d5f2278e774",
+        "bytes": 60763
+      },
+      {
+        "path": "crates/franken-speaker/src/source_runtime/seek_tests.rs",
+        "sha256": "475308a9410e6a021e9f13f64f393098d95d988df242417749cb694d9844f68c",
+        "bytes": 28162
+      }
+    ]
+  },
+  "required_tests": [
+    "seek_after_eof_fences_held_tail_and_delivers_full_reference_suffix_over_udp",
+    "repeated_seeks_preserve_source_policy_and_reset_each_wire_epoch",
+    "seek_keeps_buffered_credit_and_independent_nonzero_transport_anchor",
+    "seek_retains_clock_latch_and_rejects_post_seek_regression",
+    "invalid_seek_preflight_preserves_old_epoch_and_live_media",
+    "authority_expiry_during_seek_is_terminal_without_new_wire",
+    "candidate_authority_expiring_during_seek_fences_even_with_live_retained_token",
+    "seek_post_decode_anchor_crossing_is_terminal_but_inside_sends",
+    "actual_reader_seek_failure_stays_terminal_and_never_flushes_old_wire",
+    "explicit_stop_prevents_later_seek_or_media",
+    "new_epoch_real_send_loss_remains_incomplete",
+    "seek_beyond_known_mp3_end_saturates_and_emits_no_media"
+  ],
+  "references": [
+    {
+      "path": "crates/franken-codec/tests/vectors/mp3_48000.mp3",
+      "sha256": "aa911fba4c8f1a17083e85127eee7e749b0b2f8e4284260d4fccb64b2aef868a",
+      "bytes": 8877,
+      "executable": false
+    },
+    {
+      "path": "crates/franken-codec/tests/vectors/mp3_48000.ref.s16",
+      "sha256": "4e20de020e5cbc629e58d92097a6f46934160f1f68f9eb4619b073947d35a90b",
+      "bytes": 96000,
+      "executable": false
+    }
+  ],
+  "format": {
+    "exit": 0,
+    "toolchain": "Rust 1.99.0 rustfmt component",
+    "edition": 2024,
+    "files": 3,
+    "skip_children": true,
+    "component_version": "rustfmt 1.10.0-stable (b940084d7e 2026-09-28)"
+  },
+  "clippy": {
+    "native_id": "30107136981729357",
+    "exit": 0,
+    "transfer_files": 1674,
+    "receipt_root": "14729f76ece2634bb2ff3163d6f080a16cb802796c5d5d4de1c51f70095c0e82",
+    "command_sha256": "eab08515760cdd1c65668e96f9e53be4b89995c0c3d31944281e965185b87633",
+    "content_root": "57410fd19fbe696c0c09c4e0c7fb333ab49a58122753629822736bf634451ed0",
+    "raw_log_sha256": "4481a7d98fd3f9aa5a46534e33e739c0aec6f89c3d499b3aaf53ad5c38297ae0",
+    "terminal_acknowledged": true,
+    "strict_remote": true,
+    "wrapper_alive": false,
+    "custody": {
+      "execution_started": true,
+      "staging_released": true,
+      "sources_released": true,
+      "pair_released": true,
+      "tree_retired": true,
+      "retired": true
+    },
+    "artifacts_skipped": false,
+    "counts": null,
+    "footer_count": 0
+  },
+  "workspace": {
+    "native_id": "30107136981729358",
+    "exit": 0,
+    "transfer_files": 1674,
+    "receipt_root": "3320a329df886517b6c20e89061fa916e80f2ca712cec3c2041c9c358fab410a",
+    "command_sha256": "7990c424a3e076319542a3ce24f30c5815045217571a118080315097ef63991a",
+    "content_root": "c12ba832d7b1bd868d2e2b999adb8b0df5614c822b08350c6989f9b9c29cc612",
+    "raw_log_sha256": "b18f585f89b4cdce7d47bf8e249467eace1af4f0a24c8a4f839dd4445a646211",
+    "terminal_acknowledged": true,
+    "strict_remote": true,
+    "wrapper_alive": false,
+    "custody": {
+      "execution_started": true,
+      "staging_released": true,
+      "sources_released": true,
+      "pair_released": true,
+      "tree_retired": true,
+      "retired": true
+    },
+    "artifacts_skipped": false,
+    "counts": [
+      3049,
+      0,
+      2,
+      0,
+      0
+    ],
+    "footer_count": 81,
+    "required_tests": [
+      {
+        "name": "seek_after_eof_fences_held_tail_and_delivers_full_reference_suffix_over_udp",
+        "passed": 1
+      },
+      {
+        "name": "repeated_seeks_preserve_source_policy_and_reset_each_wire_epoch",
+        "passed": 1
+      },
+      {
+        "name": "seek_keeps_buffered_credit_and_independent_nonzero_transport_anchor",
+        "passed": 1
+      },
+      {
+        "name": "seek_retains_clock_latch_and_rejects_post_seek_regression",
+        "passed": 1
+      },
+      {
+        "name": "invalid_seek_preflight_preserves_old_epoch_and_live_media",
+        "passed": 1
+      },
+      {
+        "name": "authority_expiry_during_seek_is_terminal_without_new_wire",
+        "passed": 1
+      },
+      {
+        "name": "candidate_authority_expiring_during_seek_fences_even_with_live_retained_token",
+        "passed": 1
+      },
+      {
+        "name": "seek_post_decode_anchor_crossing_is_terminal_but_inside_sends",
+        "passed": 1
+      },
+      {
+        "name": "actual_reader_seek_failure_stays_terminal_and_never_flushes_old_wire",
+        "passed": 1
+      },
+      {
+        "name": "explicit_stop_prevents_later_seek_or_media",
+        "passed": 1
+      },
+      {
+        "name": "new_epoch_real_send_loss_remains_incomplete",
+        "passed": 1
+      },
+      {
+        "name": "seek_beyond_known_mp3_end_saturates_and_emits_no_media",
+        "passed": 1
+      }
+    ]
+  },
+  "speaker_lineage": {
+    "baseline_native": "30107136981729356",
+    "baseline_cases": 679,
+    "added": 12,
+    "current_cases": 691,
+    "missing": [],
+    "extra": [],
+    "all_once": true,
+    "extraction": "actual running691 harness line through its first footer"
+  },
+  "udp": {
+    "native_id": "30107136981729358",
+    "marker": "FFW_SOURCE_SEEK_UDP frames=23000 packets=90 tail_frames=216 peak_lsb=1 rms_lsb=0.7100673574907616 reports_sent=90",
+    "frames": 23000,
+    "packets": 90,
+    "tail_frames": 216,
+    "peak_lsb": 1,
+    "rms_lsb": 0.7100673574907616,
+    "reports_sent": 90,
+    "reference_offset_bytes": 4000,
+    "scope": "Real decoder and authenticated localhost transport with actual receiver reports; scripted group clock and caller-admitted receiver epoch; no renderer or physical output proof"
+  },
+  "review": {
+    "source": "GrayDeer33830",
+    "clippy_execution": "GrayDeer33841",
+    "workspace_execution": "GrayDeer33846",
+    "publication": "GrayDeer33854"
+  },
+  "initial_findings": {
+    "test_module_scope": "Root and Gray found sibling fixture visibility failure; nested under existing tests before freeze",
+    "post_seek_cutoff": "Gray33815 identified blocking seek may cross first cutoff; fresh post-seek cutoff gate and inside/equality/after tests added before freeze",
+    "native_failures": 0,
+    "candidate_reruns": 0,
+    "source_or_assertions_changed_after_native_admission": false,
+    "publication_recipe": "Gray33848 rejected an unguarded consecutive-command recipe; split into separate blocks with explicit intervening terminal0/source receipt/ACK/custody and refreshed admission checks, no source or native rerun"
+  },
+  "qualification": {
+    "source_side_only": true,
+    "receiver_epoch_test_supplied": true,
+    "old_unreported_credit_not_delivery_proof": true,
+    "receiver_output_acknowledgment": false,
+    "g03_provider_seek_binding": false,
+    "source_control_output_grant_bridge": false,
+    "target_execution": false,
+    "sdk_rerun": false,
+    "qemu_rerun": false,
+    "physical_or_provider_qualification": false,
+    "full_n07_or_s03_acceptance": false,
+    "canonical_asupersync_changed": false
+  },
+  "observed_sha256": "a0f38834bc7b5085e6e504b4b01722264aeb1fd5b66f39f34e407cae08c917cd"
+}
