@@ -1,0 +1,326 @@
+{
+  "schema": "ffw.n07.source-uncertainty.host-evidence.v1",
+  "source": {
+    "baseline": "b4f922898fbfcf0c83382a3a1b3c003f21be7c72",
+    "code_revision": "ec943347dce1668a95b22bb8860189244bb67922",
+    "freeze_sha256": "1fdcdd1332129ba247467cf315482fe082e5d1bdf41dde9b5dd10d910020ffdf",
+    "inventory_sha256": "5332ace748c5de12297915cf825803b6643fe9ab11d9b3ec49a434909a28d895",
+    "tree_files": 1668,
+    "transfer_files": 1666,
+    "excluded": [
+      ".beads/.gitignore",
+      ".beads/config.yaml"
+    ],
+    "overlays": [
+      {
+        "path": "crates/franken-stream/src/carrier.rs",
+        "sha256": "62f6b1b04b0f9e09125f7e7df0bad94efd898d3d3a05cfeeab829c6ae06c9717",
+        "bytes": 244922
+      },
+      {
+        "path": "crates/franken-stream/src/carrier/tests.rs",
+        "sha256": "d254fd0293e515ee5ba7efe1911b95a825214e48d330ba6e85d65be8173f4068",
+        "bytes": 225717
+      },
+      {
+        "path": "crates/franken-stream/src/carrier/tests/uncertainty.rs",
+        "sha256": "145a487bb829fa90283bc889c48bba9f919a236d45490da2a21bc7b48b3cd6a7",
+        "bytes": 15825
+      },
+      {
+        "path": "crates/franken-speaker/src/source_media.rs",
+        "sha256": "af0413a06bb652721f255c2ef96575f2280936bdca661a61c2f2326282239e2f",
+        "bytes": 130748
+      },
+      {
+        "path": "crates/franken-speaker/src/source_runtime.rs",
+        "sha256": "04fde6c9c5af23cebb3d99b0710677400e256ec7e6507dbc714e8b1bcb69c7ad",
+        "bytes": 50142
+      },
+      {
+        "path": "crates/franken-speaker/src/source_runtime/uncertainty_tests.rs",
+        "sha256": "6c63b23d0968ac61b8a1bb26c93b0b848c9524eecdd6db64766dfcd0f38d982a",
+        "bytes": 16855
+      },
+      {
+        "path": "docs/contracts/n07.md",
+        "sha256": "6df468b11e32ec05afde8d512e49f76b06a9dc9db3729b30f9c3d1b54aa50511",
+        "bytes": 55328
+      }
+    ]
+  },
+  "reference": {
+    "encoded_sha256": "aa911fba4c8f1a17083e85127eee7e749b0b2f8e4284260d4fccb64b2aef868a",
+    "pcm_sha256": "4e20de020e5cbc629e58d92097a6f46934160f1f68f9eb4619b073947d35a90b",
+    "frames": 24000,
+    "packets": 94,
+    "tail_frames": 192,
+    "peak_limit_lsb": 4,
+    "rms_limit_lsb": 1.5
+  },
+  "controls": [
+    {
+      "kind": "original",
+      "qualified": false,
+      "expected_failure": true,
+      "freeze_sha256": "275fb7805a3dcd5c561cc031d34d6f8e937d5fca1e11abdc6ad902e703d57760",
+      "inventory_sha256": "1c5b552d91be83ac7a6b8ba42c0d980557aa88ce63f0fd5ed95200ce3446572a",
+      "overlays": [
+        {
+          "path": "crates/franken-speaker/src/source_runtime.rs",
+          "sha256": "3efaf23c94993e4b72ae500f7bc032163c1d990043ada08d39991b61bcb54e67",
+          "bytes": 49914
+        },
+        {
+          "path": "crates/franken-speaker/src/source_runtime/uncertainty_tests.rs",
+          "sha256": "4313eb2f083454b471d4a4bc0dde23dd14a9cba1e6335e18136b844a7be66f17",
+          "bytes": 12541
+        }
+      ],
+      "native_id": "30107136981729350",
+      "exit": 101,
+      "transfer_files": 1665,
+      "receipt_root": "41d1f1b1150ba775d0fa2173498e7d44feaad99db9ca4a83372fa124e81c7a07",
+      "command_sha256": "28609162198a8b5befdf48b5f2b42adb62da7154ace01402f01eeafad923ed78",
+      "content_root": "c21f671543d84c45a5a0a12c3d18e505043ba7b1c5f01885b53581f13140f3ad",
+      "raw_log_sha256": "ca8e7461645c236d54fede0e1009722e84a5cab8cbf26aa924c839682493fd84",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": null,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "artifacts_skipped": true,
+      "counts": [
+        2,
+        5,
+        0,
+        0,
+        663
+      ],
+      "footer_count": 1,
+      "required": [
+        "widening_within_lookahead_publishes_reference_pcm",
+        "widening_after_decode_waits_and_reuses_the_prepared_pcm",
+        "widened_horizon_holds_signed_retry_then_sends_identical_wire",
+        "widening_only_at_pump_does_not_send_newly_queued_frame_early",
+        "unsafe_post_decode_observations_stop_without_wire_or_resurrection",
+        "unsafe_pre_pump_observation_fences_admitted_media",
+        "stop_and_takeover_do_not_flush_held_media_after_widening"
+      ],
+      "expected_matrix": "2 passed,5 failed; five valid widened observations wrongly returned Clock"
+    },
+    {
+      "kind": "guard-only",
+      "qualified": false,
+      "expected_failure": true,
+      "freeze_sha256": "97c1e8dd01e5cd99e5a0f9c7df60987e649e0d4768a756ee2347cf1297a8217c",
+      "inventory_sha256": "1418f05e439cf6ca844ff499f6f0e31317c06fbd832b1b4d6fe62ec9f9642756",
+      "overlays": [
+        {
+          "path": "crates/franken-speaker/src/source_runtime.rs",
+          "sha256": "80e4455ea17fc52982c977a8246a865b1f984ea2868a84f097c724c66fa83d16",
+          "bytes": 49547
+        },
+        {
+          "path": "crates/franken-speaker/src/source_runtime/uncertainty_tests.rs",
+          "sha256": "4313eb2f083454b471d4a4bc0dde23dd14a9cba1e6335e18136b844a7be66f17",
+          "bytes": 12541
+        }
+      ],
+      "native_id": "30107136981729351",
+      "exit": 101,
+      "transfer_files": 1665,
+      "receipt_root": "aa680b6529f724b24eb5ed145cc6f159732129446ef5493f81a37c55b8d62862",
+      "command_sha256": "28609162198a8b5befdf48b5f2b42adb62da7154ace01402f01eeafad923ed78",
+      "content_root": "bae25acb781ae48478169e0bd25ba50e67788ad5bce5c20e9c090912696de9a9",
+      "raw_log_sha256": "6a52fec63cf8e1e6446bbe5ee62c123411206f55210cc65d36bd77bb97ded1b0",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": null,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "artifacts_skipped": true,
+      "counts": [
+        4,
+        3,
+        0,
+        0,
+        663
+      ],
+      "footer_count": 1,
+      "required": [
+        "widening_within_lookahead_publishes_reference_pcm",
+        "widening_after_decode_waits_and_reuses_the_prepared_pcm",
+        "widened_horizon_holds_signed_retry_then_sends_identical_wire",
+        "widening_only_at_pump_does_not_send_newly_queued_frame_early",
+        "unsafe_post_decode_observations_stop_without_wire_or_resurrection",
+        "unsafe_pre_pump_observation_fences_admitted_media",
+        "stop_and_takeover_do_not_flush_held_media_after_widening"
+      ],
+      "expected_matrix": "4 passed,3 failed; post-decode Clock and two premature send observations"
+    }
+  ],
+  "validation": {
+    "format": {
+      "toolchain": "1.99.0",
+      "exit": 0,
+      "scope": "six explicitly changed Rust files, edition2024, skip_children=true"
+    },
+    "clippy": {
+      "native_id": "30107136981729352",
+      "exit": 0,
+      "transfer_files": 1666,
+      "receipt_root": "3eabc5f1862917ef3caeb6d430576f83454d048c1677e559398ac3a87c609cc6",
+      "command_sha256": "eab08515760cdd1c65668e96f9e53be4b89995c0c3d31944281e965185b87633",
+      "content_root": "843a4b6ddcdce06a6856ebbeaf157db4e456300227d9c327be68da4c8d93ac1d",
+      "raw_log_sha256": "0e81c3eda577a0415b253e5787204179013014051f95ce7d0ed6082d372d0dc5",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "artifacts_skipped": false,
+      "counts": null,
+      "footer_count": 0
+    },
+    "workspace": {
+      "native_id": "30107136981729353",
+      "exit": 0,
+      "transfer_files": 1666,
+      "receipt_root": "de7348e0cb89efb8f1500e406929d190ad1e08eb11079598edd0ff614b97d882",
+      "command_sha256": "7990c424a3e076319542a3ce24f30c5815045217571a118080315097ef63991a",
+      "content_root": "08f859a60d7b6ca790f1623c14d8c7d2e2164a46f2d21f73b79f756c5eec429f",
+      "raw_log_sha256": "80c0aa9e69caebe185f77b67a98540d86636d5becdcb850a7ac0045355a71e77",
+      "terminal_acknowledged": true,
+      "strict_remote": true,
+      "wrapper_alive": false,
+      "custody": {
+        "execution_started": true,
+        "staging_released": true,
+        "sources_released": true,
+        "pair_released": true,
+        "tree_retired": true,
+        "retired": true
+      },
+      "artifacts_skipped": false,
+      "counts": {
+        "passed": 3029,
+        "failed": 0,
+        "ignored": 2,
+        "measured": 0,
+        "filtered": 0
+      },
+      "footer_count": 81,
+      "required_tests": [
+        {
+          "name": "n01_lookahead_queued_head_waits_until_conservative_equality",
+          "passed": 1
+        },
+        {
+          "name": "n01_lookahead_allows_older_peer_while_future_peer_waits",
+          "passed": 1
+        },
+        {
+          "name": "n01_lookahead_preserves_signed_would_block_retry",
+          "passed": 1
+        },
+        {
+          "name": "n01_lookahead_probe_obeys_horizon_credit_and_cancel_but_keeps_late_exception",
+          "passed": 1
+        },
+        {
+          "name": "n01_lookahead_keeps_last_sequence_held_even_after_its_deadline",
+          "passed": 1
+        },
+        {
+          "name": "n01_lookahead_overflow_refuses_without_mutation_and_unbounded_api_remains_compatible",
+          "passed": 1
+        },
+        {
+          "name": "n01_lookahead_preserves_source_epoch_checks_and_saturates_clock_lower_bound",
+          "passed": 1
+        },
+        {
+          "name": "widening_within_lookahead_publishes_reference_pcm",
+          "passed": 1
+        },
+        {
+          "name": "widening_after_decode_waits_and_reuses_the_prepared_pcm",
+          "passed": 1
+        },
+        {
+          "name": "widened_horizon_holds_signed_retry_then_sends_identical_wire",
+          "passed": 1
+        },
+        {
+          "name": "widening_only_at_pump_does_not_send_newly_queued_frame_early",
+          "passed": 1
+        },
+        {
+          "name": "unsafe_post_decode_observations_stop_without_wire_or_resurrection",
+          "passed": 1
+        },
+        {
+          "name": "unsafe_pre_pump_observation_fences_admitted_media",
+          "passed": 1
+        },
+        {
+          "name": "stop_and_takeover_do_not_flush_held_media_after_widening",
+          "passed": 1
+        },
+        {
+          "name": "widening_actual_loopback_udp_finishes_reference_mp3_and_credit",
+          "passed": 1
+        }
+      ]
+    }
+  },
+  "review": {
+    "source": "GrayDeer33607 exact combined source;33621 five test call-argument cleanup equivalence",
+    "negative_controls": "GrayDeer33620 independent same-execution records; not product passes",
+    "clippy": "GrayDeer33630 independent same-execution source/custody check",
+    "workspace": "GrayDeer33647 independent same-execution source/runtime/custody check",
+    "public_capsule": "GrayDeer33656 scoped GO on original three hashes; successor changes only this review field"
+  },
+  "scope": {
+    "class": "offline host source/carrier composition",
+    "actual": [
+      "finite MP3 decoder, unchanged independent PCM scalar reference",
+      "selected authenticated frame sender, queue/held/probe and source policy code",
+      "complete localhost UDP receiver and real authenticated credit reports"
+    ],
+    "modeled": [
+      "unit-test clocks and bounded test ports",
+      "1000ns valid widening, configured500us work/1ms margin/250ms horizon"
+    ],
+    "not_qualified": [
+      "live distributed clock authority or physical synchronization",
+      "post-DSP or physical acoustic waveform",
+      "provider/native tailnet services or source/control authority bridge",
+      "finite source/control lease expiry",
+      "BE target execution or legacy-board CPU/RAM/deadline fit"
+    ],
+    "sdk_on_this_candidate": "not run; no current SDK qualification claim",
+    "original_bead": "ffw-ybr",
+    "original_acceptance": "open; original dependencies and external gates retained"
+  },
+  "retirement": "Historical immutable source/run evidence for supervisor publication under AGENTS.md; active maintenance ends with this bounded wave, no live readiness service"
+}

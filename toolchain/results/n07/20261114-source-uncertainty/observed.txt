@@ -1,0 +1,141 @@
+# Exact sanitized native excerpts; full private log hashes are bound in receipt.json.
+# Original350 and guard-only351 are actual expected failures, not qualification passes.
+
+# original350
+test source_runtime::tests::uncertainty::stop_and_takeover_do_not_flush_held_media_after_widening ... FAILED
+test source_runtime::tests::uncertainty::unsafe_post_decode_observations_stop_without_wire_or_resurrection ... ok
+test source_runtime::tests::uncertainty::unsafe_pre_pump_observation_fences_admitted_media ... ok
+test source_runtime::tests::uncertainty::widened_horizon_holds_signed_retry_then_sends_identical_wire ... FAILED
+test source_runtime::tests::uncertainty::widening_after_decode_waits_and_reuses_the_prepared_pcm ... FAILED
+test source_runtime::tests::uncertainty::widening_only_at_pump_does_not_send_newly_queued_frame_early ... FAILED
+test source_runtime::tests::uncertainty::widening_within_lookahead_publishes_reference_pcm ... FAILED
+---- source_runtime::tests::uncertainty::stop_and_takeover_do_not_flush_held_media_after_widening stdout ----
+called `Result::unwrap()` on an `Err` value: Clock
+---- source_runtime::tests::uncertainty::widened_horizon_holds_signed_retry_then_sends_identical_wire stdout ----
+called `Result::unwrap()` on an `Err` value: Clock
+---- source_runtime::tests::uncertainty::widening_after_decode_waits_and_reuses_the_prepared_pcm stdout ----
+called `Result::unwrap()` on an `Err` value: Clock
+---- source_runtime::tests::uncertainty::widening_only_at_pump_does_not_send_newly_queued_frame_early stdout ----
+called `Result::unwrap()` on an `Err` value: Clock
+---- source_runtime::tests::uncertainty::widening_within_lookahead_publishes_reference_pcm stdout ----
+called `Result::unwrap()` on an `Err` value: Clock
+test result: FAILED. 2 passed; 5 failed; 0 ignored; 0 measured; 663 filtered out; finished in 0.02s
+
+# guard-only351
+test source_runtime::tests::uncertainty::stop_and_takeover_do_not_flush_held_media_after_widening ... ok
+test source_runtime::tests::uncertainty::unsafe_post_decode_observations_stop_without_wire_or_resurrection ... ok
+test source_runtime::tests::uncertainty::unsafe_pre_pump_observation_fences_admitted_media ... ok
+test source_runtime::tests::uncertainty::widened_horizon_holds_signed_retry_then_sends_identical_wire ... FAILED
+test source_runtime::tests::uncertainty::widening_after_decode_waits_and_reuses_the_prepared_pcm ... FAILED
+test source_runtime::tests::uncertainty::widening_only_at_pump_does_not_send_newly_queued_frame_early ... FAILED
+test source_runtime::tests::uncertainty::widening_within_lookahead_publishes_reference_pcm ... ok
+---- source_runtime::tests::uncertainty::widened_horizon_holds_signed_retry_then_sends_identical_wire stdout ----
+  left: 1
+ right: 0
+---- source_runtime::tests::uncertainty::widening_after_decode_waits_and_reuses_the_prepared_pcm stdout ----
+called `Result::unwrap()` on an `Err` value: Clock
+---- source_runtime::tests::uncertainty::widening_only_at_pump_does_not_send_newly_queued_frame_early stdout ----
+  left: 1
+ right: 0
+test result: FAILED. 4 passed; 3 failed; 0 ignored; 0 measured; 663 filtered out; finished in 0.05s
+
+# Corrected353:15 required cases, real UDP marker, existing ignored lines and81 exact result footers.
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.44s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.40s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 95 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 102 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.67s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.09s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+test result: ok. 690 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.36s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test convert::soft_float_tests::f32_to_s16_and_the_clamp_match_the_original_over_all_four_billion_bit_patterns ... ignored, exhaustive 2^32 sweep: run in release mode with --ignored
+test result: ok. 179 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.50s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 163 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.13s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.11s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.77s
+test result: ok. 248 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 119 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.55s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test source_runtime::tests::uncertainty::stop_and_takeover_do_not_flush_held_media_after_widening ... ok
+test source_runtime::tests::uncertainty::unsafe_post_decode_observations_stop_without_wire_or_resurrection ... ok
+test source_runtime::tests::uncertainty::unsafe_pre_pump_observation_fences_admitted_media ... ok
+test source_runtime::tests::uncertainty::widened_horizon_holds_signed_retry_then_sends_identical_wire ... ok
+test source_runtime::tests::uncertainty::widening_actual_loopback_udp_finishes_reference_mp3_and_credit ... ok
+test source_runtime::tests::uncertainty::widening_after_decode_waits_and_reuses_the_prepared_pcm ... ok
+test source_runtime::tests::uncertainty::widening_only_at_pump_does_not_send_newly_queued_frame_early ... ok
+test source_runtime::tests::uncertainty::widening_within_lookahead_publishes_reference_pcm ... ok
+FFW_SOURCE_UNCERTAINTY_UDP frames=24000 packets=94 tail_frames=192 peak_lsb=1 rms_lsb=0.7097975063354337 reports_sent=94 reports_accepted=94
+test result: ok. 671 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 79.85s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.95s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.96s
+test carrier::tests::uncertainty::n01_lookahead_allows_older_peer_while_future_peer_waits ... ok
+test carrier::tests::uncertainty::n01_lookahead_keeps_last_sequence_held_even_after_its_deadline ... ok
+test carrier::tests::uncertainty::n01_lookahead_overflow_refuses_without_mutation_and_unbounded_api_remains_compatible ... ok
+test carrier::tests::uncertainty::n01_lookahead_preserves_signed_would_block_retry ... ok
+test carrier::tests::uncertainty::n01_lookahead_preserves_source_epoch_checks_and_saturates_clock_lower_bound ... ok
+test carrier::tests::uncertainty::n01_lookahead_probe_obeys_horizon_credit_and_cancel_but_keeps_late_exception ... ok
+test carrier::tests::uncertainty::n01_lookahead_queued_head_waits_until_conservative_equality ... ok
+test result: ok. 268 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.40s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.42s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.12s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
