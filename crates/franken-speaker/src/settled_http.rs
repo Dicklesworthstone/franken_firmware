@@ -107,44 +107,80 @@ pub enum HttpService {
     ReplyLost,
 }
 
+// A single fallibly reserved byte arena replaces two allocations per header.
+// Spans refer only to text copied from str; the body remains arbitrary bytes.
 struct OwnedRequest {
-    method: String,
-    path: String,
+    bytes: Vec<u8>,
+    method_end: usize,
+    path_end: usize,
+    body_start: usize,
+    headers: [[usize; 4]; MAX_HEADERS],
+    header_count: usize,
     peer_ip: IpAddr,
     ingress: Ingress,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
 }
 
 impl OwnedRequest {
-    fn copy(request: &HttpRequest<'_>) -> Self {
-        Self {
-            method: request.method.into(),
-            path: request.path.into(),
-            peer_ip: request.peer_ip,
-            ingress: request.ingress,
-            headers: request
+    fn copy(request: &HttpRequest<'_>) -> Result<Self, HttpMailboxError> {
+        // Validate here as well: no private caller may bypass the arena bound.
+        let limits = HttpMailboxConfig::new(MAX_REQUEST_BYTES, MAX_HEADERS, MAX_RESPONSE_TIMEOUT)?;
+        limits.validate(request)?;
+        let total = request.method.len()
+            + request.path.len()
+            + request.body.len()
+            + request
                 .headers
                 .iter()
-                .map(|(name, value)| ((*name).into(), (*value).into()))
-                .collect(),
-            body: request.body.into(),
+                .map(|(name, value)| name.len() + value.len())
+                .sum::<usize>();
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(total)
+            .map_err(|_| HttpMailboxError::Unavailable)?;
+        bytes.extend_from_slice(request.method.as_bytes());
+        let method_end = bytes.len();
+        bytes.extend_from_slice(request.path.as_bytes());
+        let path_end = bytes.len();
+        let mut headers = [[0; 4]; MAX_HEADERS];
+        for (span, (name, value)) in headers.iter_mut().zip(request.headers) {
+            let start = bytes.len();
+            bytes.extend_from_slice(name.as_bytes());
+            let middle = bytes.len();
+            bytes.extend_from_slice(value.as_bytes());
+            *span = [start, middle, middle, bytes.len()];
         }
+        let body_start = bytes.len();
+        bytes.extend_from_slice(request.body);
+        Ok(Self {
+            bytes,
+            method_end,
+            path_end,
+            body_start,
+            headers,
+            header_count: request.headers.len(),
+            peer_ip: request.peer_ip,
+            ingress: request.ingress,
+        })
+    }
+
+    fn text(&self, start: usize, end: usize) -> &str {
+        // Only copy() constructs spans, from complete valid UTF-8 strings.
+        std::str::from_utf8(&self.bytes[start..end]).expect("copied HTTP text")
     }
 
     fn with_view<T>(&self, handler: impl FnOnce(HttpRequest<'_>) -> T) -> T {
-        let headers: Vec<_> = self
-            .headers
-            .iter()
-            .map(|(name, value)| (name.as_str(), value.as_str()))
-            .collect();
+        // Constructing the borrowed view does not allocate on the owner turn.
+        let mut headers = [("", ""); MAX_HEADERS];
+        for (view, span) in headers.iter_mut().zip(&self.headers[..self.header_count]) {
+            *view = (self.text(span[0], span[1]), self.text(span[2], span[3]));
+        }
         handler(HttpRequest {
-            method: &self.method,
-            path: &self.path,
+            method: self.text(0, self.method_end),
+            path: self.text(self.method_end, self.path_end),
             peer_ip: self.peer_ip,
             ingress: self.ingress,
-            headers: &headers,
-            body: &self.body,
+            headers: &headers[..self.header_count],
+            body: &self.bytes[self.body_start..],
         })
     }
 }
@@ -443,7 +479,7 @@ impl HttpMailboxClient {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| HttpMailboxError::Busy)?;
         let permit = Permit(Arc::clone(&self.shared.busy));
-        let owned = OwnedRequest::copy(request);
+        let owned = OwnedRequest::copy(request)?;
         let (reply, received) = mpsc::sync_channel(1);
         let cancelled = Arc::new(AtomicBool::new(false));
         let mut slot = self.shared.slot.try_lock().map_err(|error| match error {
@@ -729,6 +765,57 @@ mod tests {
             }),
             session: UnifiedGroupSession::new("group", "issuer", 1),
         }
+    }
+
+    #[test]
+    fn arena_preserves_empty_unicode_headers_and_binary_body_at_header_limit() {
+        let headers = [("é", "雪"); MAX_HEADERS];
+        let mut req = request();
+        req.method = "";
+        req.path = "/état";
+        req.headers = &headers;
+        req.body = &[0, 255, 0, 128];
+        let owned = OwnedRequest::copy(&req).unwrap();
+        assert_eq!(owned.bytes.len(), req.path.len() + MAX_HEADERS * 5 + 4);
+        owned.with_view(|view| {
+            assert_eq!(view.method, req.method);
+            assert_eq!(view.path, req.path);
+            assert_eq!(view.headers, req.headers);
+            assert_eq!(view.body, req.body);
+        });
+        req.headers = &[];
+        req.body = &[];
+        let empty = OwnedRequest::copy(&req).unwrap();
+        empty.with_view(|view| {
+            assert!(view.headers.is_empty());
+            assert!(view.body.is_empty());
+        });
+    }
+
+    #[test]
+    fn arena_rejects_over_limit_before_copy_and_accepts_exact_byte_limit() {
+        let body = vec![0xFF; MAX_REQUEST_BYTES];
+        let mut req = request();
+        req.method = "";
+        req.path = "";
+        req.headers = &[];
+        req.body = &body;
+        let owned = OwnedRequest::copy(&req).unwrap();
+        assert_eq!(owned.bytes.len(), MAX_REQUEST_BYTES);
+        owned.with_view(|view| assert_eq!(view.body, body));
+        req.method = "x";
+        assert!(matches!(
+            OwnedRequest::copy(&req),
+            Err(HttpMailboxError::TooLarge)
+        ));
+        let headers = [("", ""); MAX_HEADERS + 1];
+        req.method = "";
+        req.body = &[];
+        req.headers = &headers;
+        assert!(matches!(
+            OwnedRequest::copy(&req),
+            Err(HttpMailboxError::TooManyHeaders)
+        ));
     }
 
     #[test]

@@ -8,6 +8,7 @@ license-file.workspace = true
 workspace = true
 
 [dependencies]
+asupersync = { git = "https://github.com/Dicklesworthstone/asupersync", rev = "36141e21fd2b47cf931e4c131949dfb1b764875e", default-features = false, features = ["slim-runtime-profile"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

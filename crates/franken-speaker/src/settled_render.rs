@@ -28,6 +28,7 @@ use crate::network_render::{
     FinalFeedbackConfig, FinalFeedbackOutcome, NetworkRender, NetworkRenderError, OwnerStep,
 };
 use crate::render::{RenderState, StopReport, TickReport, TimingModel};
+use crate::runtime::{ControlRuntime, ControlRuntimeError, ControlRuntimeStats};
 use crate::settled_http::{
     HttpMailboxError, HttpMailboxOwner, HttpOwnerIdentity, HttpService, OwnedHttpReply,
 };
@@ -43,6 +44,7 @@ pub struct PendingMember {
 
 #[derive(Debug)]
 pub enum AdmissionError {
+    Runtime(ControlRuntimeError),
     Binding,
     Control(AgreementError),
     Membership(MembershipError),
@@ -67,6 +69,7 @@ pub struct ButtonEventResult {
 
 #[derive(Debug)]
 pub enum OwnerError {
+    Runtime(ControlRuntimeError),
     Binding,
     RevisionConflict,
     JoinState,
@@ -165,6 +168,7 @@ pub struct SettledRender<
     O: KernelOps,
     B: DeviceBackend,
 > {
+    control_runtime: ControlRuntime,
     control: FleetControlOwner<K, S>,
     soap: Endpoint,
     membership: GroupMembership,
@@ -204,6 +208,9 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
         pending: PendingMember,
         clock_leader: u64,
     ) -> Result<Self, AdmissionError> {
+        // Build before acquiring/arming any render policy. Failure cannot leave
+        // a partially initialized owner with an unserviced control executor.
+        let control_runtime = ControlRuntime::new().map_err(AdmissionError::Runtime)?;
         let (mut control, membership, session, authority) = fresh.into_parts();
         let PendingMember {
             member_id: member,
@@ -271,6 +278,7 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
         // A provisioned pending source is not yet rendered or stopped.
         soap.set_transport(TransportState::Transitioning);
         Ok(Self {
+            control_runtime,
             control,
             soap,
             membership,
@@ -614,6 +622,13 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
     }
 
     pub fn step_control(&mut self) -> Result<ControlStep, OwnerError> {
+        let runtime = self.control_runtime.clone();
+        runtime
+            .turn(|| self.step_control_owned())
+            .map_err(OwnerError::Runtime)?
+    }
+
+    fn step_control_owned(&mut self) -> Result<ControlStep, OwnerError> {
         let now_ns = self.bounds(false)?.latest_ns;
         let control = self.control.step(now_ns, &mut self.session);
         // On store failure this sees only the live session, including actual
@@ -629,6 +644,16 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
     }
 
     pub fn handle_soap(
+        &mut self,
+        request: &HttpRequest<'_>,
+    ) -> Result<ControlResult<Handled>, OwnerError> {
+        let runtime = self.control_runtime.clone();
+        runtime
+            .turn(|| self.handle_soap_owned(request))
+            .map_err(OwnerError::Runtime)?
+    }
+
+    fn handle_soap_owned(
         &mut self,
         request: &HttpRequest<'_>,
     ) -> Result<ControlResult<Handled>, OwnerError> {
@@ -660,11 +685,30 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
         &mut self,
         mailbox: &mut HttpMailboxOwner,
     ) -> Result<HttpService, HttpMailboxError> {
+        let runtime = self.control_runtime.clone();
+        runtime
+            .turn(|| self.service_http_owned(mailbox))
+            .map_err(|error| match error {
+                ControlRuntimeError::Busy => HttpMailboxError::Busy,
+                _ => HttpMailboxError::Unavailable,
+            })?
+    }
+
+    fn service_http_owned(
+        &mut self,
+        mailbox: &mut HttpMailboxOwner,
+    ) -> Result<HttpService, HttpMailboxError> {
         let permit = mailbox.associate_owner(&mut self.http_identity)?;
         mailbox.service_owned(&permit, |request| OwnedHttpReply {
-            result: self.handle_soap(&request),
+            result: self.handle_soap_owned(&request),
             session: self.session.clone(),
         })
+    }
+
+    /// Control executor observations only; render/HAL deadline evidence remains
+    /// the responsibility of the existing output owner and its timing model.
+    pub fn control_runtime_stats(&self) -> ControlRuntimeStats {
+        self.control_runtime.stats()
     }
 
     /// Reopen this owner's mailbox after its exclusive eventing worker exits.

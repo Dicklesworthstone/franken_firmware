@@ -628,7 +628,12 @@ fn committed_empty_group_stop_cancels_pending_join_and_duplicate_does_not_repeat
             ..
         })
     ));
+    let turns_before = rig.owner.control_runtime_stats().completed_turns;
     let result = rig.owner.step_control().unwrap();
+    let runtime = rig.owner.control_runtime_stats();
+    assert_eq!(runtime.completed_turns, turns_before + 1);
+    assert_eq!(runtime.active_turns, 0);
+    assert_eq!(runtime.blocking_job_bytes, 0);
     let settled = result.control.unwrap();
     assert_eq!(settled.len(), 1);
     assert!(matches!(
@@ -948,7 +953,13 @@ fn subscribe_events_at_revision(
         headers: &headers,
         body: b"",
     };
+    let turns_before = rig.owner.control_runtime_stats().completed_turns;
     let result = rig.owner.handle_soap(&request).unwrap();
+    assert_eq!(
+        rig.owner.control_runtime_stats().completed_turns,
+        turns_before + 1
+    );
+    assert_eq!(rig.owner.control_runtime_stats().active_turns, 0);
     assert_eq!(result.control.response.status, 200);
     assert!(
         result.notifications.is_empty(),

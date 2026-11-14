@@ -30,6 +30,7 @@ pub mod output_fence;
 pub mod platform_start;
 pub mod render;
 pub mod render_log;
+pub mod runtime;
 pub mod services;
 pub mod settled_http;
 pub mod settled_render;
