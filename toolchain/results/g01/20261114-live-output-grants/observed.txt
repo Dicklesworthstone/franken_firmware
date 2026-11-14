@@ -1,0 +1,138 @@
+Selected native output; the remote private candidate prefix is elided in the failure location.
+
+Native 30107136981729359 — v2 Clippy passed
+    Finished `dev` profile [unoptimized] target(s) in 1m 47s
+
+Native 30107136981729360 — v2 focused FAILED; workspace NOT RUN
+test network_render::tests::controller_events::role_integration::output_grants::expired_fresh_owner_authority_cannot_issue_or_render ... ok
+test network_render::tests::controller_events::role_integration::output_grants::fresh_owner_requires_whole_block_grant_then_renders_protected_pcm ... ok
+test network_render::tests::controller_events::role_integration::output_grants::real_owner_rechecks_lease_across_prepare_with_live_pcm_control ... ok
+test network_render::tests::output_grants::busy_block_may_finish_but_its_grant_cannot_start_next_block ... ok
+test network_render::tests::output_grants::denied_next_block_does_not_prepare_and_full_permission_renders_pcm ... ok
+test network_render::tests::output_grants::exclusive_output_bound_keeps_fraction_and_clock_uncertainty ... ok
+test network_render::tests::output_grants::granting_after_original_deadline_cannot_rebase_the_next_block ... ok
+test network_render::tests::output_grants::revoking_inflight_permission_preserves_retained_hal_until_flush_ack ... FAILED
+test network_render::tests::output_grants::running_without_next_grant_services_retained_completions_and_faults ... ok
+FFW_OUTPUT_GRANT_ROLE: role=Stereo checked_source_frames=512 protected_blocks=8 nonzero=true drain_ack=true
+FFW_OUTPUT_GRANT_ROLE: role=LeftMono checked_source_frames=512 protected_blocks=8 nonzero=true drain_ack=true
+failures:
+thread 'network_render::tests::output_grants::revoking_inflight_permission_preserves_retained_hal_until_flush_ack' (1937279) panicked at crates/franken-speaker/src/network_render/tests/output_grants.rs:200:5:
+assertion failed: reached
+failures:
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 691 filtered out; finished in 0.10s
+    Finished `test` profile [unoptimized] target(s) in 1m 07s
+
+Native 30107136981729361 — v3 Clippy passed
+    Finished `dev` profile [unoptimized] target(s) in 1m 30s
+
+Native 30107136981729362 — v3 focused passed
+    Finished `test` profile [unoptimized] target(s) in 1m 10s
+test network_render::tests::controller_events::role_integration::output_grants::expired_fresh_owner_authority_cannot_issue_or_render ... ok
+test network_render::tests::controller_events::role_integration::output_grants::fresh_owner_requires_whole_block_grant_then_renders_protected_pcm ... ok
+test network_render::tests::controller_events::role_integration::output_grants::real_owner_rechecks_lease_across_prepare_with_live_pcm_control ... ok
+test network_render::tests::output_grants::busy_block_may_finish_but_its_grant_cannot_start_next_block ... ok
+test network_render::tests::output_grants::denied_next_block_does_not_prepare_and_full_permission_renders_pcm ... ok
+test network_render::tests::output_grants::exclusive_output_bound_keeps_fraction_and_clock_uncertainty ... ok
+test network_render::tests::output_grants::granting_after_original_deadline_cannot_rebase_the_next_block ... ok
+test network_render::tests::output_grants::revoking_inflight_permission_preserves_retained_hal_until_flush_ack ... ok
+test network_render::tests::output_grants::running_without_next_grant_services_retained_completions_and_faults ... ok
+FFW_OUTPUT_GRANT_ROLE: role=Stereo checked_source_frames=512 protected_blocks=8 nonzero=true drain_ack=true
+FFW_OUTPUT_GRANT_ROLE: role=LeftMono checked_source_frames=512 protected_blocks=8 nonzero=true drain_ack=true
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 691 filtered out; finished in 0.10s
+
+Native 30107136981729363 — v3 workspace passed
+    Finished `test` profile [unoptimized] target(s) in 1m 21s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.65s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.29s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 95 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.97s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+test result: ok. 102 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.79s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.85s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+test result: ok. 690 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.88s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test convert::soft_float_tests::f32_to_s16_and_the_clamp_match_the_original_over_all_four_billion_bit_patterns ... ignored, exhaustive 2^32 sweep: run in release mode with --ignored
+test result: ok. 179 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 163 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.14s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.87s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.67s
+test result: ok. 248 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 119 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.38s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+test network_render::tests::controller_events::role_integration::output_grants::expired_fresh_owner_authority_cannot_issue_or_render ... ok
+test network_render::tests::controller_events::role_integration::output_grants::fresh_owner_requires_whole_block_grant_then_renders_protected_pcm ... ok
+test network_render::tests::controller_events::role_integration::output_grants::real_owner_rechecks_lease_across_prepare_with_live_pcm_control ... ok
+test network_render::tests::output_grants::busy_block_may_finish_but_its_grant_cannot_start_next_block ... ok
+test network_render::tests::output_grants::denied_next_block_does_not_prepare_and_full_permission_renders_pcm ... ok
+test network_render::tests::output_grants::exclusive_output_bound_keeps_fraction_and_clock_uncertainty ... ok
+test network_render::tests::output_grants::granting_after_original_deadline_cannot_rebase_the_next_block ... ok
+test network_render::tests::output_grants::revoking_inflight_permission_preserves_retained_hal_until_flush_ack ... ok
+test network_render::tests::output_grants::running_without_next_grant_services_retained_completions_and_faults ... ok
+FFW_OUTPUT_GRANT_ROLE: role=Stereo checked_source_frames=512 protected_blocks=8 nonzero=true drain_ack=true
+FFW_OUTPUT_GRANT_ROLE: role=LeftMono checked_source_frames=512 protected_blocks=8 nonzero=true drain_ack=true
+test result: ok. 700 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 79.22s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.94s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.91s
+test result: ok. 268 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.19s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.46s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.18s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
