@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 #[path = "commit_cursor.rs"]
 mod commit_cursor;
-pub use commit_cursor::CommitCursor;
+pub use commit_cursor::{CommitCursor, OwnedCommit};
 
 /// Where a commit got to. After a failure it names the last step that completed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -457,6 +457,13 @@ impl<S: Storage> Journal<S> {
         ops: &'a [Op],
     ) -> Result<CommitCursor<'a, S>, JournalError> {
         CommitCursor::new(self, ops)
+    }
+
+    /// Move the journal and operations into resumable progress, without I/O.
+    /// Even an already-poisoned journal remains recoverable through
+    /// [`OwnedCommit::into_journal`]; its first poll reports `Poisoned`.
+    pub fn into_commit(self, ops: Vec<Op>) -> OwnedCommit<S> {
+        OwnedCommit::owned(self, ops)
     }
 
     // ---- the named operations: each is one transaction

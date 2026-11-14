@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::storage::{PollStorage, StorageOperation};
+use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
 use std::task::{Context, Poll};
 
 #[derive(Clone, Copy)]
@@ -26,9 +28,39 @@ enum Step {
 /// Dropping after a write may have started poisons the journal. Recovery must
 /// first quiesce any backend operation, then reopen the medium. Cancellation
 /// never rolls back a potentially durable write or publishes staged memory.
-pub struct CommitCursor<'a, S: Storage> {
-    journal: &'a mut Journal<S>,
-    ops: &'a [Op],
+pub type CommitCursor<'a, S> = CommitProgress<&'a mut Journal<S>, &'a [Op], S>;
+
+/// Movable pending transaction, including its journal and owned operations.
+/// Use `into_journal` on success, error, or cancellation to retain storage
+/// custody. This is suitable for an owner's `Option<OwnedCommit<S>>`; it has
+/// no self-reference and does not borrow that owner's live session.
+pub type OwnedCommit<S> = CommitProgress<OwnedJournal<S>, Vec<Op>, S>;
+
+#[doc(hidden)]
+pub struct OwnedJournal<S: Storage>(Option<Journal<S>>);
+impl<S: Storage> Deref for OwnedJournal<S> {
+    type Target = Journal<S>;
+    fn deref(&self) -> &Self::Target {
+        self.0
+            .as_ref()
+            .expect("owned journal retained until extraction")
+    }
+}
+impl<S: Storage> DerefMut for OwnedJournal<S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
+            .as_mut()
+            .expect("owned journal retained until extraction")
+    }
+}
+
+/// Shared transaction engine. Prefer `Journal::begin_commit` or
+/// `Journal::into_commit` over naming its storage-owner parameters directly.
+#[must_use = "drive the transaction and recover its journal on completion or cancellation"]
+pub struct CommitProgress<J: DerefMut<Target = Journal<S>>, O: AsRef<[Op]>, S: Storage> {
+    journal: J,
+    ops: O,
+    storage_type: PhantomData<S>,
     step: Step,
     trial: Option<State>,
     frame: Vec<u8>,
@@ -47,15 +79,45 @@ impl<'a, S: Storage> CommitCursor<'a, S> {
         if journal.poisoned {
             return Err(JournalError::Poisoned);
         }
-        journal.phase = Phase::Idle;
-        let step = if journal.pending_retire.is_some() {
+        Ok(Self::from_parts(journal, ops))
+    }
+}
+
+impl<S: Storage> OwnedCommit<S> {
+    pub(super) fn owned(journal: Journal<S>, ops: Vec<Op>) -> Self {
+        Self::from_parts(OwnedJournal(Some(journal)), ops)
+    }
+
+    /// Finish or cancel while retaining the journal and its storage. An
+    /// uncertain submitted operation poisons the returned journal; the owner
+    /// must quiesce the backend before reopening. This never waits for I/O.
+    #[must_use]
+    pub fn into_journal(mut self) -> Journal<S> {
+        if self.uncertain {
+            self.journal.poisoned = true;
+        }
+        self.uncertain = false;
+        self.journal.0.take().expect("owned journal extracted once")
+    }
+}
+
+impl<J: DerefMut<Target = Journal<S>>, O: AsRef<[Op]>, S: Storage> CommitProgress<J, O, S> {
+    fn from_parts(mut journal: J, ops: O) -> Self {
+        let result = journal.poisoned.then_some(Err(JournalError::Poisoned));
+        if result.is_none() {
+            journal.phase = Phase::Idle;
+        }
+        let step = if result.is_some() {
+            Step::Done
+        } else if journal.pending_retire.is_some() {
             Step::RetireProgram
         } else {
             Step::Prepare
         };
-        Ok(Self {
+        Self {
             journal,
             ops,
+            storage_type: PhantomData,
             step,
             trial: None,
             frame: Vec::new(),
@@ -66,8 +128,8 @@ impl<'a, S: Storage> CommitCursor<'a, S> {
             compacting: false,
             uncertain: false,
             poll_driver: None,
-            result: None,
-        })
+            result,
+        }
     }
 
     /// Published state remains available while this transaction is pending.
@@ -107,14 +169,14 @@ impl<'a, S: Storage> CommitCursor<'a, S> {
     fn prepare(&mut self) -> Result<Option<Commit>, JournalError> {
         let journal = &mut self.journal;
         let mut trial = journal.state.clone();
-        for op in self.ops {
+        for op in self.ops.as_ref() {
             apply_op(&journal.lim, &mut trial, op, false)?;
         }
         if trial == journal.state {
             return Ok(Some(Commit::Noop));
         }
         journal.phase = Phase::Staged;
-        let payload = encode_ops(self.ops)?;
+        let payload = encode_ops(self.ops.as_ref())?;
         if payload.len() > journal.lim.max_txn_payload {
             return Err(JournalError::TxnTooLarge);
         }
@@ -269,7 +331,7 @@ impl<'a, S: Storage> CommitCursor<'a, S> {
     }
 }
 
-impl<S: PollStorage> CommitCursor<'_, S> {
+impl<J: DerefMut<Target = Journal<S>>, O: AsRef<[Op]>, S: PollStorage> CommitProgress<J, O, S> {
     /// Poll one operation. Successful intermediate steps schedule another poll;
     /// actual backend suspension relies on the backend's registered waker.
     /// Mixing this driver with `advance` returns `BadOp` without touching storage.
@@ -291,7 +353,9 @@ impl<S: PollStorage> CommitCursor<'_, S> {
     }
 }
 
-impl<S: Storage> Drop for CommitCursor<'_, S> {
+impl<J: DerefMut<Target = Journal<S>>, O: AsRef<[Op]>, S: Storage> Drop
+    for CommitProgress<J, O, S>
+{
     fn drop(&mut self) {
         if self.uncertain {
             self.journal.poisoned = true;
@@ -538,6 +602,122 @@ mod tests {
             key: b"floor".to_vec(),
             value,
         }]
+    }
+
+    #[test]
+    fn owned_and_borrowed_progress_match_bytes_through_compaction() {
+        let limits = Limits::tiny();
+        let (mut borrowed, _) =
+            Journal::open(MemStorage::new(limits.segment_bytes), limits.clone()).unwrap();
+        let (mut owned_journal, _) =
+            Journal::open(MemStorage::new(limits.segment_bytes), limits).unwrap();
+        for value in 1..=80 {
+            let ops = mark(value);
+            let expected = borrowed.commit(&ops).unwrap();
+            let old = owned_journal.state().clone();
+            let mut pending = owned_journal.into_commit(ops.to_vec());
+            loop {
+                // Moving into/out of an owner's optional pending slot must not
+                // depend on a self-reference or borrow of the live session.
+                let mut slot = Some(pending);
+                pending = slot.take().unwrap();
+                match pending.advance() {
+                    Some(result) => {
+                        assert_eq!(result.unwrap(), expected);
+                        break;
+                    }
+                    None => assert_eq!(pending.state(), &old),
+                }
+            }
+            owned_journal = pending.into_journal();
+            assert!(!owned_journal.is_poisoned());
+            assert_eq!(owned_journal.state(), borrowed.state());
+            assert_eq!(
+                owned_journal.storage().durable(),
+                borrowed.storage().durable()
+            );
+            assert_eq!(owned_journal.phase(), Phase::Published);
+        }
+        assert!(owned_journal.compactions() > 1);
+    }
+
+    #[test]
+    fn owned_cancel_returns_submitted_backend_for_quiescence_even_after_poisoned_retry() {
+        for cancel_sync in [false, true] {
+            let limits = Limits::tiny();
+            let storage = SubmittedStorage {
+                inner: MemStorage::new(limits.segment_bytes),
+                pending: None,
+                wake: None,
+            };
+            let (mut journal, _) = Journal::open(storage, limits.clone()).unwrap();
+            journal.raise_mark(b"floor", 3).unwrap();
+            let old = journal.state().clone();
+            let wakes = Arc::new(WakeCount(AtomicUsize::new(0)));
+            let waker = Waker::from(wakes);
+            let mut cx = Context::from_waker(&waker);
+            let mut pending = journal.into_commit(mark(9).to_vec());
+            assert!(pending.poll_commit(&mut cx).is_pending());
+            if cancel_sync {
+                assert!(pending.poll_commit(&mut cx).is_pending());
+                assert!(pending.poll_commit(&mut cx).is_pending());
+            }
+            journal = pending.into_journal();
+            assert_eq!(journal.state(), &old);
+            assert!(journal.is_poisoned());
+            assert!(journal.storage().pending.is_some());
+            let mut refused = journal.into_commit(mark(10).to_vec());
+            assert_eq!(
+                refused.poll_commit(&mut cx),
+                Poll::Ready(Err(JournalError::Poisoned))
+            );
+            journal = refused.into_journal();
+            assert!(
+                journal.storage().pending.is_some(),
+                "refused admission retains backend-owned work"
+            );
+            let mut storage = journal.into_storage();
+            assert!(Journal::open(&mut storage, limits.clone()).is_err());
+            storage.quiesce().unwrap();
+            storage.inner.power_cut(0, false);
+            storage.inner.restart();
+            let (reopened, _) = Journal::open(storage, limits).unwrap();
+            let expected = if cancel_sync { 9 } else { 3 };
+            assert_eq!(
+                reopened.state().marks.get(b"floor".as_slice()),
+                Some(&expected)
+            );
+        }
+    }
+
+    #[test]
+    fn owned_storage_failure_returns_unpublished_journal_and_unknown_durable_outcome() {
+        for persisted in [false, true] {
+            let limits = Limits::tiny();
+            let (mut journal, _) =
+                Journal::open(MemStorage::new(limits.segment_bytes), limits.clone()).unwrap();
+            journal.raise_mark(b"floor", 3).unwrap();
+            let old = journal.state().clone();
+            journal.storage_mut().sync_fail_at = Some(journal.storage().ops_done() + 1);
+            journal.storage_mut().sync_fail_persists = persisted;
+            let mut pending = journal.into_commit(mark(9).to_vec());
+            assert_eq!(pending.advance(), None);
+            assert!(matches!(
+                pending.advance(),
+                Some(Err(JournalError::Storage(StorageFault::SyncFailed)))
+            ));
+            journal = pending.into_journal();
+            assert!(journal.is_poisoned());
+            assert_eq!(journal.state(), &old);
+            let mut storage = journal.into_storage();
+            storage.restart();
+            let (reopened, _) = Journal::open(storage, limits).unwrap();
+            let expected = if persisted { 9 } else { 3 };
+            assert_eq!(
+                reopened.state().marks.get(b"floor".as_slice()),
+                Some(&expected)
+            );
+        }
     }
 
     #[test]

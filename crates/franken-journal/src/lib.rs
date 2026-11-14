@@ -23,7 +23,7 @@ mod journal;
 pub mod state;
 pub mod storage;
 
-pub use journal::{Commit, CommitCursor, Journal, Phase, Recovery, Source};
+pub use journal::{Commit, CommitCursor, Journal, OwnedCommit, Phase, Recovery, Source};
 pub use state::{Credential, Namespace, Op, State};
 pub use storage::{MemStorage, PollStorage, Storage, StorageFault, StorageOperation};
 
