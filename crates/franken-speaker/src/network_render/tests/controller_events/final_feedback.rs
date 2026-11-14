@@ -180,6 +180,7 @@ impl Scenario {
                 work_and_lead_ns: 11_000_000,
                 overlap_budget_bytes: 1_048_576,
                 max_ahead_ns: 250_000_000,
+                authority: token,
                 session,
                 arbiter,
                 carrier,

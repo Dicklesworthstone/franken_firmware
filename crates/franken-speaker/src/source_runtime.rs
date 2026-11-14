@@ -9,8 +9,8 @@ use std::time::Instant;
 
 use franken_codec::{Caps, SourceCodec, SourceReaderLimits};
 use franken_session::{
-    Admitted, AuthorityToken, FencedControlCommand, GroupCommandPayload, SessionError,
-    SourceArbiter, SourceCommand, SourceError as PolicyError, UnifiedGroupSession,
+    Admitted, AuthorityToken, FencedControlCommand, GroupCommandPayload, MembershipError,
+    SessionError, SourceArbiter, SourceCommand, SourceError as PolicyError, UnifiedGroupSession,
 };
 use franken_stream::carrier::{
     AllPeerAdmissionError, CarrierSender, DatagramPort, Lane, N01IsolatedOutcome, PeerView,
@@ -96,6 +96,11 @@ pub struct RuntimeConfig<P: DatagramPort, C: RuntimeClock> {
     /// any desired safety margin. It is supplied by the caller, not negotiated
     /// or verified by this local source owner.
     pub max_ahead_ns: u64,
+    /// Admitted source authority in the same group-time domain as the clock
+    /// view. This is supplied by the trusted controller, not minted here.
+    /// The arbiter's configured authority margin, this clock's uncertainty
+    /// and the work/lead budget are accumulated conservatively at each gate.
+    pub authority: AuthorityToken,
     pub session: UnifiedGroupSession,
     pub arbiter: SourceArbiter,
     pub carrier: CarrierSender<P>,
@@ -110,6 +115,10 @@ pub enum RuntimeError {
     Clock,
     #[error("source runtime stopped")]
     Stopped,
+    #[error("source authority: {0}")]
+    Authority(#[from] MembershipError),
+    #[error("a source authority renewal cannot shorten its current lease")]
+    AuthorityShortened,
     #[error("source requires a new format epoch")]
     FormatEpochRequired,
     #[error("source: {0}")]
@@ -149,6 +158,7 @@ pub struct SourceRuntime<P: DatagramPort, C: RuntimeClock> {
     source: SourceMedia,
     carrier: CarrierSender<P>,
     clock: C,
+    authority: AuthorityToken,
     session: UnifiedGroupSession,
     arbiter: SourceArbiter,
     identity: SourceIdentity,
@@ -184,6 +194,7 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
             work_and_lead_ns,
             overlap_budget_bytes,
             max_ahead_ns,
+            authority,
             session,
             arbiter,
             carrier,
@@ -203,6 +214,10 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
         {
             return Err(RuntimeError::Configuration);
         }
+        // Validate identity before opening a potentially blocking reader.
+        // Actual expiry is checked from each fresh clock observation, not a
+        // guessed construction-time reading or the interface pacing clock.
+        authority.check(&session, 0)?;
         let source = SourceMedia::open_reader(
             codec,
             reader,
@@ -222,6 +237,7 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
             source,
             carrier,
             clock,
+            authority,
             session,
             arbiter,
             identity,
@@ -286,8 +302,30 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
         {
             return Err(RuntimeError::Clock);
         }
+        self.check_authority(&self.authority, observed)?;
         self.last_observation = Some(observed);
         Ok(observed)
+    }
+
+    fn check_authority(
+        &self,
+        token: &AuthorityToken,
+        observed: RuntimeObservation,
+    ) -> Result<(), RuntimeError> {
+        self.arbiter
+            .check_authority(
+                &self.session,
+                token,
+                observed.group_clock.group_ns,
+                observed
+                    .group_clock
+                    .uncertainty_ns
+                    .saturating_add(self.work_and_lead_ns),
+            )
+            .map_err(|error| match error {
+                PolicyError::Authority(error) => RuntimeError::Authority(error),
+                error => RuntimeError::Policy(error),
+            })
     }
 
     fn next_presentation_ns(&self) -> Result<u64, RuntimeError> {
@@ -324,6 +362,30 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
             .store(true, std::sync::atomic::Ordering::Release);
     }
 
+    /// Install an already-admitted same-session renewal while the old lease
+    /// is still live. A rejected candidate leaves the existing lease intact;
+    /// an observed expiry is terminal and cannot be repaired by a renewal.
+    /// This does not acquire a lease or validate a quorum on the caller's
+    /// behalf, and never changes receiver output grants or recalls sent audio.
+    pub fn renew_authority(&mut self, token: AuthorityToken) -> Result<(), RuntimeError> {
+        if self.stopped {
+            return Err(RuntimeError::Stopped);
+        }
+        let now = match self.observe() {
+            Ok(now) => now,
+            Err(error) => {
+                self.stop();
+                return Err(error);
+            }
+        };
+        self.check_authority(&token, now)?;
+        if token.expires_at_ns < self.authority.expires_at_ns {
+            return Err(RuntimeError::AuthorityShortened);
+        }
+        self.authority = token;
+        Ok(())
+    }
+
     /// Judge a command against this owner's canonical session and arbiter.
     /// A successful replacement/stop makes this owner terminal before another
     /// pump can run. A rejected command leaves its source and carrier intact.
@@ -342,9 +404,13 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
                 return Err(e);
             }
         };
-        let admitted =
-            self.arbiter
-                .submit(&self.session, token, now.group_clock.group_ns, command)?;
+        self.check_authority(token, now)?;
+        let latest = now
+            .group_clock
+            .group_ns
+            .checked_add(now.group_clock.uncertainty_ns)
+            .ok_or(RuntimeError::Clock)?;
+        let admitted = self.arbiter.submit(&self.session, token, latest, command)?;
         if self
             .arbiter
             .check_publish(
@@ -369,6 +435,10 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
     ) -> Result<u64, RuntimeError> {
         if self.stopped {
             return Err(RuntimeError::Stopped);
+        }
+        if let Err(error) = self.observe() {
+            self.stop();
+            return Err(error);
         }
         let old_epoch = self.session.current_epoch;
         let invalidates = matches!(
@@ -697,8 +767,22 @@ mod tests {
         reader: R,
         max_ahead_ns: u64,
     ) -> SourceRuntime<P, C> {
+        owner_with_reader_expiry(carrier, clock, reader, max_ahead_ns, u64::MAX)
+    }
+
+    fn owner_with_reader_expiry<
+        P: DatagramPort,
+        C: RuntimeClock,
+        R: Read + Seek + Send + Sync + 'static,
+    >(
+        carrier: CarrierSender<P>,
+        clock: C,
+        reader: R,
+        max_ahead_ns: u64,
+        expires_at_ns: u64,
+    ) -> SourceRuntime<P, C> {
         let session = UnifiedGroupSession::new("test-group", "test-leader", 1);
-        let token = AuthorityToken::issue(&session, u64::MAX);
+        let token = AuthorityToken::issue(&session, expires_at_ns);
         let mut arbiter = SourceArbiter::new(SourceConfig::default());
         let source = SourceId::new(SourceKind::Spotify, "fixture").unwrap();
         let admitted = arbiter
@@ -741,6 +825,7 @@ mod tests {
                 work_and_lead_ns: 1_000_000,
                 overlap_budget_bytes: usize::MAX,
                 max_ahead_ns,
+                authority: token,
                 session,
                 arbiter,
                 carrier,
@@ -1364,5 +1449,8 @@ mod tests {
     }
     mod uncertainty {
         include!("source_runtime/uncertainty_tests.rs");
+    }
+    mod authority {
+        include!("source_runtime/authority_tests.rs");
     }
 }

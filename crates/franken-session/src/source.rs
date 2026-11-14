@@ -465,6 +465,28 @@ impl SourceArbiter {
         }
     }
 
+    /// Validate the group's current token, retaining the arbiter's configured
+    /// authority margin plus the caller's additional clock/work bound. The
+    /// caller must account for each bound in its declared clock domain;
+    /// saturation refuses even a maximum-expiry token rather than wrapping.
+    pub fn check_authority(
+        &self,
+        session: &UnifiedGroupSession,
+        token: &AuthorityToken,
+        now_ns: u64,
+        additional_margin_ns: u64,
+    ) -> Result<(), SourceError> {
+        token
+            .check_with_margin(
+                session,
+                now_ns,
+                self.config
+                    .clock_uncertainty_ns
+                    .saturating_add(additional_margin_ns),
+            )
+            .map_err(SourceError::Authority)
+    }
+
     /// Judge a command. Checks, in this order: the group's authority token; the source epoch the
     /// sender presented (older: `SOURCE_EPOCH_STALE`, newer: `SOURCE_EPOCH_FUTURE`); then ownership and
     /// the policy table; then the epoch counter. A refusal changes nothing.
@@ -475,9 +497,7 @@ impl SourceArbiter {
         now_ns: u64,
         command: &SourceCommand,
     ) -> Result<Admitted, SourceError> {
-        token
-            .check_with_margin(session, now_ns, self.config.clock_uncertainty_ns)
-            .map_err(SourceError::Authority)?;
+        self.check_authority(session, token, now_ns, 0)?;
         let (owner, current) = self.effective(session.current_epoch);
         if command.expected_epoch < current {
             return Err(SourceError::SourceEpochStale {

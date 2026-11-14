@@ -774,6 +774,7 @@ fn send(
             // comfortably inside that window, including our admitted margin.
             max_ahead_ns: 250_000_000,
             overlap_budget_bytes: usize::MAX,
+            authority: token,
             session,
             arbiter,
             carrier,
