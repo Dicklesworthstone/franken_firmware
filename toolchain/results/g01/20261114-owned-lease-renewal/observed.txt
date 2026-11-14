@@ -1,0 +1,124 @@
+Selected actual native output; no private source paths or payloads included.
+
+Native 30107136981729364 — strict Clippy
+    Finished `dev` profile [unoptimized] target(s) in 1m 57s
+
+Native 30107136981729365 — focused renewal cases
+    Finished `test` profile [unoptimized] target(s) in 1m 13s
+test membership::lease_renewal::configured_renewal_accepts_exact_horizon_and_keeps_current_token_live ... ok
+test membership::lease_renewal::renewal_refuses_nonextension_horizon_and_conservative_expiry ... ok
+test membership::lease_renewal::renewal_rejects_reversed_and_overflowing_windows ... ok
+test membership::lease_renewal::renewal_requires_configured_discovered_canonical_identity ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 119 filtered out; finished in 0.00s
+test network_render::tests::controller_events::role_integration::lease_renewal::expired_lease_clock_fault_and_stop_do_not_revive ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::failed_durable_control_prevents_later_lease_renewal ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::old_lease_expiring_on_final_renewal_clock_sample_cannot_revive ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::rejected_renewals_preserve_all_live_copies_and_real_playback ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::renewal_does_not_issue_output_grant ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::stopped_owner_does_not_fabricate_a_missing_flush_ack ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::timely_renewal_continues_real_protected_pcm_past_old_expiry ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::unchanged_n03_authority_expiry_still_stops_renewed_owner ... ok
+FFW_LEASE_RENEWAL_PCM rejected_first=true source_frames=512 protected_blocks=8 after_old_expiry=true drain_ack=true
+FFW_LEASE_RENEWAL_PCM rejected_first=false source_frames=512 protected_blocks=8 after_old_expiry=true drain_ack=true
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 700 filtered out; finished in 0.08s
+
+Native 30107136981729366 — full workspace
+    Finished `test` profile [unoptimized] target(s) in 1m 23s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.23s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 95 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+test result: ok. 102 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.62s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.58s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test channel::owner::tests::channel_margin_is_checked_at_provision_and_each_live_lease_query ... ok
+test result: ok. 690 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.23s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test convert::soft_float_tests::f32_to_s16_and_the_clamp_match_the_original_over_all_four_billion_bit_patterns ... ignored, exhaustive 2^32 sweep: run in release mode with --ignored
+test result: ok. 179 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.99s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 163 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.79s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.90s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.37s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.71s
+test result: ok. 248 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test membership::lease_renewal::configured_renewal_accepts_exact_horizon_and_keeps_current_token_live ... ok
+test membership::lease_renewal::renewal_refuses_nonextension_horizon_and_conservative_expiry ... ok
+test membership::lease_renewal::renewal_rejects_reversed_and_overflowing_windows ... ok
+test membership::lease_renewal::renewal_requires_configured_discovered_canonical_identity ... ok
+test result: ok. 123 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.14s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+test network_render::tests::controller_events::role_integration::lease_renewal::expired_lease_clock_fault_and_stop_do_not_revive ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::failed_durable_control_prevents_later_lease_renewal ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::old_lease_expiring_on_final_renewal_clock_sample_cannot_revive ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::rejected_renewals_preserve_all_live_copies_and_real_playback ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::renewal_does_not_issue_output_grant ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::stopped_owner_does_not_fabricate_a_missing_flush_ack ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::timely_renewal_continues_real_protected_pcm_past_old_expiry ... ok
+test network_render::tests::controller_events::role_integration::lease_renewal::unchanged_n03_authority_expiry_still_stops_renewed_owner ... ok
+FFW_LEASE_RENEWAL_PCM rejected_first=true source_frames=512 protected_blocks=8 after_old_expiry=true drain_ack=true
+FFW_LEASE_RENEWAL_PCM rejected_first=false source_frames=512 protected_blocks=8 after_old_expiry=true drain_ack=true
+test result: ok. 708 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 78.03s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.92s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.93s
+test result: ok. 268 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.29s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.04s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.30s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
