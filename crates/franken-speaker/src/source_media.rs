@@ -830,6 +830,27 @@ impl SourceMedia {
         carrier: &mut CarrierSender<P>,
         inputs: SourceInputs<'_>,
     ) -> Result<PumpReport, SourceError> {
+        self.pump_with_optional_lookahead(carrier, inputs, None)
+    }
+
+    /// Recheck source ownership and the lifetime bound, then apply a fresh
+    /// caller-admitted presentation horizon to each actual queued datagram.
+    /// A temporary early frame remains retained; no media or credit is invented.
+    pub fn pump_with_lookahead<P: DatagramPort>(
+        &mut self,
+        carrier: &mut CarrierSender<P>,
+        inputs: SourceInputs<'_>,
+        max_ahead_ns: u64,
+    ) -> Result<PumpReport, SourceError> {
+        self.pump_with_optional_lookahead(carrier, inputs, Some(max_ahead_ns))
+    }
+
+    fn pump_with_optional_lookahead<P: DatagramPort>(
+        &mut self,
+        carrier: &mut CarrierSender<P>,
+        inputs: SourceInputs<'_>,
+        max_ahead_ns: Option<u64>,
+    ) -> Result<PumpReport, SourceError> {
         if self.snapshot.is_none() {
             return Err(SourceError::Admission(
                 AllPeerAdmissionError::MembershipChanged,
@@ -841,14 +862,22 @@ impl SourceMedia {
             epoch: self.epoch.epoch,
             view: inputs.group_clock,
         };
-        carrier
-            .pump_n01_selected(
+        match max_ahead_ns {
+            Some(ahead) => carrier.pump_n01_selected_with_lookahead(
+                inputs.interface_now_ns,
+                group,
+                self.snapshot.as_ref().expect("claimed source"),
+                ahead,
+                inputs.cancelled,
+            ),
+            None => carrier.pump_n01_selected(
                 inputs.interface_now_ns,
                 group,
                 self.snapshot.as_ref().expect("claimed source"),
                 inputs.cancelled,
-            )
-            .map_err(SourceError::Admission)
+            ),
+        }
+        .map_err(SourceError::Admission)
     }
 
     /// Start a new format epoch after the old format and tail are admitted.

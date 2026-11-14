@@ -305,6 +305,32 @@ pub struct N01GroupClock {
     pub view: crate::playout::ClockView,
 }
 
+/// Per-call selection and optional presentation horizon. This carries no
+/// authority beyond the independently checked source snapshot and clock.
+#[derive(Clone, Copy, Default)]
+struct N01PumpSelection {
+    group: Option<GroupId>,
+    presentation_until_ns: Option<u64>,
+}
+
+impl N01PumpSelection {
+    fn permits_presentation(self, group: GroupId, presentation_ns: u64) -> bool {
+        self.group != Some(group)
+            || self
+                .presentation_until_ns
+                .is_none_or(|until| presentation_ns <= until)
+    }
+
+    fn permits_wire(self, group: GroupId, wire: &[u8]) -> bool {
+        if self.group != Some(group) || self.presentation_until_ns.is_none() {
+            return true;
+        }
+        wire.get(crate::OFF_PRESENTATION..crate::OFF_PRESENTATION + 8)
+            .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
+            .is_some_and(|bytes| self.permits_presentation(group, u64::from_be_bytes(bytes)))
+    }
+}
+
 /// Explicitly named clock domains and the scoped queue-overlap allowance.
 pub struct N01AdmissionInputs<'a> {
     /// Local monotonic time used for interface pacing and queue-delay accounting.
@@ -4319,7 +4345,7 @@ impl<P: DatagramPort> CarrierSender<P> {
         clocks: &[(GroupId, crate::playout::ClockView)],
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> PumpReport {
-        self.pump_with_n01_clocks(now_ns, clocks, None, None, cancelled)
+        self.pump_with_n01_clocks(now_ns, clocks, None, N01PumpSelection::default(), cancelled)
     }
 
     /// Pump N01 using fresh caller-admitted group views for deadlines and local time for pacing.
@@ -4334,7 +4360,13 @@ impl<P: DatagramPort> CarrierSender<P> {
         clocks: &[N01GroupClock],
         cancelled: &AtomicBool,
     ) -> PumpReport {
-        self.pump_with_n01_clocks(interface_now_ns, &[], Some(clocks), None, cancelled)
+        self.pump_with_n01_clocks(
+            interface_now_ns,
+            &[],
+            Some(clocks),
+            N01PumpSelection::default(),
+            cancelled,
+        )
     }
 
     /// Pump protected media belonging to one exclusive source selection.
@@ -4343,6 +4375,40 @@ impl<P: DatagramPort> CarrierSender<P> {
         interface_now_ns: u64,
         clock: N01GroupClock,
         snapshot: &N01GroupSnapshot,
+        cancelled: &AtomicBool,
+    ) -> Result<PumpReport, AllPeerAdmissionError> {
+        self.pump_n01_selected_inner(interface_now_ns, clock, snapshot, None, cancelled)
+    }
+
+    /// Pump one protected selection while bounding each actual media, held
+    /// retry and recovery probe presentation against this call's conservative
+    /// lower clock bound. Early wire remains owned without spending tokens or
+    /// sequence numbers; controls and other eligible peers can still progress.
+    /// The existing late recovery exception is unchanged. The caller admits
+    /// freshness and work for this bounded pump; this does not read a clock.
+    pub fn pump_n01_selected_with_lookahead(
+        &mut self,
+        interface_now_ns: u64,
+        clock: N01GroupClock,
+        snapshot: &N01GroupSnapshot,
+        max_ahead_ns: u64,
+        cancelled: &AtomicBool,
+    ) -> Result<PumpReport, AllPeerAdmissionError> {
+        self.pump_n01_selected_inner(
+            interface_now_ns,
+            clock,
+            snapshot,
+            Some(max_ahead_ns),
+            cancelled,
+        )
+    }
+
+    fn pump_n01_selected_inner(
+        &mut self,
+        interface_now_ns: u64,
+        clock: N01GroupClock,
+        snapshot: &N01GroupSnapshot,
+        max_ahead_ns: Option<u64>,
         cancelled: &AtomicBool,
     ) -> Result<PumpReport, AllPeerAdmissionError> {
         let gi = self
@@ -4361,11 +4427,26 @@ impl<P: DatagramPort> CarrierSender<P> {
         if cancelled.load(Ordering::Acquire) {
             return Err(AllPeerAdmissionError::Cancelled);
         }
+        let presentation_until_ns = max_ahead_ns
+            .map(|ahead| {
+                clock
+                    .view
+                    .group_ns
+                    .saturating_sub(clock.view.uncertainty_ns)
+                    .checked_add(ahead)
+                    .ok_or(AllPeerAdmissionError::Invalid(CarrierError::InvalidLimits(
+                        "N01 presentation lookahead overflows",
+                    )))
+            })
+            .transpose()?;
         Ok(self.pump_with_n01_clocks(
             interface_now_ns,
             &[],
             Some(&[clock]),
-            Some(clock.group),
+            N01PumpSelection {
+                group: Some(clock.group),
+                presentation_until_ns,
+            },
             cancelled,
         ))
     }
@@ -4375,9 +4456,10 @@ impl<P: DatagramPort> CarrierSender<P> {
         now_ns: u64,
         clocks: &[(GroupId, crate::playout::ClockView)],
         n01_clocks: Option<&[N01GroupClock]>,
-        selected: Option<GroupId>,
+        selection: N01PumpSelection,
         cancelled: &AtomicBool,
     ) -> PumpReport {
+        let selected = selection.group;
         let mut rollback = false;
         if let Some(n01_clocks) = n01_clocks
             && !cancelled.load(Ordering::Acquire)
@@ -4472,7 +4554,7 @@ impl<P: DatagramPort> CarrierSender<P> {
         if n01_clocks.is_none() || !cancelled.load(Ordering::Acquire) {
             out.late_dropped = self.expire_late(now_ns, n01_clocks, selected);
         }
-        self.pump_media(now_ns, clocks, n01_clocks, selected, cancelled, &mut out);
+        self.pump_media(now_ns, clocks, n01_clocks, selection, cancelled, &mut out);
         let window = self.limits.window_packets;
         for peer in &mut self.peers {
             if !peer.media_q.is_empty() && peer.fence.is_none() && peer.stalled(window) {
@@ -5022,9 +5104,10 @@ impl<P: DatagramPort> CarrierSender<P> {
         now_ns: u64,
         clocks: &[(GroupId, crate::playout::ClockView)],
         n01_clocks: Option<&[N01GroupClock]>,
-        selected: Option<GroupId>,
+        selection: N01PumpSelection,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Option<(usize, usize, bool)> {
+        let selected = selection.group;
         let n = self.peers.len();
         let window = self.limits.window_packets;
         for step in 0..n {
@@ -5052,6 +5135,8 @@ impl<P: DatagramPort> CarrierSender<P> {
             if peer.waiting(window) {
                 if peer.probe_due(window, now_ns)
                     && let Some(last) = &peer.last_sent
+                    && (!last.group_clock_required
+                        || selection.permits_wire(peer.group, &last.wire))
                     && !(last.group_clock_required
                         && self.groups.iter().any(|group| {
                             group.id == peer.group
@@ -5090,6 +5175,17 @@ impl<P: DatagramPort> CarrierSender<P> {
                 && n01_clocks.is_none_or(|views| {
                     n01_group_time(&self.groups, views, peer.group, selected).is_none()
                 })
+            {
+                continue;
+            }
+            if group_clock_required
+                && !match (&peer.held, peer.media_q.front()) {
+                    (Some(held), _) => selection.permits_wire(peer.group, &held.wire),
+                    (None, Some(head)) => {
+                        selection.permits_presentation(peer.group, head.frame.presentation_time_ns)
+                    }
+                    (None, None) => false,
+                }
             {
                 continue;
             }
@@ -5137,10 +5233,11 @@ impl<P: DatagramPort> CarrierSender<P> {
         now_ns: u64,
         clocks: &[(GroupId, crate::playout::ClockView)],
         n01_clocks: Option<&[N01GroupClock]>,
-        selected: Option<GroupId>,
+        selection: N01PumpSelection,
         cancelled: &std::sync::atomic::AtomicBool,
         out: &mut PumpReport,
     ) {
+        let selected = selection.group;
         let n = self.peers.len();
         if n == 0 {
             return;
@@ -5156,7 +5253,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 break;
             }
             let Some((idx, cost, fec)) =
-                self.next_sendable(now_ns, clocks, n01_clocks, selected, cancelled)
+                self.next_sendable(now_ns, clocks, n01_clocks, selection, cancelled)
             else {
                 break;
             };

@@ -6584,3 +6584,5 @@ fn n07_buffered_credit_mode_still_respects_sequence_and_cooldown_guards() {
         disposition: N01PeerDisposition::Queued
     })));
 }
+
+mod uncertainty;

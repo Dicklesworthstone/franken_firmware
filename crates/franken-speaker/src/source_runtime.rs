@@ -282,14 +282,6 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
             || self.last_observation.is_some_and(|last| {
                 observed.interface_now_ns < last.interface_now_ns
                     || observed.group_clock.group_ns < last.group_clock.group_ns
-                    || observed
-                        .group_clock
-                        .group_ns
-                        .saturating_sub(observed.group_clock.uncertainty_ns)
-                        < last
-                            .group_clock
-                            .group_ns
-                            .saturating_sub(last.group_clock.uncertainty_ns)
             })
         {
             return Err(RuntimeError::Clock);
@@ -444,49 +436,55 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
                         self.selected = true;
                         let after = self.observe()?;
                         if !self.within_lookahead(after)? {
-                            return Err(RuntimeError::Clock);
-                        }
-                        let inputs = SourceInputs {
-                            interface_now_ns: after.interface_now_ns,
-                            group_clock: after.group_clock,
-                            work_and_lead_ns: self.work_and_lead_ns,
-                            overlap_budget_bytes: self.overlap_budget_bytes,
-                            cancelled: &self.cancelled,
-                            authority: SourceAuthority {
-                                arbiter: &self.arbiter,
-                                session: &self.session,
-                            },
-                        };
-                        let published = if self.buffer_transient_credit {
-                            self.source.publish_buffered_isolated(
-                                &mut self.carrier,
-                                &self.peers,
-                                Some(inputs),
-                                report,
-                            )
+                            // A usable wider interval can move the earliest
+                            // possible time backwards. Keep the prepared PCM
+                            // and retry without decoding or publishing it again.
+                            progress = RuntimeProgress::Waiting;
                         } else {
-                            self.source.publish_isolated(
-                                &mut self.carrier,
-                                &self.peers,
-                                Some(inputs),
-                                report,
-                            )
-                        };
-                        progress = match published {
-                            Ok(IsolatedProgress::Published { frames }) => {
-                                RuntimeProgress::Published { frames }
-                            }
-                            Ok(IsolatedProgress::Expired { frames }) => {
-                                RuntimeProgress::Expired { frames }
-                            }
-                            Err(SourceError::Admission(AllPeerAdmissionError::Retry(_))) => {
-                                RuntimeProgress::Waiting
-                            }
-                            Ok(IsolatedProgress::End | IsolatedProgress::FormatEpochRequired) => {
-                                return Err(RuntimeError::FormatEpochRequired);
-                            }
-                            Err(error) => return Err(error.into()),
-                        };
+                            let inputs = SourceInputs {
+                                interface_now_ns: after.interface_now_ns,
+                                group_clock: after.group_clock,
+                                work_and_lead_ns: self.work_and_lead_ns,
+                                overlap_budget_bytes: self.overlap_budget_bytes,
+                                cancelled: &self.cancelled,
+                                authority: SourceAuthority {
+                                    arbiter: &self.arbiter,
+                                    session: &self.session,
+                                },
+                            };
+                            let published = if self.buffer_transient_credit {
+                                self.source.publish_buffered_isolated(
+                                    &mut self.carrier,
+                                    &self.peers,
+                                    Some(inputs),
+                                    report,
+                                )
+                            } else {
+                                self.source.publish_isolated(
+                                    &mut self.carrier,
+                                    &self.peers,
+                                    Some(inputs),
+                                    report,
+                                )
+                            };
+                            progress = match published {
+                                Ok(IsolatedProgress::Published { frames }) => {
+                                    RuntimeProgress::Published { frames }
+                                }
+                                Ok(IsolatedProgress::Expired { frames }) => {
+                                    RuntimeProgress::Expired { frames }
+                                }
+                                Err(SourceError::Admission(AllPeerAdmissionError::Retry(_))) => {
+                                    RuntimeProgress::Waiting
+                                }
+                                Ok(
+                                    IsolatedProgress::End | IsolatedProgress::FormatEpochRequired,
+                                ) => {
+                                    return Err(RuntimeError::FormatEpochRequired);
+                                }
+                                Err(error) => return Err(error.into()),
+                            };
+                        }
                     }
                     Ok(PrepareProgress::End) => {
                         self.eof = true;
@@ -526,7 +524,10 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
                     session: &self.session,
                 },
             };
-            Some(self.source.pump(&mut self.carrier, inputs)?)
+            Some(
+                self.source
+                    .pump_with_lookahead(&mut self.carrier, inputs, self.max_ahead_ns)?,
+            )
         } else {
             None
         };
@@ -1360,5 +1361,8 @@ mod tests {
         ));
         assert!(progress.pump.unwrap().media_sent >= 1);
         assert!(!sent.lock().unwrap().is_empty());
+    }
+    mod uncertainty {
+        include!("source_runtime/uncertainty_tests.rs");
     }
 }
