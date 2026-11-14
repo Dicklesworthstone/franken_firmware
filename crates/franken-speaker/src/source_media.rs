@@ -278,7 +278,7 @@ impl SourceMedia {
         })
     }
 
-    fn validate_epoch(epoch: TransportEpoch) -> Result<(), SourceError> {
+    pub(crate) fn validate_epoch(epoch: TransportEpoch) -> Result<(), SourceError> {
         let frame_offset = u128::from(epoch.start_frame) * 62_500 / 3;
         if !epoch.start_frame.is_multiple_of(BLOCK as u64)
             || epoch.presentation_ns > MAX_TIMESTAMP_NS

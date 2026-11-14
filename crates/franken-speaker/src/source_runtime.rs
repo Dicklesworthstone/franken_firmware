@@ -9,12 +9,13 @@ use std::time::Instant;
 
 use franken_codec::{Caps, SourceCodec, SourceReaderLimits};
 use franken_session::{
-    Admitted, AuthorityToken, FencedControlCommand, GroupCommandPayload, MembershipError,
-    SessionError, SourceArbiter, SourceCommand, SourceError as PolicyError, UnifiedGroupSession,
+    Admitted, AuthorityToken, CommandClass, FencedControlCommand, GroupCommandPayload,
+    MembershipError, SessionError, SourceArbiter, SourceCommand, SourceError as PolicyError,
+    UnifiedGroupSession,
 };
 use franken_stream::carrier::{
-    AllPeerAdmissionError, CarrierSender, DatagramPort, Lane, N01IsolatedOutcome, PeerView,
-    PortFault, PumpReport,
+    AllPeerAdmissionError, CarrierError, CarrierSender, DatagramPort, Lane, N01IsolatedOutcome,
+    PeerView, PortFault, PumpReport,
 };
 use franken_stream::playout::ClockView;
 
@@ -119,8 +120,12 @@ pub enum RuntimeError {
     Authority(#[from] MembershipError),
     #[error("a source authority renewal cannot shorten its current lease")]
     AuthorityShortened,
+    #[error("the new seek presentation anchor expired")]
+    SeekAnchorExpired,
     #[error("source requires a new format epoch")]
     FormatEpochRequired,
+    #[error("carrier transition: {0}")]
+    Carrier(#[from] CarrierError),
     #[error("source: {0}")]
     Source(#[from] SourceError),
     #[error("source policy command: {0}")]
@@ -130,7 +135,9 @@ pub enum RuntimeError {
 }
 
 /// One bounded source decision. `Drained` means source EOF, no carrier queue
-/// or in-flight packets and no observed source skips or carrier drops. It does
+/// or in-flight packets and no observed source skips or carrier drops in the
+/// current transport epoch. It says nothing about delivery of an earlier epoch
+/// discarded by an explicit seek. Lifetime loss counters remain available. It does
 /// not establish receiver playout, sample integrity or network delivery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeProgress {
@@ -174,6 +181,7 @@ pub struct SourceRuntime<P: DatagramPort, C: RuntimeClock> {
     eof: bool,
     stopped: bool,
     buffer_transient_credit: bool,
+    epoch_loss_baseline: u128,
 }
 
 impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
@@ -253,6 +261,7 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
             eof: false,
             stopped: false,
             buffer_transient_credit: false,
+            epoch_loss_baseline: 0,
         })
     }
 
@@ -425,6 +434,119 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
         Ok(admitted)
     }
 
+    /// Seek the finite decoder into a caller-admitted new transport timeline.
+    /// The native source frame and 48 kHz transport start frame are independent.
+    /// Seeking beyond a known track length retains the decoder's EOF saturation.
+    ///
+    /// This can block on the reader and must run outside protected rendering.
+    /// The caller must already resolve old receiver output and admit the new
+    /// receiver epoch under its existing output-grant/fencing contract. This
+    /// method discards queued old sender media, but cannot recall sent datagrams
+    /// or establish a receiver/HAL acknowledgement or audible seek completion.
+    /// Returned admission describes source policy, not an exact landed frame.
+    ///
+    /// Deterministic candidate validation happens before transition. Once the
+    /// carrier or decoder may have changed, any error makes this owner terminal;
+    /// neither the old timeline nor an expired authority can be resurrected.
+    pub fn seek_source_new_epoch(
+        &mut self,
+        token: &AuthorityToken,
+        target_native_frame: u64,
+        next: TransportEpoch,
+    ) -> Result<Admitted, RuntimeError> {
+        if self.stopped {
+            return Err(RuntimeError::Stopped);
+        }
+        let before = match self.observe() {
+            Ok(now) => now,
+            Err(error) => {
+                self.stop();
+                return Err(error);
+            }
+        };
+        self.check_authority(token, before)?;
+        SourceMedia::validate_epoch(next)?;
+        if next.group != self.transport.group
+            || next.epoch <= self.transport.epoch
+            || self.max_ahead_ns <= next.admitted_lifetime_margin_ns
+            || self
+                .work_and_lead_ns
+                .checked_add(before.group_clock.uncertainty_ns)
+                .is_none_or(|margin| margin > next.admitted_lifetime_margin_ns)
+            || self
+                .carrier
+                .group_view(self.transport.group)
+                .is_none_or(|group| {
+                    group.epoch != self.transport.epoch || group.peers != self.peers.len()
+                })
+        {
+            return Err(RuntimeError::Configuration);
+        }
+        let latest = before
+            .group_clock
+            .group_ns
+            .checked_add(before.group_clock.uncertainty_ns)
+            .ok_or(RuntimeError::Clock)?;
+        let cutoff = next
+            .presentation_ns
+            .checked_sub(next.admitted_lifetime_margin_ns)
+            .ok_or(RuntimeError::Configuration)?;
+        if latest >= cutoff {
+            return Err(RuntimeError::SeekAnchorExpired);
+        }
+        self.arbiter.check_publish(
+            &self.session,
+            &self.identity.source,
+            self.identity.policy_epoch,
+        )?;
+        let admitted = self.arbiter.submit(
+            &self.session,
+            token,
+            latest,
+            &SourceCommand {
+                source: self.identity.source.clone(),
+                class: CommandClass::Seek,
+                expected_epoch: self.identity.policy_epoch,
+            },
+        )?;
+        let transitioned = (|| {
+            self.carrier.advance_group_epoch(next.group, next.epoch)?;
+            self.source.seek_new_epoch(
+                &mut self.carrier,
+                target_native_frame,
+                next,
+                SourceAuthority {
+                    arbiter: &self.arbiter,
+                    session: &self.session,
+                },
+            )?;
+            self.transport = next;
+            self.consumed_frames = 0;
+            self.selected = false;
+            self.eof = false;
+            let after = self.observe()?;
+            self.check_authority(token, after)?;
+            let latest = after
+                .group_clock
+                .group_ns
+                .checked_add(after.group_clock.uncertainty_ns)
+                .ok_or(RuntimeError::Clock)?;
+            if latest >= cutoff {
+                return Err(RuntimeError::SeekAnchorExpired);
+            }
+            // Epoch transition intentionally purges old queued/held packets.
+            // Preserve lifetime counters, excluding only pre-transition losses
+            // from this epoch's drain decision. Saturation/fences remain unknown.
+            self.epoch_loss_baseline = self.loss_tally()?.0;
+            Ok::<(), RuntimeError>(())
+        })();
+        if let Err(error) = transitioned {
+            self.stop();
+            return Err(error);
+        }
+        Ok(admitted)
+    }
+
     /// Apply the current session's fenced group command. A successful stop,
     /// topology change or epoch advance makes this owner terminal before old
     /// queued media can be pumped. A topology change requires a newly bound
@@ -471,6 +593,51 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
                 Err(error)
             }
         }
+    }
+
+    /// Lifetime loss totals cannot reset through this exclusive owner. Use a
+    /// wider checked sum so multiple independent u64 counters cannot overflow
+    /// together; saturation is permanently unknown, never a clean delta.
+    fn loss_tally(&self) -> Result<(u128, bool), RuntimeError> {
+        let source = self.source.counters();
+        let mut total = 0u128;
+        let mut unknown = source.saturated;
+        let mut add = |count: u64| -> Result<(), RuntimeError> {
+            unknown |= count == u64::MAX;
+            total = total
+                .checked_add(u128::from(count))
+                .ok_or(RuntimeError::Configuration)?;
+            Ok(())
+        };
+        for count in [
+            source.expired_blocks,
+            source.skipped_fenced,
+            source.skipped_mtu,
+            source.skipped_stalled,
+            source.skipped_capacity,
+            source.skipped_sequence,
+        ] {
+            add(count)?;
+        }
+        let mut fenced = false;
+        for peer in &self.peers {
+            let view = self
+                .carrier
+                .peer_view(*peer)
+                .ok_or(RuntimeError::Configuration)?;
+            fenced |= view.fence.is_some();
+            let counts = view.counters;
+            for count in [
+                counts.media_dropped_overflow_packets,
+                counts.media_dropped_aggregate_packets,
+                counts.media_dropped_late_packets,
+                counts.media_dropped_fenced_packets,
+                counts.media_dropped_send_error_packets,
+            ] {
+                add(count)?;
+            }
+        }
+        Ok((total, unknown || fenced))
     }
 
     fn step_inner(
@@ -607,14 +774,8 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
                 .group_view(self.transport.group)
                 .ok_or(RuntimeError::Configuration)?;
             let mut in_flight = 0u64;
-            let counters = self.source.counters();
-            let mut lost = counters.expired_blocks != 0
-                || counters.skipped_fenced != 0
-                || counters.skipped_mtu != 0
-                || counters.skipped_stalled != 0
-                || counters.skipped_capacity != 0
-                || counters.skipped_sequence != 0
-                || counters.saturated;
+            let (losses, unknown) = self.loss_tally()?;
+            let lost = unknown || losses != self.epoch_loss_baseline;
             for peer in &self.peers {
                 let view = self
                     .carrier
@@ -623,13 +784,6 @@ impl<P: DatagramPort, C: RuntimeClock> SourceRuntime<P, C> {
                 in_flight = in_flight
                     .checked_add(view.in_flight)
                     .ok_or(RuntimeError::Configuration)?;
-                let counts = &view.counters;
-                lost |= view.fence.is_some()
-                    || counts.media_dropped_overflow_packets != 0
-                    || counts.media_dropped_aggregate_packets != 0
-                    || counts.media_dropped_late_packets != 0
-                    || counts.media_dropped_fenced_packets != 0
-                    || counts.media_dropped_send_error_packets != 0;
             }
             progress = if group.queued_packets == 0 && in_flight == 0 {
                 if lost {
@@ -1452,5 +1606,8 @@ mod tests {
     }
     mod authority {
         include!("source_runtime/authority_tests.rs");
+    }
+    mod seek {
+        include!("source_runtime/seek_tests.rs");
     }
 }
