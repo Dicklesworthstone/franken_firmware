@@ -1,7 +1,8 @@
 //! A regular-file [`Storage`] for the Virtual House control owner (`N02` / `ffw-ugf`): the restart evidence of a durable control
 //! plane can cross a PROCESS boundary instead of living in RAM ([`RamMedium`](franken_control::channel::pipeline::RamMedium)).
 //!
-//! This is a prototype medium for the harness, not a device medium: no block or character device, no flash, and no claim about a
+//! This is a prototype medium for the harness and the opt-in `journal-process`
+//! child backend, not a device medium: no block or character device, no flash, no old-kernel qualification, and no claim about a
 //! power cut. A process kill keeps every byte already handed to the operating system, synced or not, so a killed owner proves a
 //! restart, not `sync_all`. A device owner will have flash behind the same trait; this file is its stand-in, written as one module
 //! whose only imports are `Limits`, `Storage` and `StorageFault`, so it can move into the journal crate as a file move.

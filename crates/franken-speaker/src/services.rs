@@ -284,13 +284,15 @@ mod tests {
         for name in &declared {
             let known = *name == "default"
                 || *name == "harness"
+                // An opt-in storage backend, not a native audio/voice service.
+                || *name == "journal-process"
                 || NativeService::ALL.iter().any(|s| s.feature() == *name);
             assert!(
                 known,
                 "Cargo.toml declares {name:?}, which no service names"
             );
         }
-        assert_eq!(declared.len(), 2 + NativeService::ALL.len());
+        assert_eq!(declared.len(), 3 + NativeService::ALL.len());
     }
 
     #[test]

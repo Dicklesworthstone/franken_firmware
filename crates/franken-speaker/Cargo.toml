@@ -1,5 +1,6 @@
 [package]
 name = "franken-speaker"
+default-run = "franken-speaker"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
@@ -29,13 +30,15 @@ franken-stream.workspace = true
 franken-codec = { path = "../franken-codec" }
 franken-session.workspace = true
 franken-control.workspace = true
+franken-journal = { path = "../franken-journal" }
 
 [dev-dependencies]
 franken-test-support.workspace = true
-franken-journal = { path = "../franken-journal" }
 
 [features]
 default = []
+# Explicit regular-file child-process prototype; no harness or test-support edge.
+journal-process = []
 # The Virtual House harness (`--virtual-house`, `--self-test`). Never part of a device image.
 harness = ["dep:franken-test-support"]
 # Native services and artwork (P01 BLK-006). Each is named in the P01 workspace contract (`cargo_feature`, owner_crate =
@@ -48,3 +51,13 @@ airplay2 = []
 tailnet_native = []
 alexa_bridge = []
 artwork = []
+
+[[bin]]
+name = "franken-journal-worker"
+path = "src/bin/franken-journal-worker.rs"
+required-features = ["journal-process"]
+
+[[test]]
+name = "journal_process"
+path = "tests/journal_process.rs"
+required-features = ["journal-process"]

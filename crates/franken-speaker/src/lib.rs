@@ -23,6 +23,8 @@ pub enum SpeakerReadinessState {
 pub mod button_adapter;
 pub mod clock_view;
 pub mod guest_evidence;
+#[cfg(all(unix, feature = "journal-process"))]
+pub mod journal_process;
 pub mod media_playout;
 pub mod net_carrier;
 pub mod network_render;
@@ -48,9 +50,9 @@ mod control_adapter;
 #[cfg(any(test, feature = "harness"))]
 pub mod fsonos_loopback;
 
-// A regular-file `Storage` for the harness control plane, and the process-restart driver that runs the durable plane over it
-// (`--control-restart`). Harness and test builds on unix only; neither is compiled into a device build.
-#[cfg(all(unix, any(test, feature = "harness")))]
+// Regular-file Storage for harness/restart tests and the explicitly selected
+// isolated journal-process prototype. Absent from default device builds.
+#[cfg(all(unix, any(test, feature = "harness", feature = "journal-process")))]
 pub mod file_medium;
 
 #[cfg(all(unix, feature = "harness"))]

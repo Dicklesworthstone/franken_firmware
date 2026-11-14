@@ -1,0 +1,53 @@
+test codec::tests::a_hostile_length_is_refused_before_any_bytes_are_taken ... ok
+test codec::tests::a_segment_header_round_trips_and_a_flipped_bit_is_not_a_header ... ok
+test codec::tests::crc32_matches_the_published_check_value ... ok
+test fleet_profile_tests::explicit_fleet_limits_validate_without_changing_standard ... ok
+test journal::commit_cursor::tests::cursor_cancel_before_io_is_clean_but_after_write_requires_recovery ... ok
+test journal::commit_cursor::tests::cursor_cancel_submitted_work_requires_quiescence_before_durable_recovery ... ok
+test journal::commit_cursor::tests::cursor_pending_does_not_repeat_or_advance_a_storage_operation ... ok
+test journal::commit_cursor::tests::cursor_poll_driver_wakes_and_resumes_without_duplicate_writes ... ok
+test journal::commit_cursor::tests::cursor_publishes_only_after_sync_and_explicit_publication_step ... ok
+test journal::commit_cursor::tests::cursor_storage_failures_never_publish_staged_mark ... ok
+test journal::commit_cursor::tests::owned_and_borrowed_progress_match_bytes_through_compaction ... ok
+test journal::commit_cursor::tests::owned_cancel_returns_submitted_backend_for_quiescence_even_after_poisoned_retry ... ok
+test journal::commit_cursor::tests::owned_storage_failure_returns_unpublished_journal_and_unknown_durable_outcome ... ok
+test state::tests::a_mark_never_goes_down_and_an_equal_value_is_fine ... ok
+test state::tests::a_revoked_identity_returns_only_at_a_strictly_higher_version ... ok
+test state::tests::a_tombstone_keeps_its_slot_and_a_pairing_reset_leaves_one_per_identity ... ok
+test state::tests::a_tombstone_operation_is_only_valid_inside_a_snapshot ... ok
+test state::tests::errors_name_the_rule_and_never_the_key_or_the_value ... ok
+test storage::tests::a_cut_keeps_the_durable_bytes_plus_a_budgeted_prefix_of_what_was_not_synced ... ok
+test storage::tests::a_failed_sync_can_leave_the_data_or_not_and_kills_the_power ... ok
+test storage::tests::an_io_failure_has_no_effect_on_the_view ... ok
+test storage::tests::programming_can_only_clear_bits_and_an_erase_restores_them ... ok
+test storage::tests::unsynced_writes_are_visible_to_reads_but_not_durable ... ok
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test a_failed_open_leaves_the_medium_for_the_next_attempt ... ok
+test a_failed_or_unknown_commit_poisons_the_journal_and_reopening_yields_exactly_old_or_new ... ok
+test a_mark_never_goes_down_and_an_unchanged_mark_writes_nothing ... ok
+test a_recovered_journal_is_immediately_usable_for_every_hostile_image ... ok
+    Finished `test` profile [unoptimized] target(s) in 5.84s
+test a_revoked_identity_never_comes_back_across_cuts_inside_compactions ... ok
+test a_volume_storm_is_one_frame_and_the_wear_budget_is_a_hard_limit ... ok
+test bounds_are_enforced_and_a_refused_operation_writes_nothing ... ok
+test credentials_are_versioned_and_a_tombstone_survives_restart_and_compaction ... ok
+test errors_never_carry_a_key_or_a_value ... ok
+test the_medium_is_never_programmed_over_a_dirty_byte ... ok
+test the_three_resets_are_separate_operations ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.29s
+test u01_proc_a_capped_stdout_does_not_bypass_the_child_deadline_or_leave_it_alive ... ok
+test u01_proc_a_clean_run_commits_every_step_and_a_fresh_process_recovers_the_exact_reference_bytes ... ok
+test u01_proc_a_kill_at_the_cut_leaves_the_same_image_as_an_abort_at_the_same_byte ... ok
+test u01_proc_a_process_killed_at_sampled_bytes_recovers_exactly_the_old_or_the_new_state ... ok
+test u01_proc_a_waiting_child_whose_parent_is_gone_leaves_by_itself_and_does_not_abort ... ok
+test u01_proc_every_hostile_image_recovers_in_a_real_process_as_the_reference_says ... ok
+test u01_proc_sigkill_after_an_acknowledged_step_recovers_exactly_the_old_or_the_new_state ... ok
+test u01_proc_the_child_waits_alive_at_the_cut_and_only_the_parents_kill_ends_it ... ok
+test u01_proc_the_old_or_new_check_rejects_a_state_that_is_neither ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 88.15s
+test every_hostile_image_opens_as_the_reference_says_and_leaves_the_same_bytes_behind ... ok
+test every_scripted_scenario_produces_the_references_states_outcomes_and_media_bytes ... ok
+test power_cut_at_every_point_gives_the_same_media_as_the_reference_and_recovers_old_or_new ... ok
+test the_limits_and_the_format_constants_are_the_ones_the_reference_used ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.46s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
