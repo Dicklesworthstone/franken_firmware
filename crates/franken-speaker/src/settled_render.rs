@@ -186,6 +186,7 @@ pub struct SettledRender<
     // Natural completion also drains the HAL. It does not grant an explicit
     // stop/revocation a route back into transport feedback.
     final_feedback_revoked: bool,
+    output_grants_required: bool,
     join: Option<(u64, AuthorityToken)>,
 }
 
@@ -289,6 +290,7 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             active: false,
             stopping: false,
             final_feedback_revoked: false,
+            output_grants_required: false,
             join: None,
         })
     }
@@ -912,6 +914,68 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
         }
     }
 
+    /// Opt this fresh owner into explicit whole-block output grants before
+    /// joining. This cannot be enabled/disabled after joining or used to reset
+    /// authority, an output interval, or retained device custody.
+    pub fn require_output_grants(&mut self) -> Result<(), OwnerError> {
+        if self.active || self.stopping || self.join.is_some() || self.button_configuration_closed {
+            return Err(OwnerError::JoinState);
+        }
+        self.output_grants_required = true;
+        Ok(())
+    }
+
+    /// Trusted in-process grant issuance, not a new authenticated wire command.
+    /// The owner checks its canonical member/epoch and live control authority;
+    /// the requested half-open bound is an absolute 48 kHz group frame.
+    /// This may allocate in membership and belongs on the control path.
+    /// Existing grants only extend. Expired authority cannot issue a grant and
+    /// this mode retains the existing conservative lease-expiry stop policy;
+    /// it does not implement post-lease G01 grant drain or takeover.
+    pub fn grant_output(
+        &mut self,
+        token: &AuthorityToken,
+        through_frame: u64,
+    ) -> Result<u64, OwnerError> {
+        if !self.output_grants_required
+            || !self.active
+            || self.stopping
+            || self.render.is_terminal()
+            || token != &self.authority
+        {
+            return Err(OwnerError::Binding);
+        }
+        if self.reconcile()? == RenderApplication::Stopping {
+            return Err(OwnerError::Binding);
+        }
+        let bounds = self.bounds(false)?;
+        if !self
+            .membership
+            .lease_is_live(&self.session, token, bounds.latest_ns)
+            || !self.control.lease_is_live(&self.session, bounds.latest_ns)
+            || self.join.as_ref().is_none_or(|(_, join)| {
+                !self
+                    .membership
+                    .lease_is_live(&self.session, join, bounds.latest_ns)
+            })
+        {
+            let _ = self.request_stop();
+            return Err(OwnerError::LeaseExpired);
+        }
+        self.membership
+            .grant_output(
+                &self.session,
+                token,
+                &self.member,
+                through_frame,
+                GroupTime {
+                    ns: bounds.latest_ns,
+                    frame: bounds.earliest_frame,
+                },
+            )
+            .map_err(OwnerError::Membership)
+    }
+
     pub fn render_step<T: TimingModel>(
         &mut self,
         timing: &mut T,
@@ -921,7 +985,40 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             RenderApplication::Stopping => Ok(PlaybackStep::Stopping),
             RenderApplication::PolicyAccepted | RenderApplication::Finishing => {
                 let before = self.render.render_counters().frames_submitted;
-                match self.render.step(timing) {
+                let mut grant_refusal = false;
+                let result = if self.output_grants_required {
+                    let membership = &self.membership;
+                    let member = &self.member;
+                    let control = &self.control;
+                    let session = &self.session;
+                    let authority = &self.authority;
+                    let join = &self.join;
+                    let last_upper = &mut self.last_group_upper_ns;
+                    self.render
+                        .step_with_output_permission(timing, |through, sampled| {
+                            let latest = last_upper.map_or(sampled, |last| last.max(sampled));
+                            *last_upper = Some(latest);
+                            if !membership.lease_is_live(session, authority, latest)
+                                || !control.lease_is_live(session, latest)
+                                || join.as_ref().is_none_or(|(_, token)| {
+                                    !membership.lease_is_live(session, token, latest)
+                                })
+                            {
+                                grant_refusal = true;
+                                return false;
+                            }
+                            through
+                                .checked_sub(1)
+                                .is_some_and(|last| membership.output_permitted(member, last))
+                        })
+                } else {
+                    self.render.step(timing)
+                };
+                if grant_refusal {
+                    let _ = self.request_stop();
+                    return Err(OwnerError::LeaseExpired);
+                }
+                match result {
                     Ok(step) => {
                         // Only an actual newly submitted protected frame is
                         // enough to report Playing; admission is not playback.

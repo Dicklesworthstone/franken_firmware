@@ -37,6 +37,27 @@ pub struct TickMapping {
 }
 
 impl TickMapping {
+    // Preserve the rational mapping until the final frame ceiling. Rounding
+    // nanoseconds first can misclassify an exact 48 kHz exclusive boundary.
+    fn output_end_frame(self, tick: u64, uncertainty_ns: u64) -> Option<u64> {
+        let denominator = i128::from(self.tick_denominator);
+        if denominator == 0 {
+            return None;
+        }
+        let delta = i128::from(tick) - i128::from(self.anchor_tick);
+        let ns = i128::from(self.anchor_group_ns)
+            .checked_mul(denominator)?
+            .checked_add(delta.checked_mul(i128::from(self.ns_numerator))?)?
+            .checked_add(i128::from(uncertainty_ns).checked_mul(denominator)?)?;
+        if ns < 0 || ns > i128::from(u64::MAX).checked_mul(denominator)? {
+            return None;
+        }
+        let divisor = denominator.checked_mul(1_000_000_000)?;
+        let numerator = ns.checked_mul(48_000)?;
+        let frame = numerator.checked_add(divisor.checked_sub(1)?)? / divisor;
+        u64::try_from(frame).ok().filter(|frame| *frame != 0)
+    }
+
     fn at(self, tick: u64) -> Option<u64> {
         if self.tick_denominator == 0 {
             return None;
@@ -119,6 +140,7 @@ pub enum NetworkRenderError {
     Timeline,
     Capacity,
     Ended,
+    OutputPermission,
 }
 
 #[derive(Debug)]
@@ -295,6 +317,7 @@ pub struct NetworkRender<P: DatagramPort, O: KernelOps, B: DeviceBackend> {
     start: StartPreconditions,
     busy_deadline_ns: Option<u64>,
     last_presentation_end_ns: Option<u64>,
+    busy_output_end_tick: Option<u64>,
     terminal: bool,
     complete: bool,
     software_silent_start: bool,
@@ -403,6 +426,7 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
             start,
             busy_deadline_ns: None,
             last_presentation_end_ns: None,
+            busy_output_end_tick: None,
             terminal: false,
             complete: false,
             software_silent_start: false,
@@ -477,6 +501,7 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
     }
 
     fn invalidate(&mut self) {
+        self.busy_output_end_tick = None;
         self.revoke_final_feedback();
         self.pcm.clear();
         self.terminal = true;
@@ -927,6 +952,29 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
         &mut self,
         timing: &mut T,
     ) -> Result<OwnerStep, NetworkRenderError> {
+        self.step_controlled(timing, false, &mut |_, _| true)
+    }
+
+    /// The enclosing owner supplies a bounded in-memory grant predicate over
+    /// the absolute group-frame exclusive end and the same fresh upper group
+    /// time used for this mutation. No I/O, allocation or reentrancy
+    /// is permitted in the predicate. Denied new work retains PCM; denied busy
+    /// work is discarded before HAL submission. Submitted buffers still need
+    /// the ordinary actual cancel/drain acknowledgment.
+    pub(crate) fn step_with_output_permission<T: TimingModel, F: FnMut(u64, u64) -> bool>(
+        &mut self,
+        timing: &mut T,
+        mut permitted: F,
+    ) -> Result<OwnerStep, NetworkRenderError> {
+        self.step_controlled(timing, true, &mut permitted)
+    }
+
+    fn step_controlled<T: TimingModel, F: FnMut(u64, u64) -> bool>(
+        &mut self,
+        timing: &mut T,
+        enforce: bool,
+        permitted: &mut F,
+    ) -> Result<OwnerStep, NetworkRenderError> {
         if self.terminal {
             if self.complete && self.render.state() == RenderState::Stopped {
                 return Ok(OwnerStep::Complete);
@@ -943,7 +991,7 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
             }
             return Err(NetworkRenderError::Ended);
         }
-        match self.step_inner(timing) {
+        match self.step_inner(timing, enforce, permitted) {
             Ok(value) => Ok(value),
             Err(error) => {
                 self.invalidate();
@@ -952,16 +1000,58 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
         }
     }
 
-    fn step_inner<T: TimingModel>(
+    fn output_permission<F: FnMut(u64, u64) -> bool>(
+        &self,
+        view: franken_stream::playout::ClockView,
+        permitted: &mut F,
+    ) -> Result<bool, NetworkRenderError> {
+        let latest = view
+            .group_ns
+            .checked_add(view.uncertainty_ns)
+            .ok_or(NetworkRenderError::Clock)?;
+        let uncertainty = self
+            .mapping
+            .uncertainty_ns
+            .checked_add(view.uncertainty_ns)
+            .ok_or(NetworkRenderError::Mapping)?;
+        if self.render.block_in_progress() {
+            let end = self
+                .busy_output_end_tick
+                .ok_or(NetworkRenderError::Mapping)?;
+            let through = self
+                .mapping
+                .output_end_frame(end, uncertainty)
+                .ok_or(NetworkRenderError::Mapping)?;
+            if !permitted(through, latest) {
+                return Err(NetworkRenderError::OutputPermission);
+            }
+        }
+        let slot = self.render.next_slot().ok_or(NetworkRenderError::Mapping)?;
+        let end = slot
+            .presentation_tick
+            .checked_add(self.render.config().period_ticks)
+            .ok_or(NetworkRenderError::Mapping)?;
+        let through = self
+            .mapping
+            .output_end_frame(end, uncertainty)
+            .ok_or(NetworkRenderError::Mapping)?;
+        Ok(permitted(through, latest))
+    }
+
+    fn step_inner<T: TimingModel, F: FnMut(u64, u64) -> bool>(
         &mut self,
         timing: &mut T,
+        enforce: bool,
+        permitted: &mut F,
     ) -> Result<OwnerStep, NetworkRenderError> {
         let mut view = self.fresh_clock()?;
         if !self.render.presentation_mapping_valid() {
             return Err(NetworkRenderError::Mapping);
         }
-        // Do not consume an N04 decision unless its entire timeline slot fits.
-        if self.pcm.next_frame < self.pcm.final_frame {
+        let mut next_permitted = !enforce || self.output_permission(view, permitted)?;
+        // Do not consume an N04 decision without a whole-block output grant or
+        // unless its entire timeline slot fits.
+        if next_permitted && self.pcm.next_frame < self.pcm.final_frame {
             let remaining = self.pcm.final_frame - self.pcm.next_frame;
             let needed = usize::try_from(remaining.min(BLOCK_FRAMES))
                 .map_err(|_| NetworkRenderError::Timeline)?;
@@ -996,6 +1086,9 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
             }
         }
 
+        if enforce {
+            next_permitted = self.output_permission(view, permitted)?;
+        }
         let slot = self.render.next_slot().ok_or(NetworkRenderError::Mapping)?;
         let pulled = self
             .pcm
@@ -1064,11 +1157,12 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
         }
         let required = usize::try_from(slot.required_source_frames)
             .map_err(|_| NetworkRenderError::Capacity)?;
-        let available = if eof {
-            !history_drained
-        } else {
-            self.pcm.len >= required
-        };
+        let available = next_permitted
+            && if eof {
+                !history_drained
+            } else {
+                self.pcm.len >= required
+            };
         let tail_presented_by_schedule = self.last_presentation_end_ns.is_some_and(|end| {
             end.checked_add(self.mapping.uncertainty_ns)
                 .is_some_and(|latest| view.group_ns.saturating_sub(view.uncertainty_ns) >= latest)
@@ -1088,9 +1182,20 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
             if view_latest > deadline.saturating_sub(self.mapping.uncertainty_ns) {
                 return Err(NetworkRenderError::Timeline);
             }
-            if !available && !slot.in_progress {
+            if !available
+                && !slot.in_progress
+                && !(enforce
+                    && !next_permitted
+                    && matches!(
+                        self.render.state(),
+                        RenderState::Running | RenderState::Muted
+                    ))
+            {
                 return Ok(OwnerStep::Waiting);
             }
+            // A running no-grant wait must still poll already-owned HAL
+            // completions/faults. The tick below denies all new source work
+            // while preserving this run's original fixed timeline/deadline.
         }
         if matches!(
             self.render.state(),
@@ -1138,8 +1243,14 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
         self.pcm.padding_available = 0;
         if tick.finished.is_some() {
             self.busy_deadline_ns = None;
+            self.busy_output_end_tick = None;
         }
         if tick.started.is_some() && self.render.block_in_progress() {
+            self.busy_output_end_tick = Some(
+                slot.presentation_tick
+                    .checked_add(self.render.config().period_ticks)
+                    .ok_or(NetworkRenderError::Mapping)?,
+            );
             let mapped = deadline.saturating_sub(self.mapping.uncertainty_ns);
             self.busy_deadline_ns = Some(mapped);
         }

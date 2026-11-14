@@ -2450,3 +2450,10 @@ fn final_feedback_permit_receives_send_bound_and_denial_revokes() {
         }
     }
 }
+
+mod output_grants {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/network_render/tests/output_grants.rs"
+    ));
+}

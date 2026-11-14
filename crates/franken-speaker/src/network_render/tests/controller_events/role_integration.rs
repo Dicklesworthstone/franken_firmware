@@ -1428,3 +1428,10 @@ fn mono_sum_protected_pcm_differs_from_stereo_left_and_right() {
     // input is mathematically equivalent to MonoSum for ordinary PCM, so this
     // test does not claim a role distinction from that output alone.
 }
+
+mod output_grants {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/network_render/tests/controller_events/role_integration/output_grants.rs"
+    ));
+}
