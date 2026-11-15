@@ -126,6 +126,16 @@ pub struct PendingControlCompletion {
     pub deferred_datagrams: Vec<Vec<u8>>,
 }
 
+impl std::fmt::Debug for PendingControlCompletion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingControlCompletion")
+            .field("durable_success", &self.step.control.is_ok())
+            .field("notification_count", &self.step.notifications.len())
+            .field("deferred_datagram_count", &self.deferred_datagrams.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Consuming shutdown handoff after the HAL acknowledged stop. The caller
 /// retains the complete drained renderer, control storage and event endpoint;
 /// a process backend must still be quiesced and its separate worker reaped.
@@ -241,6 +251,11 @@ fn frames_at(ns: u64) -> Option<u64> {
     u64::try_from(u128::from(ns).checked_mul(48_000)? / 1_000_000_000).ok()
 }
 
+type PollableHttpService<K, S, P, O, B> = fn(
+    &mut SettledRender<K, S, P, O, B>,
+    &mut HttpMailboxOwner,
+) -> Result<HttpService, HttpMailboxError>;
+
 /// Everything that can change this member's control and render state is owned.
 pub struct SettledRender<
     K: SecretStore,
@@ -269,6 +284,10 @@ pub struct SettledRender<
     transport: TransportState,
     transport_dirty: bool,
     http_identity: HttpOwnerIdentity,
+    pending_http: Option<crate::settled_http::PendingOwnerRequest>,
+    pending_soap: Option<franken_control::fsonos::DeferredSoap>,
+    pending_http_notifications: Vec<Notification>,
+    pollable_http: Option<PollableHttpService<K, S, P, O, B>>,
     active: bool,
     stopping: bool,
     // Natural completion also drains the HAL. It does not grant an explicit
@@ -380,6 +399,10 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             transport: TransportState::Transitioning,
             transport_dirty: true,
             http_identity: HttpOwnerIdentity::new(),
+            pending_http: None,
+            pending_soap: None,
+            pending_http_notifications: Vec::new(),
+            pollable_http: None,
             active: false,
             stopping: false,
             final_feedback_revoked: false,
@@ -707,6 +730,9 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
     }
 
     pub fn step_control(&mut self) -> Result<ControlStep, OwnerError> {
+        if self.pollable_http.is_some() {
+            return Err(OwnerError::ControlPending);
+        }
         let runtime = self.control_runtime.clone();
         runtime
             .turn(|| self.step_control_owned())
@@ -732,6 +758,9 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
         &mut self,
         request: &HttpRequest<'_>,
     ) -> Result<ControlResult<Handled>, OwnerError> {
+        if self.pollable_http.is_some() {
+            return Err(OwnerError::ControlPending);
+        }
         let runtime = self.control_runtime.clone();
         runtime
             .turn(|| self.handle_soap_owned(request))
@@ -764,8 +793,10 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
     }
 
     /// Service at most one admitted HTTP request on the caller's control path.
-    /// No network I/O or waiting is performed by the render loop. The copied
-    /// session is diagnostic host state, not evidence of physical output.
+    /// Synchronous storage uses the compatibility path; explicitly selected
+    /// pollable storage drives one cooperative reactor turn and may return
+    /// `Pending`, retaining its request and journal. Call outside the render
+    /// callback. The copied session is diagnostic state, not physical output.
     /// The first call, even when idle, associates this exact owner instance
     /// with this one mailbox. Other owners, other mailboxes and generic
     /// service cannot replace either side of that association.
@@ -773,6 +804,9 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
         &mut self,
         mailbox: &mut HttpMailboxOwner,
     ) -> Result<HttpService, HttpMailboxError> {
+        if let Some(service) = self.pollable_http {
+            return service(self, mailbox);
+        }
         let runtime = self.control_runtime.clone();
         runtime
             .turn(|| self.service_http_owned(mailbox))
@@ -1281,6 +1315,11 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
         if !self.stopping {
             self.stopping = true;
             self.note_transport(TransportState::Transitioning);
+        }
+        if !matches!(
+            self.render.render_state(),
+            RenderState::Draining | RenderState::Stopped
+        ) {
             self.render.cancel().map_err(OwnerError::Render)?;
             if self.render.render_state() == RenderState::Stopped
                 && self.render.stop_report().acknowledged
@@ -1304,6 +1343,7 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             || self.render.render_state() != RenderState::Stopped
             || !self.render.stop_report().acknowledged
             || !matches!(&self.control, ControlSlot::Ready(_))
+            || self.pending_http.is_some()
         {
             return Err(self);
         }
@@ -1464,10 +1504,21 @@ impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBac
     /// Begin one owned durable step. Rendering and physical local stop remain
     /// available; ordinary mutable control ingress returns `ControlPending`.
     pub fn begin_pending_control(&mut self) -> Result<(), OwnerError> {
+        if self.pending_http.is_some() {
+            return Err(OwnerError::ControlPending);
+        }
+        self.begin_pending_control_inner()
+    }
+
+    fn begin_pending_control_inner(&mut self) -> Result<(), OwnerError> {
         if self.stopping || self.stop_generation == u64::MAX {
             return Err(OwnerError::JoinState);
         }
         let now_ns = self.bounds(false)?.latest_ns;
+        self.begin_pending_control_at(now_ns)
+    }
+
+    fn begin_pending_control_at(&mut self, now_ns: u64) -> Result<(), OwnerError> {
         let slot = std::mem::replace(&mut self.control, ControlSlot::Moving);
         match slot {
             ControlSlot::Ready(owner) => {
@@ -1490,6 +1541,9 @@ impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBac
         &mut self,
         bytes: &[u8],
     ) -> Result<(), franken_control::channel::owner::DeferredIngressError> {
+        if self.pending_http.is_some() {
+            return Err(franken_control::channel::owner::DeferredIngressError::Full);
+        }
         match &mut self.control {
             ControlSlot::Pending(pending) => pending.defer_datagram(bytes),
             _ => Err(franken_control::channel::owner::DeferredIngressError::NotPending),
@@ -1501,6 +1555,16 @@ impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBac
     /// A clock failure cancels publication but still drains the accepted I/O,
     /// retaining journal/worker custody until terminal extraction.
     pub fn poll_pending_control(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<PendingControlCompletion, OwnerError>> {
+        if self.pending_http.is_some() {
+            return std::task::Poll::Ready(Err(OwnerError::ControlPending));
+        }
+        self.poll_pending_control_inner(cx)
+    }
+
+    fn poll_pending_control_inner(
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<PendingControlCompletion, OwnerError>> {
@@ -1545,6 +1609,329 @@ impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBac
                     },
                     deferred_datagrams,
                 }))
+            }
+        }
+    }
+}
+
+/// One finite production owner turn. Pending storage remains owned across
+/// calls; this reports neither hardware deadlines nor successful playback.
+#[derive(Debug)]
+pub struct ServiceTurn {
+    /// Complete owned datagram round, including raw deferred ingress that the
+    /// caller must explicitly re-authenticate or return to its sender.
+    pub control: Option<Result<PendingControlCompletion, OwnerError>>,
+    pub http: Option<Result<HttpService, HttpMailboxError>>,
+    pub render: Result<PlaybackStep, OwnerError>,
+    pub drain: Option<Result<DrainProgress, OwnerError>>,
+    pub stop: Option<Result<RenderApplication, OwnerError>>,
+    pub stop_mute_acknowledged: Option<bool>,
+}
+
+impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBackend>
+    SettledRender<K, S, P, O, B>
+{
+    /// Select pollable durability for the existing `service_http` entry point.
+    /// This is a one-way mode selection; accepted pending I/O cannot be switched
+    /// back to synchronous storage. The caller still owns render/Stop scheduling.
+    pub fn use_pollable_control(&mut self) {
+        self.pollable_http = Some(Self::service_http_pollable);
+    }
+
+    fn service_http_pollable(
+        &mut self,
+        mailbox: &mut HttpMailboxOwner,
+    ) -> Result<HttpService, HttpMailboxError> {
+        let runtime = self.control_runtime.clone();
+        runtime
+            .drive(|| self.service_http_pollable_inner(mailbox))
+            .map_err(|error| match error {
+                ControlRuntimeError::Busy => HttpMailboxError::Busy,
+                _ => HttpMailboxError::Unavailable,
+            })?
+    }
+
+    async fn service_http_pollable_inner(
+        &mut self,
+        mailbox: &mut HttpMailboxOwner,
+    ) -> Result<HttpService, HttpMailboxError> {
+        use std::future::Future;
+        let runtime_cx = asupersync::cx::Cx::current().expect("owned control runtime");
+        let mut deadline = std::pin::pin!(asupersync::time::sleep(
+            runtime_cx.now(),
+            std::time::Duration::from_millis(1)
+        ));
+        std::future::poll_fn(|cx| {
+            if let std::task::Poll::Ready(result) = self.poll_service_http(cx, mailbox) {
+                return std::task::Poll::Ready(result);
+            }
+            if deadline.as_mut().poll(cx).is_ready() {
+                return std::task::Poll::Ready(Ok(HttpService::Pending));
+            }
+            std::task::Poll::Pending
+        })
+        .await
+    }
+
+    /// Production caller-driven service route for pollable storage. Each turn
+    /// checks the supplied cooperative time budget between polls, services
+    /// local Stop and rendering, and retains the one HTTP envelope until a
+    /// durable terminal outcome. A poll/HAL call is not preempted: this is not
+    /// a hard real-time deadline guarantee. Synchronous storage remains supported.
+    pub fn service_turn<T: TimingModel>(
+        &mut self,
+        mailbox: &mut HttpMailboxOwner,
+        timing: &mut T,
+        stop: &std::sync::atomic::AtomicBool,
+        budget: std::time::Duration,
+    ) -> Result<ServiceTurn, OwnerError> {
+        if budget.is_zero() || budget > std::time::Duration::from_millis(20) {
+            return Err(OwnerError::Binding);
+        }
+        self.use_pollable_control();
+        let runtime = self.control_runtime.clone();
+        // The factory captures only borrowed owner inputs; drive separately
+        // admits the concrete future layout before constructing/polling it.
+        runtime
+            .drive(|| self.service_turn_inner(mailbox, timing, stop, budget))
+            .map_err(OwnerError::Runtime)
+    }
+
+    async fn service_turn_inner<T: TimingModel>(
+        &mut self,
+        mailbox: &mut HttpMailboxOwner,
+        timing: &mut T,
+        stop: &std::sync::atomic::AtomicBool,
+        budget: std::time::Duration,
+    ) -> ServiceTurn {
+        use std::future::Future;
+        let runtime_cx = asupersync::cx::Cx::current().expect("owned control runtime");
+        let mut deadline = std::pin::pin!(asupersync::time::sleep(runtime_cx.now(), budget));
+        let mut tick = std::pin::pin!(asupersync::time::sleep(
+            runtime_cx.now(),
+            std::time::Duration::from_millis(1)
+        ));
+        let mut render = None;
+        let mut drain = None;
+        let mut stop_result = None;
+        let mut first = true;
+        std::future::poll_fn(|cx| {
+            if stop.load(std::sync::atomic::Ordering::Acquire)
+                && stop_result.is_none()
+                && (!self.stopping
+                    || !matches!(
+                        self.render.render_state(),
+                        RenderState::Draining | RenderState::Stopped
+                    ))
+            {
+                stop_result = Some(self.request_stop());
+            }
+            if first || tick.as_mut().poll(cx).is_ready() {
+                first = false;
+                render = Some(self.render_step(timing));
+                if self.stopping {
+                    drain = Some(self.drain_tick(timing));
+                }
+                tick.set(asupersync::time::sleep(
+                    runtime_cx.now(),
+                    std::time::Duration::from_millis(1),
+                ));
+                let _ = tick.as_mut().poll(cx);
+            }
+            // An already-owned datagram round retains storage before another
+            // HTTP envelope can be taken; mailbox admission remains intact.
+            // A retained HTTP envelope is its own authority for continuation.
+            // Never associate the supplied mailbox before retiring that work.
+            let (authorized, mut http) = if self.pending_http.is_some() {
+                (true, self.poll_service_http(cx, mailbox))
+            } else {
+                match mailbox.associate_owner(&mut self.http_identity) {
+                    Err(error) => (false, std::task::Poll::Ready(Err(error))),
+                    Ok(_) if matches!(self.control, ControlSlot::Pending(_)) => {
+                        (true, std::task::Poll::Pending)
+                    }
+                    Ok(_) => (true, self.poll_service_http(cx, mailbox)),
+                }
+            };
+            let mut control = None;
+            // Mailbox identity fences mailbox access, never retirement of
+            // independently authenticated, already accepted datagram work.
+            if self.pending_http.is_none()
+                && (!authorized
+                    || matches!(self.control, ControlSlot::Pending(_))
+                    || matches!(http, std::task::Poll::Ready(Ok(HttpService::Idle))))
+            {
+                if matches!(&self.control, ControlSlot::Ready(owner) if owner.has_pending_control())
+                {
+                    match self
+                        .bounds(false)
+                        .and_then(|bounds| self.begin_pending_control_at(bounds.latest_ns))
+                    {
+                        Ok(()) => {}
+                        Err(error) => control = Some(Err(error)),
+                    }
+                }
+                if let ControlSlot::Pending(pending) = &mut self.control {
+                    if self.stopping {
+                        pending.cancel();
+                    }
+                    if authorized {
+                        http = std::task::Poll::Pending;
+                    }
+                    if let std::task::Poll::Ready(result) = self.poll_pending_control_inner(cx) {
+                        control = Some(result);
+                    }
+                }
+            }
+            if control.is_some() || http.is_ready() {
+                return std::task::Poll::Ready(ServiceTurn {
+                    control,
+                    http: match http {
+                        std::task::Poll::Ready(result) => Some(result),
+                        std::task::Poll::Pending => None,
+                    },
+                    render: render.take().unwrap(),
+                    drain: drain.take(),
+                    stop: stop_result.take(),
+                    stop_mute_acknowledged: self.render.last_mute_acknowledged(),
+                });
+            }
+            if deadline.as_mut().poll(cx).is_ready() {
+                return std::task::Poll::Ready(ServiceTurn {
+                    control: None,
+                    http: None,
+                    render: render.take().unwrap(),
+                    drain: drain.take(),
+                    stop: stop_result.take(),
+                    stop_mute_acknowledged: self.render.last_mute_acknowledged(),
+                });
+            }
+            std::task::Poll::Pending
+        })
+        .await
+    }
+
+    fn poll_service_http(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+        mailbox: &mut HttpMailboxOwner,
+    ) -> std::task::Poll<Result<HttpService, HttpMailboxError>> {
+        use franken_control::fsonos::PreparedSoap;
+        use std::task::Poll;
+        // A retained envelope already carries its authorized owner/response
+        // custody. Retire that work even when the original mailbox has gone;
+        // do not access or consume a replacement mailbox during continuation.
+        // Returned HttpService names that retained request. A later intake
+        // checks (and rejects) any replacement identity normally.
+        if self.pending_http.is_none() {
+            let permit = match mailbox.associate_owner(&mut self.http_identity) {
+                Ok(p) => p,
+                Err(e) => return Poll::Ready(Err(e)),
+            };
+            if !matches!(self.control, ControlSlot::Ready(_)) {
+                return Poll::Ready(Err(HttpMailboxError::Busy));
+            }
+            let request = match mailbox.take_owned(&permit) {
+                Ok(Some(r)) => r,
+                Ok(None) => return Poll::Ready(Ok(HttpService::Idle)),
+                Err(e) => return Poll::Ready(Err(e)),
+            };
+            if request.expired() {
+                return Poll::Ready(Ok(HttpService::Expired));
+            }
+            let now = match self.bounds(false) {
+                Ok(b) => b.latest_ns,
+                Err(e) => {
+                    return Poll::Ready(Ok(request.complete(OwnedHttpReply {
+                        result: Err(e),
+                        session: self.session.clone(),
+                    })));
+                }
+            };
+            let prepared = match self.control.ready_mut() {
+                Ok(control) => request.with_view(|view| {
+                    control.prepare_soap(&mut self.soap, &mut self.session, now, &view)
+                }),
+                Err(e) => {
+                    return Poll::Ready(Ok(request.complete(OwnedHttpReply {
+                        result: Err(e),
+                        session: self.session.clone(),
+                    })));
+                }
+            };
+            match prepared {
+                PreparedSoap::Ready(control) => {
+                    let render = self.reconcile();
+                    let notifications = if self.transport_dirty {
+                        self.transport_dirty = false;
+                        self.soap.publish(now, &self.session)
+                    } else {
+                        Vec::new()
+                    };
+                    return Poll::Ready(Ok(request.complete(OwnedHttpReply {
+                        result: Ok(ControlResult {
+                            control,
+                            render,
+                            notifications,
+                        }),
+                        session: self.session.clone(),
+                    })));
+                }
+                PreparedSoap::Pending(command) => {
+                    self.pending_http = Some(request);
+                    self.pending_soap = Some(command);
+                    if let Err(e) = self.begin_pending_control_at(now) {
+                        self.pending_soap = None;
+                        let request = self.pending_http.take().unwrap();
+                        return Poll::Ready(Ok(request.complete(OwnedHttpReply {
+                            result: Err(e),
+                            session: self.session.clone(),
+                        })));
+                    }
+                }
+            }
+        }
+        // Once accepted, a disconnected/expired HTTP observer does not cancel
+        // the durable command. Finish it and record a lost reply; the client
+        // already reports OutcomeUnknown. Only local Stop fences publication.
+        if self.stopping
+            && let ControlSlot::Pending(pending) = &mut self.control
+        {
+            pending.cancel();
+        }
+        let completion = match self.poll_pending_control_inner(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Ok(v)) => v,
+            Poll::Ready(Err(_)) => return Poll::Ready(Err(HttpMailboxError::Unavailable)),
+        };
+        // This route never admits parallel ingress: pending datagrams belong
+        // to the explicit manual API, which must not be mixed with this loop.
+        let now = self.last_group_upper_ns.unwrap_or(0);
+        let command = self.pending_soap.take().unwrap();
+        self.pending_http_notifications
+            .extend(completion.step.notifications);
+        match self
+            .soap
+            .finish_round(command, completion.step.control, now, &self.session)
+        {
+            PreparedSoap::Ready(control) => {
+                let request = self.pending_http.take().unwrap();
+                Poll::Ready(Ok(request.complete(OwnedHttpReply {
+                    result: Ok(ControlResult {
+                        control,
+                        render: completion.step.render,
+                        notifications: std::mem::take(&mut self.pending_http_notifications),
+                    }),
+                    session: self.session.clone(),
+                })))
+            }
+            PreparedSoap::Pending(command) => {
+                self.pending_soap = Some(command);
+                if self.begin_pending_control_at(now).is_err() {
+                    return Poll::Ready(Err(HttpMailboxError::Unavailable));
+                }
+                cx.waker().wake_by_ref();
+                Poll::Pending
             }
         }
     }

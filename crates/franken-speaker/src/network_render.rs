@@ -647,6 +647,12 @@ impl<P: DatagramPort, O: KernelOps, B: DeviceBackend> NetworkRender<P, O, B> {
         Ok(view)
     }
 
+    /// Last actual mute acknowledgment; accepting a cancel request is not a
+    /// hardware mute acknowledgment.
+    pub(crate) fn last_mute_acknowledged(&self) -> Option<bool> {
+        self.render.last_mute_acknowledged()
+    }
+
     pub(crate) fn stop_report(&self) -> crate::render::StopReport {
         self.render.stop_report()
     }

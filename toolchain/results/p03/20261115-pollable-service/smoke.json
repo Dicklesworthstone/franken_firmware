@@ -1,0 +1,25 @@
+{
+  "scope": "host-loopback-only",
+  "native_job": "30109207290184159",
+  "status": "passed",
+  "completion": "confirmed",
+  "tests_passed": 14,
+  "test_execution": "executed",
+  "required_cases_missing": [],
+  "protocol_problems": [],
+  "receipt_root": "bd212c70403706f3f2fc6ecbe0468d90e70edb71653b95b61cb35beabbefdd0a",
+  "command_sha256": "2f3b1de48767e22de85b5c1dbc73d8a5fa2d9b1d1a6c8ec481fa91c8b61b510e",
+  "source_content_root": "5459d100b1333e9041a2fc980877f995607f31e8b14665f07631c32d5881322b",
+  "source_inputs_checked": "15/15 against this smoke receipt",
+  "output_accounting": {
+    "seen_bytes": 318924,
+    "retained_bytes": 318924,
+    "dropped_bytes": 0,
+    "complete_stream_sha256": "0e1768f178e91b745d6855f497c8ce75102ddce687636497ae242ee32892ee49"
+  },
+  "remote_required": true,
+  "terminal_acknowledged": true,
+  "source_tree_pair_retired": true,
+  "full_p03_qualified": false,
+  "qualification": "host child-process execution; no guest, provider or physical qualification"
+}

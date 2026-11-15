@@ -104,7 +104,7 @@ impl KernelOps for TestKernel {
     }
 }
 
-struct StopBackend(FakeBackend);
+struct StopBackend(FakeBackend, Option<Rc<Cell<bool>>>);
 impl DeviceBackend for StopBackend {
     fn provenance(&self) -> HalProvenance {
         self.0.provenance()
@@ -116,6 +116,9 @@ impl DeviceBackend for StopBackend {
         self.0.capabilities()
     }
     fn set_mute(&mut self, v: bool) -> Result<bool, DriverError> {
+        if v && self.1.as_ref().is_some_and(|fail| fail.get()) {
+            return Err(DriverError::Errno(5));
+        }
         self.0.set_mute(v)
     }
     fn start(&mut self) -> Result<(), DriverError> {
@@ -153,7 +156,9 @@ impl DeviceBackend for StopBackend {
     }
 }
 
-fn prepared_network() -> NetworkRender<HostUdp, TestKernel, StopBackend> {
+fn prepared_network_with_failure(
+    failure: Option<Rc<Cell<bool>>>,
+) -> NetworkRender<HostUdp, TestKernel, StopBackend> {
     let now = Rc::new(Cell::new(50_000_000));
     let matrix = franken_speaker::guest_evidence::for_abi(Abi::PowerPc32).matrix();
     let platform = admit_simulated_layer(
@@ -228,7 +233,7 @@ fn prepared_network() -> NetworkRender<HostUdp, TestKernel, StopBackend> {
     let (backend, _probe) = FakeBackend::new(config);
     let mut hal = HalSession::open(
         board,
-        StopBackend(backend),
+        StopBackend(backend, failure),
         SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), 2),
     )
     .unwrap();
@@ -290,6 +295,99 @@ fn pending_member() -> PendingMember {
 }
 
 pub(super) fn run(executable: &std::path::Path, cancel: bool) {
+    run_mode(
+        executable,
+        cancel,
+        false,
+        false,
+        false,
+        false,
+        ContinuationMode::Original,
+    );
+}
+pub(super) fn run_http(executable: &std::path::Path, cancel: bool) {
+    run_mode(
+        executable,
+        cancel,
+        true,
+        false,
+        false,
+        false,
+        ContinuationMode::Original,
+    );
+}
+pub(super) fn run_lost_http(executable: &std::path::Path) {
+    run_mode(
+        executable,
+        false,
+        true,
+        true,
+        false,
+        false,
+        ContinuationMode::Original,
+    );
+}
+pub(super) fn run_expired_http(executable: &std::path::Path) {
+    run_mode(
+        executable,
+        false,
+        true,
+        true,
+        true,
+        false,
+        ContinuationMode::Original,
+    );
+}
+pub(super) fn run_stop_failure(executable: &std::path::Path) {
+    run_mode(
+        executable,
+        true,
+        true,
+        false,
+        false,
+        true,
+        ContinuationMode::Original,
+    );
+}
+pub(super) fn run_replaced_mailbox(executable: &std::path::Path, cancel: bool) {
+    run_mode(
+        executable,
+        cancel,
+        true,
+        false,
+        false,
+        false,
+        ContinuationMode::ReplacedMailbox,
+    );
+}
+pub(super) fn run_datagram_turn(executable: &std::path::Path, cancel: bool) {
+    run_mode(
+        executable,
+        cancel,
+        false,
+        false,
+        false,
+        false,
+        ContinuationMode::DatagramTurn,
+    );
+}
+#[derive(Clone, Copy)]
+enum ContinuationMode {
+    Original,
+    ReplacedMailbox,
+    DatagramTurn,
+}
+fn run_mode(
+    executable: &std::path::Path,
+    cancel: bool,
+    http: bool,
+    lost: bool,
+    expired: bool,
+    fail_stop: bool,
+    mode: ContinuationMode,
+) {
+    let replaced_mailbox = matches!(mode, ContinuationMode::ReplacedMailbox);
+    let automatic_datagram = matches!(mode, ContinuationMode::DatagramTurn);
     use asupersync::runtime::legacy_profile::{LegacyCaps, LegacyProfile};
     use franken_speaker::file_medium::FileMedium;
     use franken_speaker::journal_process::{ProcessStorage, WorkerCustody};
@@ -387,23 +485,19 @@ pub(super) fn run(executable: &std::path::Path, cancel: bool) {
         1,
     )
     .unwrap();
-    let mut owner =
-        SettledRender::admit_fresh_group(fresh, soap, prepared_network(), pending_member(), 7)
-            .unwrap();
+    let stop_failure = Rc::new(Cell::new(false));
+    let mut owner = SettledRender::admit_fresh_group(
+        fresh,
+        soap,
+        prepared_network_with_failure(Some(Rc::clone(&stop_failure))),
+        pending_member(),
+        7,
+    )
+    .unwrap();
     owner = match owner.into_stopped_parts() {
         Err(owner) => owner,
         Ok(_) => panic!("unacknowledged output custody must remain owned"),
     };
-    let bytes = test_wire(
-        TEST_CONTROLLER,
-        1,
-        Some(0),
-        ControlCommand::AdjustGroupVolume { delta: 10 },
-    );
-    owner.receive(&bytes).unwrap();
-    owner.begin_pending_control().unwrap();
-    let mut owner = Some(owner);
-    signal(child.0.id(), "-STOP");
     let runtime = LegacyProfile::new(
         LegacyCaps {
             worker_threads: 1,
@@ -418,71 +512,518 @@ pub(super) fn run(executable: &std::path::Path, cancel: bool) {
     .caller_driven()
     .build()
     .unwrap();
-    let wakes = Arc::new(AtomicUsize::new(0));
-    let mut observed_stall = false;
-    let result = runtime.block_on(async {
-        let context = asupersync::cx::Cx::current().unwrap();
-        assert!(context.timer_driver().is_some());
-        asupersync::time::timeout(
-            context.now(),
-            Duration::from_secs(3),
-            poll_fn(|cx| {
-                let waker = Waker::from(Arc::new(Watch {
-                    count: Arc::clone(&wakes),
-                    forward: cx.waker().clone(),
-                }));
-                let before = wakes.load(Ordering::SeqCst);
-                let result = owner
-                    .as_mut()
+    owner = if http {
+        use franken_control::fsonos::{HttpRequest, Ingress, Service};
+        use franken_speaker::settled_http::{
+            HttpMailboxConfig, HttpMailboxError, HttpService, http_mailbox,
+        };
+        use std::sync::atomic::AtomicBool;
+        let (client, mut mailbox) =
+            http_mailbox(HttpMailboxConfig::new(4096, 8, Duration::from_secs(1)).unwrap()).unwrap();
+        let body = br#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:SetRelativeGroupVolume xmlns:u="urn:schemas-upnp-org:service:GroupRenderingControl:1"><InstanceID>0</InstanceID><Adjustment>10</Adjustment></u:SetRelativeGroupVolume></s:Body></s:Envelope>"#;
+        let headers = [(
+            "SOAPAction",
+            "\"urn:schemas-upnp-org:service:GroupRenderingControl:1#SetRelativeGroupVolume\"",
+        )];
+        let request = HttpRequest {
+            method: "POST",
+            path: Service::GroupRenderingControl.control_path(),
+            peer_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            ingress: Ingress::LocalLegacy,
+            headers: &headers,
+            body,
+        };
+        if lost {
+            // Production event generation; no callback HTTP is sent by this fixture.
+            let subscription = HttpRequest {
+                method: "SUBSCRIBE",
+                path: Service::GroupRenderingControl.event_path(),
+                peer_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                ingress: Ingress::LocalLegacy,
+                headers: &[
+                    ("CALLBACK", "<http://127.0.0.1:3400/events>"),
+                    ("NT", "upnp:event"),
+                    ("TIMEOUT", "Second-300"),
+                ],
+                body: &[],
+            };
+            let initial = owner.handle_soap(&subscription).unwrap();
+            assert_eq!(initial.control.response.status, 200);
+            assert_eq!(initial.control.notifications.len(), 1);
+        }
+        assert_eq!(client.diagnostics().lost_replies, 0);
+        assert_eq!(client.diagnostics().lost_notifications, 0);
+        let mut response = Some(client.submit(&request).unwrap());
+        owner.use_pollable_control();
+        assert!(matches!(
+            owner.handle_soap(&request),
+            Err(franken_speaker::settled_render::OwnerError::ControlPending)
+        ));
+        assert!(matches!(
+            owner.step_control(),
+            Err(franken_speaker::settled_render::OwnerError::ControlPending)
+        ));
+        signal(child.0.id(), "-STOP");
+        assert_eq!(
+            owner.service_http(&mut mailbox).unwrap(),
+            HttpService::Pending
+        );
+        assert!(
+            matches!(client.submit(&request), Err(HttpMailboxError::Busy)),
+            "in-flight HTTP retains the single admission slot"
+        );
+        let mut replacement_pending = None;
+        let mut replacement_client = None;
+        if replaced_mailbox {
+            let (new_client, mut new_mailbox) =
+                http_mailbox(HttpMailboxConfig::new(4096, 8, Duration::from_secs(1)).unwrap())
+                    .unwrap();
+            assert_eq!(
+                new_mailbox.service_one(|_| panic!("empty generic mailbox")),
+                Ok(HttpService::Idle)
+            );
+            replacement_pending = Some(new_client.submit(&request).unwrap());
+            replacement_client = Some(new_client);
+            // Drops the original mailbox while its accepted envelope remains
+            // owned by SettledRender and its original receiver remains live.
+            mailbox = new_mailbox;
+        }
+        stop_failure.set(fail_stop);
+        let stop = AtomicBool::new(cancel);
+        let mut timing = ScriptedTiming::default();
+        let turn = owner
+            .service_turn(&mut mailbox, &mut timing, &stop, Duration::from_millis(3))
+            .unwrap();
+        let runtime_stats = owner.control_runtime_stats();
+        assert!(runtime_stats.peak_future_state_bytes > std::mem::size_of::<usize>());
+        assert!(runtime_stats.peak_future_state_bytes <= runtime_stats.future_state_limit_bytes);
+        assert!(
+            turn.http.is_none(),
+            "stopped real worker cannot acknowledge journal commit"
+        );
+        if fail_stop {
+            assert!(
+                matches!(turn.stop, Some(Ok(_))),
+                "cancel acceptance is not mute ACK"
+            );
+            assert_eq!(
+                turn.stop_mute_acknowledged,
+                Some(false),
+                "failed HAL mute is visible"
+            );
+            // Keep the mute failure enabled. This faults the HAL; it cannot
+            // produce a flush ACK or surrender renderer custody below.
+        } else if cancel {
+            assert!(matches!(turn.stop, Some(Ok(_))));
+            assert_eq!(turn.stop_mute_acknowledged, Some(true));
+        }
+        if cancel {
+            assert!(
+                turn.drain.is_some(),
+                "local Stop drains HAL while journal remains pending"
+            );
+        }
+        if expired {
+            assert!(matches!(
+                response.take().unwrap().wait(),
+                Err(HttpMailboxError::TimeoutOutcomeUnknown)
+            ));
+        } else if lost {
+            drop(response.take());
+        }
+        signal(child.0.id(), "-CONT");
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        loop {
+            match owner.service_http(&mut mailbox).unwrap() {
+                HttpService::Replied if !lost => break,
+                HttpService::ReplyLost if lost => break,
+                HttpService::Pending => assert!(std::time::Instant::now() < deadline),
+                other => panic!("unexpected service outcome: {other:?}"),
+            }
+        }
+        if lost {
+            assert_eq!(client.diagnostics().lost_replies, 1);
+            assert_eq!(
+                client.diagnostics().lost_notifications,
+                1,
+                "produced GENA event is accounted as lost"
+            );
+        } else {
+            assert_eq!(client.diagnostics().lost_replies, 0);
+            assert_eq!(client.diagnostics().lost_notifications, 0);
+        }
+        if !lost {
+            let reply = response.unwrap().wait().unwrap();
+            let handled = reply.result.unwrap().control;
+            assert_eq!(
+                handled.response.status,
+                if cancel { 500 } else { 200 },
+                "{}",
+                handled.response.body
+            );
+            assert_eq!(
+                reply.session.group_master_volume,
+                if cancel { 50 } else { 60 }
+            );
+        }
+        if replaced_mailbox {
+            assert_eq!(
+                owner.service_http(&mut mailbox),
+                Err(HttpMailboxError::Unavailable)
+            );
+            assert!(
+                matches!(
+                    replacement_client.as_ref().unwrap().submit(&request),
+                    Err(HttpMailboxError::Busy)
+                ),
+                "replacement envelope was never taken"
+            );
+            assert_eq!(
+                replacement_client
+                    .as_ref()
                     .unwrap()
-                    .poll_pending_control(&mut TaskContext::from_waker(&waker));
-                if result.is_pending() && !observed_stall && wakes.load(Ordering::SeqCst) == before
-                {
-                    observed_stall = true;
-                    if cancel {
-                        let current = owner.as_mut().unwrap();
-                        current.request_stop().unwrap();
-                        let mut timing = ScriptedTiming::default();
-                        let mut ack = false;
-                        for _ in 0..20 {
-                            if let DrainProgress::Finished(report) =
-                                current.drain_tick(&mut timing).unwrap()
-                            {
-                                assert!(report.acknowledged);
-                                ack = true;
-                                break;
-                            }
-                        }
-                        assert!(ack, "HAL drain must complete while child remains stopped");
-                        assert!(child.0.try_reap().unwrap().is_none());
-                        owner = Some(match owner.take().unwrap().into_stopped_parts() {
-                            Err(retained) => retained,
-                            Ok(_) => panic!("HAL ACK cannot surrender pending journal custody"),
-                        });
-                    }
-                    signal(child.0.id(), "-CONT");
-                    cx.waker().wake_by_ref();
+                    .diagnostics()
+                    .lost_replies,
+                0
+            );
+            assert_eq!(
+                client.diagnostics().lost_replies,
+                0,
+                "original authorized response reached its original receiver"
+            );
+            drop(replacement_pending);
+        }
+        if !cancel && !replaced_mailbox {
+            // Positive successor through the SAME normal HTTP entry point.
+            let next = client.submit(&request).unwrap();
+            loop {
+                match owner.service_http(&mut mailbox).unwrap() {
+                    HttpService::Replied => break,
+                    HttpService::Pending => assert!(std::time::Instant::now() < deadline),
+                    other => panic!("unexpected successor outcome: {other:?}"),
                 }
-                result
-            }),
-        )
-        .await
-        .expect("bounded child completion")
-        .unwrap()
-    });
-    let mut owner = owner.expect("pending owner recovered after every refused handoff");
-    assert!(observed_stall);
-    if cancel {
-        assert!(matches!(
-            result.step.control,
-            Err(franken_control::channel::pipeline::PendingStepFailure::FenceChanged { .. })
-        ));
-    } else {
-        assert!(matches!(
-            result.step.control.unwrap()[0].outcome,
-            Outcome::Committed { revision: 1 }
-        ));
+            }
+            let reply = next.wait().unwrap();
+            assert_eq!(reply.result.unwrap().control.response.status, 200);
+            assert_eq!(reply.session.group_master_volume, 70);
+            assert_eq!(client.diagnostics().lost_replies, usize::from(lost));
+            assert_eq!(
+                client.diagnostics().lost_notifications,
+                usize::from(lost),
+                "consumed successor adds no lost event"
+            );
+        }
         owner.request_stop().unwrap();
+        owner
+    } else if automatic_datagram {
+        use franken_control::channel::owner::DeferredIngressError;
+        use franken_speaker::settled_http::{HttpMailboxConfig, http_mailbox};
+        use std::sync::atomic::AtomicBool;
+        let (client, mut mailbox) =
+            http_mailbox(HttpMailboxConfig::new(4096, 8, Duration::from_secs(1)).unwrap()).unwrap();
+        assert_eq!(
+            owner.service_http(&mut mailbox).unwrap(),
+            franken_speaker::settled_http::HttpService::Idle
+        );
+        let (_wrong_client, mut wrong_mailbox) =
+            http_mailbox(HttpMailboxConfig::new(4096, 8, Duration::from_secs(1)).unwrap()).unwrap();
+        assert_eq!(
+            wrong_mailbox.service_one(|_| panic!("empty generic mailbox")),
+            Ok(franken_speaker::settled_http::HttpService::Idle)
+        );
+        let request = test_wire(
+            TEST_CONTROLLER,
+            1,
+            Some(0),
+            ControlCommand::AdjustGroupVolume { delta: 10 },
+        );
+        owner.receive(&request).unwrap();
+        signal(child.0.id(), "-STOP");
+        let stop = AtomicBool::new(false);
+        let mut timing = ScriptedTiming::default();
+        let first = owner
+            .service_turn(
+                &mut wrong_mailbox,
+                &mut timing,
+                &stop,
+                Duration::from_millis(3),
+            )
+            .unwrap();
+        assert!(matches!(
+            first.http,
+            Some(Err(
+                franken_speaker::settled_http::HttpMailboxError::Unavailable
+            ))
+        ));
+        assert!(
+            first.control.is_none(),
+            "real stopped child cannot acknowledge durable datagram"
+        );
+        // Association errors are returned promptly. Repeated normal turns
+        // still advance bounded cursor bookkeeping to the stopped worker's I/O.
+        for _ in 0..32 {
+            let turn = owner
+                .service_turn(
+                    &mut wrong_mailbox,
+                    &mut timing,
+                    &stop,
+                    Duration::from_millis(3),
+                )
+                .unwrap();
+            assert!(turn.control.is_none());
+            assert!(matches!(
+                turn.http,
+                Some(Err(
+                    franken_speaker::settled_http::HttpMailboxError::Unavailable
+                ))
+            ));
+        }
+        let successor = test_wire(
+            TEST_CONTROLLER,
+            2,
+            Some(1),
+            ControlCommand::AdjustGroupVolume { delta: 10 },
+        );
+        assert_eq!(
+            owner.defer_control_datagram(&vec![0; 4097]),
+            Err(DeferredIngressError::TooLarge)
+        );
+        for _ in 0..8 {
+            owner.defer_control_datagram(&successor).unwrap();
+        }
+        assert_eq!(
+            owner.defer_control_datagram(&successor),
+            Err(DeferredIngressError::Full)
+        );
+
+        // The normal HTTP envelope waits intact behind the one journal owner.
+        let read = franken_control::fsonos::HttpRequest {
+            method: "GET",
+            path: "/",
+            peer_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            ingress: franken_control::fsonos::Ingress::LocalLegacy,
+            headers: &[],
+            body: &[],
+        };
+        let queued_http = client.submit(&read).unwrap();
+        stop.store(cancel, Ordering::Release);
+        let stalled = owner
+            .service_turn(
+                &mut wrong_mailbox,
+                &mut timing,
+                &stop,
+                Duration::from_millis(3),
+            )
+            .unwrap();
+        assert!(stalled.control.is_none());
+        assert!(matches!(
+            stalled.http,
+            Some(Err(
+                franken_speaker::settled_http::HttpMailboxError::Unavailable
+            ))
+        ));
+        if cancel {
+            assert!(stalled.stop.is_some());
+            assert!(stalled.drain.is_some());
+        }
+        signal(child.0.id(), "-CONT");
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        let complete = loop {
+            let turn = owner
+                .service_turn(
+                    &mut wrong_mailbox,
+                    &mut timing,
+                    &stop,
+                    Duration::from_millis(3),
+                )
+                .unwrap();
+            assert!(matches!(
+                turn.http,
+                Some(Err(
+                    franken_speaker::settled_http::HttpMailboxError::Unavailable
+                ))
+            ));
+            if let Some(result) = turn.control {
+                break result.unwrap();
+            }
+            assert!(std::time::Instant::now() < deadline);
+        };
+        assert_eq!(
+            owner.service_http(&mut mailbox).unwrap(),
+            franken_speaker::settled_http::HttpService::Replied
+        );
+        assert_eq!(
+            queued_http
+                .wait()
+                .unwrap()
+                .result
+                .unwrap()
+                .control
+                .response
+                .status,
+            405
+        );
+        assert_eq!(complete.deferred_datagrams.len(), 8);
+        let debug = format!("{complete:?}");
+        assert!(debug.contains("deferred_datagram_count: 8"));
+        assert!(
+            !debug.contains(TEST_CONTROLLER),
+            "Debug must not expose authenticated raw ingress"
+        );
+        assert!(
+            complete
+                .deferred_datagrams
+                .iter()
+                .all(|bytes| *bytes == successor)
+        );
+        if cancel {
+            assert!(matches!(
+                complete.step.control,
+                Err(franken_control::channel::pipeline::PendingStepFailure::FenceChanged { .. })
+            ));
+        } else {
+            assert!(matches!(
+                complete.step.control.unwrap()[0].outcome,
+                Outcome::Committed { revision: 1 }
+            ));
+            // Reauthenticate explicitly returned raw ingress at current time;
+            // duplicate sequence numbers must not multiply its relative effect.
+            for bytes in complete.deferred_datagrams {
+                owner.receive(&bytes).unwrap();
+            }
+            let next = loop {
+                let turn = owner
+                    .service_turn(
+                        &mut wrong_mailbox,
+                        &mut timing,
+                        &stop,
+                        Duration::from_millis(3),
+                    )
+                    .unwrap();
+                assert!(matches!(
+                    turn.http,
+                    Some(Err(
+                        franken_speaker::settled_http::HttpMailboxError::Unavailable
+                    ))
+                ));
+                if let Some(result) = turn.control {
+                    break result.unwrap();
+                }
+                assert!(std::time::Instant::now() < deadline);
+            };
+            assert!(matches!(
+                next.step.control.unwrap()[0].outcome,
+                Outcome::Committed { revision: 2 }
+            ));
+            assert!(next.deferred_datagrams.is_empty());
+        }
+        owner.request_stop().unwrap();
+        owner
+    } else {
+        let bytes = test_wire(
+            TEST_CONTROLLER,
+            1,
+            Some(0),
+            ControlCommand::AdjustGroupVolume { delta: 10 },
+        );
+        owner.receive(&bytes).unwrap();
+        owner.begin_pending_control().unwrap();
+        let mut owner = Some(owner);
+        signal(child.0.id(), "-STOP");
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let mut observed_stall = false;
+        let result = runtime.block_on(async {
+            let context = asupersync::cx::Cx::current().unwrap();
+            assert!(context.timer_driver().is_some());
+            asupersync::time::timeout(
+                context.now(),
+                Duration::from_secs(3),
+                poll_fn(|cx| {
+                    let waker = Waker::from(Arc::new(Watch {
+                        count: Arc::clone(&wakes),
+                        forward: cx.waker().clone(),
+                    }));
+                    let before = wakes.load(Ordering::SeqCst);
+                    let result = owner
+                        .as_mut()
+                        .unwrap()
+                        .poll_pending_control(&mut TaskContext::from_waker(&waker));
+                    if result.is_pending()
+                        && !observed_stall
+                        && wakes.load(Ordering::SeqCst) == before
+                    {
+                        observed_stall = true;
+                        if cancel {
+                            let current = owner.as_mut().unwrap();
+                            current.request_stop().unwrap();
+                            let mut timing = ScriptedTiming::default();
+                            let mut ack = false;
+                            for _ in 0..20 {
+                                if let DrainProgress::Finished(report) =
+                                    current.drain_tick(&mut timing).unwrap()
+                                {
+                                    assert!(report.acknowledged);
+                                    ack = true;
+                                    break;
+                                }
+                            }
+                            assert!(ack, "HAL drain must complete while child remains stopped");
+                            assert!(child.0.try_reap().unwrap().is_none());
+                            owner = Some(match owner.take().unwrap().into_stopped_parts() {
+                                Err(retained) => retained,
+                                Ok(_) => panic!("HAL ACK cannot surrender pending journal custody"),
+                            });
+                        }
+                        signal(child.0.id(), "-CONT");
+                        cx.waker().wake_by_ref();
+                    }
+                    result
+                }),
+            )
+            .await
+            .expect("bounded child completion")
+            .unwrap()
+        });
+        let mut owner = owner.expect("pending owner recovered after every refused handoff");
+        assert!(observed_stall);
+        if cancel {
+            assert!(matches!(
+                result.step.control,
+                Err(franken_control::channel::pipeline::PendingStepFailure::FenceChanged { .. })
+            ));
+        } else {
+            assert!(matches!(
+                result.step.control.unwrap()[0].outcome,
+                Outcome::Committed { revision: 1 }
+            ));
+            owner.request_stop().unwrap();
+        }
+        owner
+    };
+    if fail_stop {
+        let mut timing = ScriptedTiming::default();
+        let mut terminal = false;
+        for _ in 0..20 {
+            if let DrainProgress::Finished(report) = owner.drain_tick(&mut timing).unwrap() {
+                assert!(
+                    !report.acknowledged,
+                    "HAL mute failure must not become a flush ACK"
+                );
+                terminal = true;
+                break;
+            }
+        }
+        assert!(terminal);
+        let owner = match owner.into_stopped_parts() {
+            Err(owner) => owner,
+            Ok(_) => panic!("faulted, unacknowledged HAL must retain complete owner"),
+        };
+        // The HTTP result already proves the journal transaction finished.
+        // Explicitly reap this fixture's child while preserving the faulted
+        // owner; production cannot extract/reopen or claim hardware recovery.
+        child.0.shutdown_off_loop(Duration::from_secs(2)).unwrap();
+        drop(owner);
+        return;
     }
     let mut timing = ScriptedTiming::default();
     let mut acknowledged = false;
@@ -494,14 +1035,25 @@ pub(super) fn run(executable: &std::path::Path, cancel: bool) {
         }
     }
     assert!(acknowledged);
+    assert!(
+        !stop_failure.get(),
+        "only successful mute cases reach acknowledged handoff"
+    );
     let Ok(parts) = owner.into_stopped_parts() else {
         panic!("settled HAL and journal custody can transfer");
     };
     assert_eq!(
         parts.session.group_master_volume,
-        if cancel { 50 } else { 60 }
+        if cancel {
+            50
+        } else if (http && !replaced_mailbox) || automatic_datagram {
+            70
+        } else {
+            60
+        }
     );
     assert_eq!(parts.render.render_state(), RenderState::Stopped);
+    let committed_revision = parts.session.state_revision;
     let mut storage = parts.control.into_storage();
     runtime.block_on(async {
         let context = asupersync::cx::Cx::current().unwrap();
@@ -520,5 +1072,21 @@ pub(super) fn run(executable: &std::path::Path, cancel: bool) {
     let (journal, _) =
         franken_journal::Journal::open(FileMedium::open_existing(&path, &limits).unwrap(), limits)
             .unwrap();
-    assert!(journal.state().records.contains_key(b"n02.seq".as_slice()));
+    if http {
+        // Legacy SOAP explicitly uses unstable retry IDs. It persists revision
+        // highwater, not an authenticated per-peer sequence floor.
+        assert!(!journal.state().records.contains_key(b"n02.seq".as_slice()));
+        if !cancel {
+            assert_eq!(
+                journal
+                    .state()
+                    .marks
+                    .get(franken_control::channel::pipeline::HIGH_WATER_KEY),
+                Some(&committed_revision)
+            );
+            assert!(committed_revision > 0);
+        }
+    } else {
+        assert!(journal.state().records.contains_key(b"n02.seq".as_slice()));
+    }
 }

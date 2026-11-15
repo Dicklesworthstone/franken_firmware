@@ -450,3 +450,39 @@ fn settled_owner_real_child_commit_and_stop_drain_custody_handoff() {
         settled_owner::run(Path::new(WORKER), cancel);
     }
 }
+
+#[test]
+fn normal_http_route_uses_real_pollable_journal_and_services_stop() {
+    for cancel in [false, true] {
+        settled_owner::run_http(Path::new(WORKER), cancel);
+    }
+}
+
+#[test]
+fn lost_http_observer_releases_admission_after_real_commit_and_allows_successor() {
+    settled_owner::run_lost_http(Path::new(WORKER));
+}
+
+#[test]
+fn expired_http_observer_retains_journal_until_ack_and_allows_successor() {
+    settled_owner::run_expired_http(Path::new(WORKER));
+}
+
+#[test]
+fn owner_turn_reports_hal_stop_failure_without_losing_pending_journal() {
+    settled_owner::run_stop_failure(Path::new(WORKER));
+}
+
+#[test]
+fn accepted_http_retires_after_original_mailbox_drop_without_consuming_replacement() {
+    for cancel in [false, true] {
+        settled_owner::run_replaced_mailbox(Path::new(WORKER), cancel);
+    }
+}
+
+#[test]
+fn normal_owner_turn_drains_authenticated_datagrams_with_real_child_and_stop_fence() {
+    for cancel in [false, true] {
+        settled_owner::run_datagram_turn(Path::new(WORKER), cancel);
+    }
+}

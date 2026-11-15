@@ -191,6 +191,30 @@ impl Handled {
     }
 }
 
+/// Parsing/authentication either finished without I/O or admitted one command.
+/// A pending value is not an HTTP response and cannot acknowledge an effect.
+pub enum PreparedSoap {
+    Ready(Handled),
+    Pending(DeferredSoap),
+}
+
+pub struct DeferredSoap {
+    call: SoapCall,
+    command: Cmd,
+    peer: PeerId,
+    seq: u64,
+    legacy: bool,
+    submitted: SubmitResult,
+    rounds_left: usize,
+    settled_others: Vec<Settlement>,
+}
+
+impl From<Handled> for PreparedSoap {
+    fn from(value: Handled) -> Self {
+        Self::Ready(value)
+    }
+}
+
 /// What a request is handled against. The session is the channel's to change, not this module's.
 ///
 /// `stepper` is how the channel is stepped and whether that is durable. The owner builds it; the caller names it
@@ -618,6 +642,25 @@ impl Endpoint {
         ctx: &mut Context<'_, A>,
         request: &HttpRequest<'_>,
     ) -> Handled {
+        if request.method == "POST" && request.path != ACK_PATH {
+            let prepared = self.control(ctx, request);
+            return match prepared {
+                PreparedSoap::Ready(reply) => reply,
+                PreparedSoap::Pending(mut pending) => {
+                    let mut others = Vec::new();
+                    let result = self.drive(
+                        ctx,
+                        &pending.peer,
+                        pending.seq,
+                        pending.submitted.clone(),
+                        pending.legacy,
+                        &mut others,
+                    );
+                    pending.settled_others = others;
+                    self.finish_soap(pending, result, ctx.now_ns, ctx.session)
+                }
+            };
+        }
         match request.method {
             "GET"
                 if request.path == ssdp::DESCRIPTION_PATH
@@ -648,11 +691,89 @@ impl Endpoint {
             "POST" if request.path == ACK_PATH => self
                 .plant_ack(ctx, request)
                 .unwrap_or_else(|| acknowledge(ctx, request)),
-            "POST" => self.control(ctx, request),
             "SUBSCRIBE" => self.subscribe(ctx, request),
             "UNSUBSCRIBE" => self.unsubscribe(ctx, request),
             _ => Handled::of(HttpResponse::empty(405)),
         }
+    }
+
+    /// Shared parser/authenticator with `handle`, without executing queued
+    /// storage work. Only the consuming owner may advance a returned command.
+    pub fn prepare<A: PeerAuthority>(
+        &mut self,
+        ctx: &mut Context<'_, A>,
+        request: &HttpRequest<'_>,
+    ) -> PreparedSoap {
+        if request.method == "POST" && request.path != ACK_PATH {
+            self.control(ctx, request)
+        } else {
+            PreparedSoap::Ready(self.handle(ctx, request))
+        }
+    }
+
+    fn finish_soap(
+        &mut self,
+        pending: DeferredSoap,
+        result: Result<(), Fault>,
+        now_ns: u64,
+        session: &UnifiedGroupSession,
+    ) -> Handled {
+        let notifications = self.publish(now_ns, session);
+        let response = match result {
+            Ok(()) => HttpResponse::xml(
+                200,
+                command_response(&pending.call, pending.command, &self.state(session)),
+            ),
+            Err(fault) => HttpResponse::fault(fault),
+        };
+        Handled {
+            response,
+            notifications,
+            settled_others: pending.settled_others,
+        }
+    }
+
+    /// Consume an actual durable round. No success is fabricated for pending
+    /// commands, withheld effects, or a terminal journal failure.
+    pub fn finish_round(
+        &mut self,
+        mut pending: DeferredSoap,
+        result: Result<Vec<Settlement>, crate::channel::pipeline::PendingStepFailure>,
+        now_ns: u64,
+        session: &UnifiedGroupSession,
+    ) -> PreparedSoap {
+        let (settled, failed) = match result {
+            Ok(settled) => (settled, false),
+            Err(crate::channel::pipeline::PendingStepFailure::Storage(failed)) => {
+                (failed.applied, true)
+            }
+            Err(crate::channel::pipeline::PendingStepFailure::FenceChanged { applied, .. }) => {
+                (applied, true)
+            }
+        };
+        let mut found = None;
+        for item in settled {
+            if item.peer == pending.peer && item.seq == pending.seq {
+                found = Some(item.outcome);
+            } else {
+                pending.settled_others.push(item);
+            }
+        }
+        pending.rounds_left = pending.rounds_left.saturating_sub(1);
+        let result = if let Some(outcome) = found {
+            outcome_result(&outcome)
+        } else if failed {
+            Err(Fault::ActionFailed(
+                "the change could not be stored; it was not applied",
+            ))
+        } else if pending.rounds_left == 0 {
+            Err(Fault::ActionFailed(
+                "queued behind other work; read the state to see whether it applied",
+            ))
+        } else {
+            return PreparedSoap::Pending(pending);
+        };
+        PreparedSoap::Ready(self.finish_soap(pending, result, now_ns, session))
     }
 
     // ---- SOAP control -------------------------------------------------------------------------
@@ -661,46 +782,50 @@ impl Endpoint {
         &mut self,
         ctx: &mut Context<'_, A>,
         request: &HttpRequest<'_>,
-    ) -> Handled {
+    ) -> PreparedSoap {
         let Some(path_service) = Service::from_control_path(request.path) else {
-            return Handled::of(HttpResponse::empty(404));
+            return Handled::of(HttpResponse::empty(404)).into();
         };
         // Tailnet: without the authorization headers there is nothing to parse for.
         if request.ingress == Ingress::Tailnet && !has_authorization_headers(request.headers) {
-            return Handled::of(HttpResponse::fault(Fault::Unauthenticated));
+            return Handled::of(HttpResponse::fault(Fault::Unauthenticated)).into();
         }
         let soap_action = match unique_header(request.headers, "soapaction") {
             Ok(value) => value,
-            Err(Duplicate) => return Handled::of(HttpResponse::fault(Fault::Malformed)),
+            Err(Duplicate) => return Handled::of(HttpResponse::fault(Fault::Malformed)).into(),
         };
         let call = match parse_call(soap_action, request.body, self.config.limits) {
             Ok(call) if call.service == path_service => call,
-            Ok(_) => return Handled::of(HttpResponse::fault(Fault::Malformed)),
-            Err(fault) => return Handled::of(HttpResponse::fault(fault)),
+            Ok(_) => return Handled::of(HttpResponse::fault(Fault::Malformed)).into(),
+            Err(fault) => return Handled::of(HttpResponse::fault(fault)).into(),
         };
         let plan = actions::plan(&call);
 
         match (request.ingress, plan) {
             // The tailnet takes authenticated commands and nothing else, and says nothing more.
             (Ingress::Tailnet, Ok(Plan::Command(cmd))) => self.command(ctx, request, &call, cmd),
-            (Ingress::Tailnet, _) => Handled::of(HttpResponse::fault(Fault::Unauthenticated)),
-            (Ingress::LocalLegacy, Err(fault)) => Handled::of(HttpResponse::fault(fault)),
+            (Ingress::Tailnet, _) => {
+                Handled::of(HttpResponse::fault(Fault::Unauthenticated)).into()
+            }
+            (Ingress::LocalLegacy, Err(fault)) => Handled::of(HttpResponse::fault(fault)).into(),
             (Ingress::LocalLegacy, Ok(Plan::Read(read))) => {
                 let state = self.state(ctx.session);
                 Handled::of(match read_response(&call, read, &state) {
                     Ok(body) => HttpResponse::xml(200, body),
                     Err(fault) => HttpResponse::fault(fault),
                 })
+                .into()
             }
             (Ingress::LocalLegacy, Ok(Plan::Ack)) => Handled::of(HttpResponse::xml(
                 200,
                 response_envelope(call.service, &call.action, &[]),
-            )),
+            ))
+            .into(),
             (Ingress::LocalLegacy, Ok(Plan::Command(cmd))) => {
                 if self.config.legacy_commands {
                     self.command(ctx, request, &call, cmd)
                 } else {
-                    Handled::of(HttpResponse::fault(Fault::Unauthenticated))
+                    Handled::of(HttpResponse::fault(Fault::Unauthenticated)).into()
                 }
             }
         }
@@ -713,12 +838,13 @@ impl Endpoint {
         request: &HttpRequest<'_>,
         call: &SoapCall,
         cmd: Cmd,
-    ) -> Handled {
+    ) -> PreparedSoap {
         let legacy = request.ingress == Ingress::LocalLegacy;
         if legacy && !self.bind_bridge(ctx) {
             return Handled::of(HttpResponse::fault(Fault::ActionFailed(
                 "legacy commands are unavailable; use the authenticated route",
-            )));
+            )))
+            .into();
         }
         let built = if legacy {
             self.legacy_request(ctx, cmd)
@@ -727,7 +853,7 @@ impl Endpoint {
         };
         let control_request = match built {
             Ok(r) => r,
-            Err(fault) => return Handled::of(HttpResponse::fault(fault)),
+            Err(fault) => return Handled::of(HttpResponse::fault(fault)).into(),
         };
         let peer = control_request.body().peer().clone();
         let seq = control_request.body().seq();
@@ -737,6 +863,21 @@ impl Endpoint {
         let (peer, seq, submitted) = self.plant_reapply(ctx, cmd, peer, seq, submitted);
         if legacy && !matches!(submitted, SubmitResult::Rejected(_)) {
             self.legacy_seq = seq.saturating_add(1);
+        }
+        if matches!(
+            submitted,
+            SubmitResult::Queued { .. } | SubmitResult::AlreadyQueued { .. }
+        ) {
+            return PreparedSoap::Pending(DeferredSoap {
+                call: call.clone(),
+                command: cmd,
+                peer,
+                seq,
+                legacy,
+                submitted,
+                rounds_left: self.config.step_rounds,
+                settled_others: Vec::new(),
+            });
         }
         let mut settled_others = Vec::new();
         let result = self.drive(ctx, &peer, seq, submitted, legacy, &mut settled_others);
@@ -754,6 +895,7 @@ impl Endpoint {
             notifications,
             settled_others,
         }
+        .into()
     }
 
     /// Tell the channel, from the identity this endpoint was configured with, that the bridge's retries carry no stable

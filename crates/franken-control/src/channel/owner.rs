@@ -1054,6 +1054,14 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
         }
     }
 
+    /// Accepted work waiting for the existing bounded channel step. This is
+    /// not a commit acknowledgment and excludes unauthenticated raw datagrams.
+    #[must_use]
+    pub fn has_pending_control(&self) -> bool {
+        self.channel.pending(super::request::Lane::Ordinary) != 0
+            || self.channel.pending(super::request::Lane::Priority) != 0
+    }
+
     pub fn step(
         &mut self,
         now_ns: u64,
@@ -1071,8 +1079,48 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
         now_ns: u64,
         request: &HttpRequest<'_>,
     ) -> Handled {
+        if let Err(response) = self.admit_soap(endpoint, request) {
+            return response;
+        }
+        endpoint.handle(
+            &mut Context {
+                channel: &mut self.channel,
+                session,
+                stepper: &mut Durable::new(&mut self.journal),
+                now_ns,
+            },
+            request,
+        )
+    }
+
+    pub fn prepare_soap(
+        &mut self,
+        endpoint: &mut crate::fsonos::Endpoint,
+        session: &mut UnifiedGroupSession,
+        now_ns: u64,
+        request: &HttpRequest<'_>,
+    ) -> crate::fsonos::PreparedSoap {
+        if let Err(response) = self.admit_soap(endpoint, request) {
+            return crate::fsonos::PreparedSoap::Ready(response);
+        }
+        endpoint.prepare(
+            &mut Context {
+                channel: &mut self.channel,
+                session,
+                stepper: &mut Durable::new(&mut self.journal),
+                now_ns,
+            },
+            request,
+        )
+    }
+
+    fn admit_soap(
+        &mut self,
+        endpoint: &crate::fsonos::Endpoint,
+        request: &HttpRequest<'_>,
+    ) -> Result<(), Handled> {
         if self.reserve_legacy_peer(endpoint.legacy_peer()).is_err() {
-            return Self::empty_response(503);
+            return Err(Self::empty_response(503));
         }
         self.ingress_started = true;
         if request.ingress == crate::fsonos::Ingress::Tailnet
@@ -1084,17 +1132,9 @@ impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
         {
             // The legacy bridge never supplies stable client sequence numbers. Allowing its
             // identity here would opt authenticated relative commands out of durable floors.
-            return Self::empty_response(401);
+            return Err(Self::empty_response(401));
         }
-        endpoint.handle(
-            &mut Context {
-                channel: &mut self.channel,
-                session,
-                stepper: &mut Durable::new(&mut self.journal),
-                now_ns,
-            },
-            request,
-        )
+        Ok(())
     }
 
     fn empty_response(status: u16) -> Handled {

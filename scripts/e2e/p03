@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Host owner pipeline only. No hardware/provider qualification or bead closure.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec python3 -B "$ROOT/tests/p03/run_owner.py" "$@"

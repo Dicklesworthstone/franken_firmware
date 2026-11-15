@@ -13,7 +13,7 @@ from pathlib import Path
 
 from run_loopback import (
     Children, OracleError, VECTORS, compare_capture, compare_pcm,
-    loopback_address, read_bounded, track_spec,
+    loopback_address, read_bounded, track_spec, receiver_phase_diagnostic,
 )
 
 
@@ -323,6 +323,62 @@ class FailureDiagnosticTests(unittest.TestCase):
         self.assertEqual(child["capture_states_omitted"], 0)
         self.assertIn("actual child failure", child["stderr"])
         self.assertEqual(child["stderr_omitted_chars"], 0)
+
+    @staticmethod
+    def phase_timing():
+        return {"phase_order": ["carrier", "feedback", "decisions", "sleep"],
+                "iterations": 20, "max_iteration_gap_ns": 170_000_000,
+                "max_phase_ns": [1, 2, 3, 4],
+                "first_overdue": {"block": 110, "presentation_ns": 123,
+                    "late_by_ns": 169_026_340, "iteration": 15,
+                    "iteration_gap_ns": 170_000_000, "decision_elapsed_ns": 12,
+                    "previous_phase_ns": [1, 2, 3, 4], "current_phase_ns": [5, 6, 0, 0]}}
+
+    def test_phase_timing_retention_is_complete_bounded_and_excludes_unknown_text(self):
+        timing = self.phase_timing()
+        timing["secret"] = "private payload"
+        timing["qualification"] = "untrusted free text"
+        timing["first_overdue"]["secret"] = "private packet"
+        safe = receiver_phase_diagnostic(timing)
+        self.assertEqual(safe, self.phase_timing())
+        self.assertLess(len(json.dumps(safe)), 2048)
+        source = {"event": "capture_state", "receiver_phase_timing": timing}
+        script = "print(" + repr(json.dumps(source)) + ",flush=True)"
+        with Children(self.directory(), 3) as supervisor:
+            child = supervisor.spawn("receiver", [sys.executable, "-c", script])
+            supervisor.completed(child)
+        retained = supervisor.failure_diagnostics()["children"][0]["capture_states"][0]
+        self.assertEqual(retained["receiver_phase_timing"], safe)
+        self.assertNotIn("private", json.dumps(retained))
+        self.assertNotIn("untrusted", json.dumps(retained))
+
+    def test_phase_timing_rejects_incomplete_wrong_typed_and_oversized_evidence(self):
+        invalid = [None, [], "private", {}, {"iterations": 1}]
+        for key, bad in (("iterations", True), ("iterations", -1),
+                         ("iterations", 1 << 64), ("max_iteration_gap_ns", "123"),
+                         ("max_phase_ns", [1, 2, 3]), ("max_phase_ns", [0] * 5),
+                         ("max_phase_ns", [1, 2, True, 4]),
+                         ("phase_order", ["carrier", "feedback", "private", "sleep"]),
+                         ("first_overdue", [])):
+            value = self.phase_timing(); value[key] = bad; invalid.append(value)
+        for key, bad in (("iteration", 21), ("iteration", 0), ("late_by_ns", 0),
+                         ("block", False), ("decision_elapsed_ns", -1),
+                         ("previous_phase_ns", [0] * 1000),
+                         ("current_phase_ns", [1, 2, 3, "private"])):
+            value = self.phase_timing(); value["first_overdue"][key] = bad; invalid.append(value)
+        missing = self.phase_timing(); del missing["first_overdue"]; invalid.append(missing)
+        for value in invalid:
+            with self.subTest(value=value):
+                self.assertIsNone(receiver_phase_diagnostic(value))
+        # An explicitly observed absence is distinct from missing evidence.
+        no_overdue = self.phase_timing(); no_overdue["first_overdue"] = None
+        self.assertEqual(receiver_phase_diagnostic(no_overdue), no_overdue)
+        source = {"event": "capture_state", "receiver_phase_timing": invalid[-2]}
+        script = "print(" + repr(json.dumps(source)) + ",flush=True)"
+        with Children(self.directory(), 3) as supervisor:
+            child = supervisor.spawn("receiver", [sys.executable, "-c", script])
+            supervisor.completed(child)
+        self.assertNotIn("receiver_phase_timing", supervisor.failure_diagnostics()["children"][0]["capture_states"][0])
 
     def test_capture_outcome_retains_only_actual_bounded_codes(self):
         permitted = ("real", "concealed", "muted_gap", "muted_nohistory", "muted_overdue", "skipped")

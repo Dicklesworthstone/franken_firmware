@@ -37,8 +37,8 @@ mod replay;
 pub use actions::{ActionSpec, Cmd, MATRIX, Plan, Read};
 pub use gena::{GenaConfig, GenaError, Notification, SubscribeGrant, SubscriptionTable};
 pub use server::{
-    Context, Endpoint, EndpointConfig, EndpointError, Handled, HttpRequest, HttpResponse, Ingress,
-    LegacyBridge,
+    Context, DeferredSoap, Endpoint, EndpointConfig, EndpointError, Handled, HttpRequest,
+    HttpResponse, Ingress, LegacyBridge, PreparedSoap,
 };
 pub use soap::{Fault, Service, SoapCall};
 pub use state::{Directory, EventState, TransportState};

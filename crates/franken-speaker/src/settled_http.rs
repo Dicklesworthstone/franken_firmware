@@ -100,6 +100,9 @@ pub struct OwnedHttpReply {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpService {
     Idle,
+    /// The owned pollable journal is still progressing; no reply or durable
+    /// outcome has been reported. The single admission permit remains held.
+    Pending,
     Expired,
     /// A reply was queued. This is neither a hardware ACK nor client receipt.
     Replied,
@@ -200,6 +203,33 @@ struct Envelope {
     deadline: Instant,
     // Last, so request storage and the reply sender drop before capacity opens.
     _permit: Permit,
+}
+
+/// One admitted mailbox request retained across journal Pending. Holding this
+/// retains mailbox capacity and its exact transport reply channel.
+pub(crate) struct PendingOwnerRequest {
+    envelope: Envelope,
+    shared: Arc<Shared>,
+}
+
+impl PendingOwnerRequest {
+    pub(crate) fn with_view<T>(&self, f: impl FnOnce(HttpRequest<'_>) -> T) -> T {
+        self.envelope.request.with_view(f)
+    }
+    pub(crate) fn expired(&self) -> bool {
+        self.envelope.expired()
+    }
+    pub(crate) fn complete(self, reply: OwnedHttpReply) -> HttpService {
+        let reply = TrackedReply {
+            reply: Some(reply),
+            shared: Arc::clone(&self.shared),
+        };
+        if self.envelope.reply.try_send(reply).is_ok() {
+            HttpService::Replied
+        } else {
+            HttpService::ReplyLost
+        }
+    }
 }
 
 impl Envelope {
@@ -599,6 +629,32 @@ impl HttpMailboxOwner {
     ) -> Result<HttpService, HttpMailboxError> {
         self.check_owner(permit)?;
         self.service_inner(handler)
+    }
+
+    pub(crate) fn take_owned(
+        &mut self,
+        permit: &HttpOwnerPermit,
+    ) -> Result<Option<PendingOwnerRequest>, HttpMailboxError> {
+        self.check_owner(permit)?;
+        if self.shared.slot.is_poisoned() {
+            return Err(HttpMailboxError::Unavailable);
+        }
+        if !self.shared.published.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let envelope = match self.shared.slot.try_lock() {
+            Ok(mut slot) => {
+                let envelope = slot.take();
+                self.shared.published.store(false, Ordering::Release);
+                envelope
+            }
+            Err(TryLockError::WouldBlock) => return Ok(None),
+            Err(TryLockError::Poisoned(_)) => return Err(HttpMailboxError::Unavailable),
+        };
+        Ok(envelope.map(|envelope| PendingOwnerRequest {
+            envelope,
+            shared: Arc::clone(&self.shared),
+        }))
     }
 
     #[must_use]

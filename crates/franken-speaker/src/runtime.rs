@@ -19,6 +19,10 @@ use std::time::Duration;
 const ROOT_TASKS: usize = 4;
 const TURN_POLLS: u32 = 8;
 const MAX_CAPTURE_BYTES: usize = 64;
+// Separate admission allowance for ONE inline owner future (timers, pending
+// poll state and borrowed references). This is not the closure capture limit,
+// a heap bound, or proof of target stack fit. Target layouts must be measured.
+const MAX_OWNER_FUTURE_STATE_BYTES: usize = 2 * 1024;
 const STACK_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -29,6 +33,8 @@ pub enum ControlRuntimeError {
     Busy,
     #[error("control turn capture exceeds its admission budget")]
     CaptureTooLarge,
+    #[error("owner future inline state exceeds its separate admission budget")]
+    FutureStateTooLarge,
     #[error("control executor is shutting down")]
     Closed,
     #[error("control turn cancelled before dispatch")]
@@ -40,6 +46,8 @@ pub struct ControlRuntimeStats {
     pub completed_turns: usize,
     pub rejected_turns: usize,
     pub peak_capture_bytes: usize,
+    pub peak_future_state_bytes: usize,
+    pub future_state_limit_bytes: usize,
     pub active_turns: usize,
     /// This executor admits no queued or running blocking closure bytes.
     pub blocking_job_bytes: usize,
@@ -51,6 +59,7 @@ struct Admission {
     completed: AtomicUsize,
     rejected: AtomicUsize,
     peak_capture: AtomicUsize,
+    peak_future_state: AtomicUsize,
 }
 
 fn increment_saturating(counter: &AtomicUsize) {
@@ -113,6 +122,7 @@ impl ControlRuntime {
                 completed: AtomicUsize::new(0),
                 rejected: AtomicUsize::new(0),
                 peak_capture: AtomicUsize::new(0),
+                peak_future_state: AtomicUsize::new(0),
             }),
         })
     }
@@ -121,6 +131,40 @@ impl ControlRuntime {
     /// mailbox references. The size check is not a deep heap-size estimator.
     pub(crate) fn turn<T>(&self, work: impl FnOnce() -> T) -> Result<T, ControlRuntimeError> {
         self.turn_with_budget(work, TURN_POLLS)
+    }
+
+    /// Admit a small borrowed factory and its statically known future layout
+    /// before invoking either. Future state includes captures and await state;
+    /// its separate limit is not a heap bound or proof of target stack fit.
+    pub(crate) fn drive<F: std::future::Future>(
+        &self,
+        make: impl FnOnce() -> F,
+    ) -> Result<F::Output, ControlRuntimeError> {
+        let capture_bytes = size_of_val(&make);
+        let future_bytes = std::mem::size_of::<F>();
+        let refusal = if capture_bytes > MAX_CAPTURE_BYTES {
+            Some(ControlRuntimeError::CaptureTooLarge)
+        } else if future_bytes > MAX_OWNER_FUTURE_STATE_BYTES {
+            Some(ControlRuntimeError::FutureStateTooLarge)
+        } else {
+            None
+        };
+        if let Some(error) = refusal {
+            increment_saturating(&self.admission.rejected);
+            return Err(error);
+        }
+        let _permit = self
+            .acquire_open_turn()
+            .inspect_err(|_| increment_saturating(&self.admission.rejected))?;
+        self.admission
+            .peak_capture
+            .fetch_max(capture_bytes, Ordering::Relaxed);
+        self.admission
+            .peak_future_state
+            .fetch_max(future_bytes, Ordering::Relaxed);
+        let output = self.runtime.block_on(make());
+        increment_saturating(&self.admission.completed);
+        Ok(output)
     }
 
     fn turn_with_budget<T>(
@@ -185,6 +229,8 @@ impl ControlRuntime {
             completed_turns: self.admission.completed.load(Ordering::Relaxed),
             rejected_turns: self.admission.rejected.load(Ordering::Relaxed),
             peak_capture_bytes: self.admission.peak_capture.load(Ordering::Relaxed),
+            peak_future_state_bytes: self.admission.peak_future_state.load(Ordering::Relaxed),
+            future_state_limit_bytes: MAX_OWNER_FUTURE_STATE_BYTES,
             active_turns: usize::from(self.admission.active.load(Ordering::Acquire)),
             blocking_job_bytes: 0,
         }
@@ -210,6 +256,71 @@ impl ControlRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_future_admission_rejects_layout_before_factory_and_preserves_capture_limit() {
+        use std::cell::Cell;
+        let runtime = ControlRuntime::new().unwrap();
+        let made = Cell::new(false);
+        let polled = Cell::new(false);
+        let result = runtime.drive(|| {
+            made.set(true);
+            async {
+                let state = [7_u8; MAX_OWNER_FUTURE_STATE_BYTES + 1];
+                yield_now().await;
+                std::hint::black_box(state);
+                polled.set(true);
+            }
+        });
+        assert_eq!(result, Err(ControlRuntimeError::FutureStateTooLarge));
+        assert!(!made.get());
+        assert!(!polled.get());
+        assert_eq!(runtime.stats().completed_turns, 0);
+        assert_eq!(runtime.stats().peak_future_state_bytes, 0);
+        assert_eq!(
+            runtime.drive(|| async {
+                let state = [3_u8; MAX_CAPTURE_BYTES + 1];
+                yield_now().await;
+                std::hint::black_box(state)[0]
+            }),
+            Ok(3)
+        );
+        assert!(runtime.stats().peak_future_state_bytes > MAX_CAPTURE_BYTES);
+        let payload = [3_u8; MAX_CAPTURE_BYTES + 1];
+        assert_eq!(
+            runtime.drive(move || async move { std::hint::black_box(payload)[0] }),
+            Err(ControlRuntimeError::CaptureTooLarge)
+        );
+        assert_eq!(
+            runtime.turn(move || std::hint::black_box(payload)),
+            Err(ControlRuntimeError::CaptureTooLarge)
+        );
+    }
+
+    #[test]
+    fn future_factory_is_not_called_when_busy_or_closed() {
+        let runtime = ControlRuntime::new().unwrap();
+        let called = std::cell::Cell::new(false);
+        let permit = runtime.acquire_open_turn().unwrap();
+        assert_eq!(
+            runtime.drive(|| {
+                called.set(true);
+                async { 7 }
+            }),
+            Err(ControlRuntimeError::Busy)
+        );
+        drop(permit);
+        runtime.shutdown(Duration::from_millis(10)).unwrap();
+        assert_eq!(
+            runtime.drive(|| {
+                called.set(true);
+                async { 7 }
+            }),
+            Err(ControlRuntimeError::Closed)
+        );
+        assert!(!called.get());
+        assert_eq!(runtime.stats().rejected_turns, 2);
+    }
 
     #[test]
     fn telemetry_saturates_instead_of_wrapping_on_32_bit_targets() {

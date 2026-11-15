@@ -278,6 +278,108 @@ struct CaptureSink {
     expected_frames: u64,
 }
 
+// Temporary opt-in diagnosis for the observed MP3-long receiver deadline
+// failure. Remove detailed phase correlation once that cause is fixed. Wall
+// durations include descheduling; they do not prove which phase consumed CPU.
+// Iteration gaps are start-to-start. Decision elapsed is cumulative within
+// drain; input/clock work outside the measured phases can remain unattributed.
+const PHASE_CARRIER: usize = 0;
+const PHASE_FEEDBACK: usize = 1;
+const PHASE_DECISIONS: usize = 2;
+const PHASE_SLEEP: usize = 3;
+
+#[derive(Clone, Copy)]
+struct FirstOverdueTiming {
+    decision: Decision,
+    iteration: u64,
+    previous_ns: [u64; 4],
+    current_ns: [u64; 4],
+    iteration_gap_ns: u64,
+    decision_elapsed_ns: u64,
+}
+
+#[derive(Default)]
+struct ReceiverPhaseTiming {
+    iterations: u64,
+    previous_ns: [u64; 4],
+    current_ns: [u64; 4],
+    maximum_ns: [u64; 4],
+    last_iteration: Option<Instant>,
+    iteration_gap_ns: u64,
+    max_iteration_gap_ns: u64,
+    first_overdue: Option<FirstOverdueTiming>,
+}
+
+fn duration_ns(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
+impl ReceiverPhaseTiming {
+    fn begin(&mut self, now: Instant) {
+        self.iterations = self.iterations.saturating_add(1);
+        self.previous_ns = self.current_ns;
+        self.current_ns = [0; 4];
+        self.iteration_gap_ns = self
+            .last_iteration
+            .map_or(0, |last| duration_ns(now.saturating_duration_since(last)));
+        self.max_iteration_gap_ns = self.max_iteration_gap_ns.max(self.iteration_gap_ns);
+        self.last_iteration = Some(now);
+    }
+
+    fn record(&mut self, phase: usize, elapsed: Duration) {
+        let ns = duration_ns(elapsed);
+        self.current_ns[phase] = ns;
+        self.maximum_ns[phase] = self.maximum_ns[phase].max(ns);
+    }
+
+    fn decision(&mut self, decision: Decision, elapsed: Duration) {
+        if decision.outcome == Outcome::MutedOverdue && self.first_overdue.is_none() {
+            self.first_overdue = Some(FirstOverdueTiming {
+                decision,
+                iteration: self.iterations,
+                previous_ns: self.previous_ns,
+                current_ns: self.current_ns,
+                iteration_gap_ns: self.iteration_gap_ns,
+                decision_elapsed_ns: duration_ns(elapsed),
+            });
+        }
+    }
+
+    fn observation(&self) -> serde_json::Value {
+        let first = self.first_overdue.map(|first| serde_json::json!({
+            "block":first.decision.block, "presentation_ns":first.decision.presentation_ns,
+            "late_by_ns":first.decision.late_by_ns, "iteration":first.iteration,
+            "previous_phase_ns":first.previous_ns, "current_phase_ns":first.current_ns,
+            "iteration_gap_ns":first.iteration_gap_ns, "decision_elapsed_ns":first.decision_elapsed_ns,
+        }));
+        serde_json::json!({"phase_order":["carrier","feedback","decisions","sleep"],
+            "iterations":self.iterations, "max_phase_ns":self.maximum_ns,
+            "max_iteration_gap_ns":self.max_iteration_gap_ns, "first_overdue":first,
+            "qualification":"wall durations include scheduling delay; correlation is not root cause"})
+    }
+}
+
+fn finish_receiver_phase(
+    timing: &mut Option<ReceiverPhaseTiming>,
+    phase: usize,
+    start: Option<Instant>,
+) {
+    if let (Some(timing), Some(start)) = (timing.as_mut(), start) {
+        timing.record(phase, start.elapsed());
+    }
+}
+
+fn capture_observation(
+    capture: &FiniteCapture,
+    timing: Option<&ReceiverPhaseTiming>,
+) -> serde_json::Value {
+    let mut observation = capture.observation();
+    if let Some(timing) = timing {
+        observation["receiver_phase_timing"] = timing.observation();
+    }
+    observation
+}
+
 /// The finite file boundary is provisioned before playback. It is distinct
 /// from END, the controller permission to finish. Normal positive controllers
 /// wait for sender drain; a negative group may finish only its healthy members.
@@ -371,7 +473,16 @@ impl FiniteCapture {
     fn drain(
         &mut self,
         engine: &mut PlayoutEngine,
+        clock: impl FnMut() -> Result<ClockView, String>,
+    ) -> Result<(), String> {
+        self.drain_observed(engine, clock, |_| {})
+    }
+
+    fn drain_observed(
+        &mut self,
+        engine: &mut PlayoutEngine,
         mut clock: impl FnMut() -> Result<ClockView, String>,
+        mut observe: impl FnMut(Decision),
     ) -> Result<(), String> {
         let mut pcm = [0_u8; BLOCK_PAYLOAD_BYTES];
         // Never ask a continuous engine to synthesize blocks outside the
@@ -385,6 +496,7 @@ impl FiniteCapture {
                 Poll::ClockRegression => return Err("playout unavailable: ClockRegression".into()),
                 Poll::NotBound => return Err("playout unavailable: NotBound".into()),
             };
+            observe(decision);
             if decision.block != self.next_block {
                 return Err("noncontiguous finite playout decision".into());
             }
@@ -589,8 +701,14 @@ fn receive(
         "host_ns":clock.now()?, "uncertainty_ns":clock.uncertainty_ns,
         "expected_frames":expected_frames}))?;
     let mut credit = CreditRefresh::default();
+    let mut phase_timing = (std::env::var_os("FFW_RECEIVER_PHASE_TIMING").as_deref()
+        == Some(std::ffi::OsStr::new("1")))
+    .then(ReceiverPhaseTiming::default);
     let mut reported_capture_state = false;
     let mut result: Result<(), String> = (|| loop {
+        if let Some(timing) = phase_timing.as_mut() {
+            timing.begin(Instant::now());
+        }
         match input.try_recv() {
             Ok(Ok(command)) if command == "STOP" => return Ok(()),
             Ok(Ok(command)) if command.starts_with("END ") => {
@@ -608,25 +726,45 @@ fn receive(
             return Err("receiver timeout".into());
         }
         sink.view = clock.view()?;
+        let phase_start = phase_timing.as_ref().map(|_| Instant::now());
         let polled = carrier.poll_into(&mut sink);
-        credit
-            .send_if_due(&mut carrier, polled.media_accepted, Instant::now())
-            .map_err(|e| e.to_string())?;
+        finish_receiver_phase(&mut phase_timing, PHASE_CARRIER, phase_start);
+        let phase_start = phase_timing.as_ref().map(|_| Instant::now());
+        let feedback = credit.send_if_due(&mut carrier, polled.media_accepted, Instant::now());
+        finish_receiver_phase(&mut phase_timing, PHASE_FEEDBACK, phase_start);
+        feedback.map_err(|e| e.to_string())?;
         if sink.rejected_playout != 0 {
             return Err("authenticated media was rejected by N04 playout".into());
         }
-        capture.drain(&mut sink.engine, || clock.view())?;
+        let phase_start = phase_timing.as_ref().map(|_| Instant::now());
+        let decisions = if let Some(timing) = phase_timing.as_mut() {
+            let start = phase_start.expect("enabled phase timing");
+            capture.drain_observed(
+                &mut sink.engine,
+                || clock.view(),
+                |decision| timing.decision(decision, start.elapsed()),
+            )
+        } else {
+            capture.drain(&mut sink.engine, || clock.view())
+        };
+        finish_receiver_phase(&mut phase_timing, PHASE_DECISIONS, phase_start);
+        decisions?;
         if capture.decisions_complete() && !reported_capture_state {
             capture.serialize_once(&mut file)?;
             file.flush().map_err(|e| e.to_string())?;
-            event(capture.observation())?;
+            event(capture_observation(&capture, phase_timing.as_ref()))?;
             reported_capture_state = true;
         }
         if capture.finished()? {
             return Ok(());
         }
+        let phase_start = phase_timing.as_ref().map(|_| Instant::now());
         thread::sleep(Duration::from_micros(250));
+        finish_receiver_phase(&mut phase_timing, PHASE_SLEEP, phase_start);
     })();
+    if phase_timing.is_some() && !reported_capture_state {
+        event(capture_observation(&capture, phase_timing.as_ref()))?;
+    }
     if !capture.serialization_attempted
         && let Err(error) = capture.serialize_once(&mut file)
     {
@@ -1029,6 +1167,93 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn receiver_phase_timing_saturates_and_retains_only_first_actual_overdue() {
+        let mut timing = ReceiverPhaseTiming::default();
+        let start = Instant::now();
+        timing.begin(start);
+        timing.record(PHASE_SLEEP, Duration::from_micros(250));
+        timing.begin(start + Duration::from_millis(170));
+        timing.record(PHASE_CARRIER, Duration::from_millis(2));
+        timing.record(PHASE_FEEDBACK, Duration::from_millis(3));
+        let mut sink = admit_finite(600, None);
+        let mut capture = FiniteCapture::new(600).unwrap();
+        capture
+            .drain_observed(
+                &mut sink.engine,
+                || Ok(finite_view(2_000_000_000)),
+                |decision| {
+                    timing.decision(decision, Duration::from_millis(4));
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            capture.muted, 3,
+            "real N04 overdue decisions remain failures"
+        );
+        let first = timing.first_overdue.expect("actual overdue correlated");
+        assert_eq!(first.decision.block, 0);
+        assert_eq!(first.previous_ns[PHASE_SLEEP], 250_000);
+        assert_eq!(first.current_ns[PHASE_CARRIER], 2_000_000);
+        assert_eq!(first.current_ns[PHASE_FEEDBACK], 3_000_000);
+        assert_eq!(first.decision_elapsed_ns, 4_000_000);
+        assert_eq!(first.iteration_gap_ns, 170_000_000);
+        let fixed_bytes = size_of_val(&timing);
+        timing.iterations = u64::MAX;
+        for _ in 0..1000 {
+            timing.begin(start + Duration::from_secs(1));
+            timing.record(PHASE_DECISIONS, Duration::MAX);
+            let mut later = first.decision;
+            later.block = 123;
+            timing.decision(later, Duration::MAX);
+        }
+        assert_eq!(timing.iterations, u64::MAX);
+        assert_eq!(timing.maximum_ns[PHASE_DECISIONS], u64::MAX);
+        assert_eq!(timing.first_overdue.unwrap().decision.block, 0);
+        assert_eq!(size_of_val(&timing), fixed_bytes);
+        assert!(timing.observation().to_string().len() < 2048);
+        assert!(
+            capture_observation(&capture, None)
+                .get("receiver_phase_timing")
+                .is_none()
+        );
+        assert_eq!(
+            capture_observation(&capture, Some(&timing))["receiver_phase_timing"]["first_overdue"]
+                ["block"],
+            0
+        );
+        capture.permit_end(600).unwrap();
+        assert!(
+            capture.finished().is_err(),
+            "diagnostics cannot turn overdue output into success"
+        );
+    }
+
+    #[test]
+    fn receiver_phase_timing_ignores_real_decisions_and_tracks_phase_maxima() {
+        let mut timing = ReceiverPhaseTiming::default();
+        timing.begin(Instant::now());
+        let mut sink = admit_finite(256, None);
+        let mut capture = FiniteCapture::new(256).unwrap();
+        capture
+            .drain_observed(
+                &mut sink.engine,
+                || Ok(finite_view(975_500_000)),
+                |decision| timing.decision(decision, Duration::from_micros(2)),
+            )
+            .unwrap();
+        assert_eq!(capture.real_blocks, 1);
+        assert!(timing.first_overdue.is_none());
+        for phase in 0..4 {
+            timing.record(phase, Duration::from_millis(10));
+            timing.record(phase, Duration::from_millis(1));
+            assert_eq!(timing.maximum_ns[phase], 10_000_000);
+            assert_eq!(timing.current_ns[phase], 1_000_000);
+        }
+        capture.permit_end(256).unwrap();
+        assert!(capture.finished().unwrap());
     }
 
     #[test]

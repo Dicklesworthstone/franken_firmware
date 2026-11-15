@@ -47,6 +47,41 @@ def strict_json(data):
     return json.loads(data, object_pairs_hook=unique)
 
 
+def receiver_phase_diagnostic(value):
+    """Complete typed timing subset or no evidence; never forward free text.
+
+    Gaps are iteration start-to-start, not a scheduling attribution. Decision
+    elapsed is cumulative within drain and includes descheduling. Input/clock
+    time outside measured phases can remain unattributed.
+    """
+    phases = ["carrier", "feedback", "decisions", "sleep"]
+    def u64(item):
+        return type(item) is int and 0 <= item <= (1 << 64) - 1
+    def four(item):
+        return type(item) is list and len(item) == 4 and all(u64(n) for n in item)
+    if type(value) is not dict or value.get("phase_order") != phases:
+        return None
+    if not all(u64(value.get(key)) for key in ("iterations", "max_iteration_gap_ns")):
+        return None
+    if not four(value.get("max_phase_ns")) or "first_overdue" not in value:
+        return None
+    first = value["first_overdue"]
+    if first is not None:
+        fields = ("block", "presentation_ns", "late_by_ns", "iteration",
+                  "iteration_gap_ns", "decision_elapsed_ns")
+        if type(first) is not dict or not all(u64(first.get(key)) for key in fields):
+            return None
+        if (not four(first.get("previous_phase_ns")) or not four(first.get("current_phase_ns"))
+                or not 0 < first["iteration"] <= value["iterations"] or first["late_by_ns"] == 0):
+            return None
+        first = {**{key: first[key] for key in fields},
+                 "previous_phase_ns": list(first["previous_phase_ns"]),
+                 "current_phase_ns": list(first["current_phase_ns"])}
+    return {"phase_order": phases, "iterations": value["iterations"],
+            "max_iteration_gap_ns": value["max_iteration_gap_ns"],
+            "max_phase_ns": list(value["max_phase_ns"]), "first_overdue": first}
+
+
 def read_bounded(path: Path, cap: int = MAX_CAPTURE_BYTES) -> bytes:
     """Reject overlarge data before reading it completely."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -339,6 +374,9 @@ class Children:
                         if type(outcome) is str and outcome in {"real", "concealed", "muted_gap",
                                                                "muted_nohistory", "muted_overdue", "skipped"}:
                             event["first_non_real"]["outcome"] = outcome
+                    timing = receiver_phase_diagnostic(row.get("receiver_phase_timing"))
+                    if timing is not None:
+                        event["receiver_phase_timing"] = timing
                     if not capture_states:
                         capture_states.append(event)
                     else:
