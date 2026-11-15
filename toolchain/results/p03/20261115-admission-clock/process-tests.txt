@@ -1,0 +1,23 @@
+Scope: offline native host only
+Remote command: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' 'FFW_RECEIVER_PHASE_TIMING=1' cargo +1.99.0 test -p franken-speaker --test source_runtime_cli --test source_group_cli --features franken-speaker/journal-process --locked --offline -j1 -- '--test-threads=1' --show-output
+Native job: 30109207290184188
+Remote delivery exit: 0
+Command exit: 0
+Terminal ACK: True
+Source receipt: 1b6fe942df6a05523d0881fb84a60f9b2b15473320a42852bb4d23fc7c2b9a9e
+test group_receiver_rejects_invalid_peer_before_output_creation ... ok
+test group_sender_rejects_invalid_peers_before_ready_or_media ... ok
+    Finished `test` profile [unoptimized] target(s) in 1.95s
+test source_group_processes_match_pcm_and_isolate_wrong_key ... ok
+FFW_SOURCE_GROUP: {"failed": 0, "passed": 3, "planned": 3}
+Case: {"case": "vorbis-two", "error": null, "status": "passed"}
+Case: {"case": "mp3-long-three", "error": null, "status": "passed"}
+Case: {"case": "wrong-key-three", "error": null, "status": "passed"}
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.97s
+test source_loopback_processes_match_independent_pcm_and_reject_wrong_key ... ok
+test stop_before_go_and_expired_anchor_emit_no_media ... ok
+FFW_SOURCE_LOOPBACK: {"failed": 0, "passed": 3, "planned": 3}
+Case: {"case": "vorbis_48000-pcm", "error": null, "status": "passed"}
+Case: {"case": "mp3_48000_long-pcm", "error": null, "status": "passed"}
+Case: {"case": "vorbis_48000-wrong-key", "error": null, "status": "passed"}
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.99s

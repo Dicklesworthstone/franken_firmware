@@ -273,6 +273,7 @@ fn event(value: serde_json::Value) -> Result<(), String> {
 struct CaptureSink {
     receiver: StreamReceiver,
     engine: PlayoutEngine,
+    #[cfg(test)]
     view: ClockView,
     rejected_playout: u64,
     expected_frames: u64,
@@ -615,6 +616,26 @@ impl CreditRefresh {
     }
 }
 
+impl CaptureSink {
+    fn admit_media(&mut self, seq: u64, media: &MediaPacket<'_>, view: ClockView) -> SinkVerdict {
+        let expected = self
+            .expected_frames
+            .saturating_sub(media.start_frame)
+            .min(BLOCK_FRAMES);
+        if expected == 0
+            || u64::from(media.frames) != expected
+            || self.engine.on_packet(view, media) != Admission::Admitted
+        {
+            self.rejected_playout += 1;
+        }
+        // N01 credit records authenticated consumption, NOT N04 playback.
+        SinkVerdict::Admitted { seq }
+    }
+}
+
+// Fixed views are used only by explicit deterministic fixtures. Production
+// polling below always samples after authenticating each actual media packet.
+#[cfg(test)]
 impl MediaSink for CaptureSink {
     fn offer(&mut self, datagram: &[u8]) -> SinkVerdict {
         let Ok(packet) = self.receiver.accept(datagram) else {
@@ -623,18 +644,55 @@ impl MediaSink for CaptureSink {
         let Some(media) = MediaPacket::from_authenticated(&packet) else {
             return SinkVerdict::Refused;
         };
-        let expected = self
-            .expected_frames
-            .saturating_sub(media.start_frame)
-            .min(BLOCK_FRAMES);
-        if expected == 0
-            || u64::from(media.frames) != expected
-            || self.engine.on_packet(self.view, &media) != Admission::Admitted
-        {
-            self.rejected_playout += 1;
+        self.admit_media(packet.seq, &media, self.view)
+    }
+}
+
+struct ClockedCapture<'a, F> {
+    sink: &'a mut CaptureSink,
+    clock: F,
+    error: Option<String>,
+}
+
+impl<F: FnMut() -> Result<ClockView, String>> MediaSink for ClockedCapture<'_, F> {
+    fn ready(&mut self) -> bool {
+        self.error.is_none()
+    }
+
+    fn offer(&mut self, datagram: &[u8]) -> SinkVerdict {
+        let Ok(packet) = self.sink.receiver.accept(datagram) else {
+            return SinkVerdict::Refused;
+        };
+        let Some(media) = MediaPacket::from_authenticated(&packet) else {
+            return SinkVerdict::Refused;
+        };
+        match (self.clock)() {
+            Ok(view) => self.sink.admit_media(packet.seq, &media, view),
+            Err(error) => {
+                self.error = Some(error);
+                // Authentication already consumed this sequence. Do not label
+                // it unauthenticated/backpressure or admit it to N04. The poll
+                // stops reading and returns the clock error to the owner.
+                SinkVerdict::Admitted { seq: packet.seq }
+            }
         }
-        // Authentication consumed the number even if N04 found the PCM late.
-        SinkVerdict::Admitted { seq: packet.seq }
+    }
+}
+
+fn poll_capture<P: DatagramPort>(
+    carrier: &mut CarrierReceiver<P>,
+    sink: &mut CaptureSink,
+    clock: impl FnMut() -> Result<ClockView, String>,
+) -> Result<franken_stream::carrier::PollReport, String> {
+    let mut consumer = ClockedCapture {
+        sink,
+        clock,
+        error: None,
+    };
+    let report = carrier.poll_into(&mut consumer);
+    match consumer.error {
+        Some(error) => Err(error),
+        None => Ok(report),
     }
 }
 
@@ -688,6 +746,7 @@ fn receive(
     let mut sink = CaptureSink {
         receiver: StreamReceiver::new(key, stream, epoch),
         engine,
+        #[cfg(test)]
         view: clock.view()?,
         rejected_playout: 0,
         expected_frames,
@@ -725,10 +784,10 @@ fn receive(
         if Instant::now() >= deadline {
             return Err("receiver timeout".into());
         }
-        sink.view = clock.view()?;
         let phase_start = phase_timing.as_ref().map(|_| Instant::now());
-        let polled = carrier.poll_into(&mut sink);
+        let polled = poll_capture(&mut carrier, &mut sink, || clock.view());
         finish_receiver_phase(&mut phase_timing, PHASE_CARRIER, phase_start);
+        let polled = polled?;
         let phase_start = phase_timing.as_ref().map(|_| Instant::now());
         let feedback = credit.send_if_due(&mut carrier, polled.media_accepted, Instant::now());
         finish_receiver_phase(&mut phase_timing, PHASE_FEEDBACK, phase_start);
@@ -1167,6 +1226,129 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn actual_udp_capture_samples_admission_clock_per_authenticated_offer() {
+        use std::net::UdpSocket;
+        for sampled_ns in [958_999_999, 959_000_000, 959_000_001] {
+            let key = StreamKey::from_bytes([7; 32]);
+            let stream = StreamId::new(7).unwrap();
+            let port = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let mut carrier = CarrierReceiver::bind(
+                key.clone(),
+                stream,
+                1,
+                ReceiverLimits::baseline(),
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port.local_addr().unwrap(),
+            )
+            .unwrap();
+            let mut sender = franken_stream::StreamSender::new(key, stream, 1);
+            let wire = finite_wire(&mut sender, 0, 256);
+            let mut sink = finite_sink(256);
+            // A pre-poll sample is timely, but it must never govern the later
+            // authenticated offer after the planted cutoff-crossing pause.
+            sink.view = finite_view(950_000_000);
+            port.send_to(&wire, carrier.media_addr().unwrap()).unwrap();
+            let mut samples = 0;
+            let until = Instant::now() + Duration::from_secs(2);
+            loop {
+                let report = poll_capture(&mut carrier, &mut sink, || {
+                    samples += 1;
+                    Ok(finite_view(sampled_ns))
+                })
+                .unwrap();
+                if report.media_read != 0 {
+                    break;
+                }
+                assert!(Instant::now() < until, "loopback delivery timed out");
+                thread::yield_now();
+            }
+            assert_eq!(samples, 1);
+            assert_eq!(sink.receiver.counters().accepted, 1);
+            let timely = sampled_ns < 959_000_000;
+            assert_eq!(sink.rejected_playout, u64::from(!timely));
+            assert_eq!(
+                sink.engine.stats().late,
+                u64::from(!timely),
+                "exact N04 admission-cutoff rejection"
+            );
+            let mut capture = FiniteCapture::new(256).unwrap();
+            capture
+                .drain(&mut sink.engine, || Ok(finite_view(975_500_000)))
+                .unwrap();
+            assert_eq!(capture.real_blocks, u64::from(timely));
+            capture.permit_end(256).unwrap();
+            if timely {
+                assert!(capture.finished().unwrap());
+            } else {
+                assert!(
+                    capture.finished().is_err(),
+                    "late authenticated data cannot produce a Real capture"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn actual_udp_admission_clock_error_propagates_without_n04_output_or_more_reads() {
+        use std::net::UdpSocket;
+        let key = StreamKey::from_bytes([7; 32]);
+        let stream = StreamId::new(7).unwrap();
+        let port = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let mut carrier = CarrierReceiver::bind(
+            key.clone(),
+            stream,
+            1,
+            ReceiverLimits::baseline(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port.local_addr().unwrap(),
+        )
+        .unwrap();
+        let mut sender = franken_stream::StreamSender::new(key, stream, 1);
+        for start in [0, 256] {
+            port.send_to(
+                &finite_wire(&mut sender, start, 256),
+                carrier.media_addr().unwrap(),
+            )
+            .unwrap();
+        }
+        let mut sink = finite_sink(512);
+        sink.view = finite_view(950_000_000);
+        let mut samples = 0;
+        let until = Instant::now() + Duration::from_secs(2);
+        loop {
+            let result = poll_capture(&mut carrier, &mut sink, || {
+                samples += 1;
+                Err("admission clock failed".to_owned())
+            });
+            if let Err(error) = result {
+                assert_eq!(error, "admission clock failed");
+                break;
+            }
+            assert!(Instant::now() < until, "loopback delivery timed out");
+            thread::yield_now();
+        }
+        assert_eq!(samples, 1);
+        assert_eq!(
+            carrier.stats().media_read,
+            1,
+            "clock failure stops this poll before consuming another packet"
+        );
+        assert_eq!(
+            sink.receiver.counters().accepted,
+            1,
+            "authentication consumption remains honest"
+        );
+        let mut capture = FiniteCapture::new(512).unwrap();
+        capture
+            .drain(&mut sink.engine, || Ok(finite_view(975_500_000)))
+            .unwrap();
+        assert_eq!(capture.real_blocks, 0);
+        assert_eq!(capture.captured_frames, 0);
+        capture.permit_end(512).unwrap();
+        assert!(capture.finished().is_err());
     }
 
     #[test]

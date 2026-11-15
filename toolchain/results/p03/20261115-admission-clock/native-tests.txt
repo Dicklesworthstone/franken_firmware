@@ -1,0 +1,29 @@
+Scope: offline native host only
+Remote command: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' cargo +1.99.0 test -p franken-speaker --bin franken-speaker --features franken-speaker/journal-process --locked --offline -j1 -- '--test-threads=1' --show-output
+Native job: 30109207290184184
+Remote delivery exit: 0
+Command exit: 0
+Terminal ACK: True
+Source receipt: ab90e5e554734850b9f2b71492969c6e7dcc9b4f901a23f0c6a1a1e49794f990
+test source_runtime_cli::tests::actual_udp_admission_clock_error_propagates_without_n04_output_or_more_reads ... ok
+test source_runtime_cli::tests::actual_udp_capture_samples_admission_clock_per_authenticated_offer ... ok
+test source_runtime_cli::tests::all_peer_accounting_accepts_fair_order_and_keeps_a_stalled_member_separate ... ok
+test source_runtime_cli::tests::all_peer_accounting_rejects_missing_duplicate_unknown_and_unexpected_rows ... ok
+test source_runtime_cli::tests::authenticated_future_packet_is_credited_but_n04_rejection_is_visible ... ok
+test source_runtime_cli::tests::explicit_peer_map_preserves_ids_and_accepts_the_existing_eight_peer_bound ... ok
+test source_runtime_cli::tests::finite_capture_defers_stalling_writer_until_actual_n04_decisions_finish ... ok
+test source_runtime_cli::tests::finite_capture_keeps_actual_missing_middle_and_final_partial_as_failures ... ok
+test source_runtime_cli::tests::finite_capture_partial_error_serializes_once_without_duplicate_retry ... ok
+test source_runtime_cli::tests::finite_capture_prevents_real_engine_post_end_concealment_without_trimming_pcm ... ok
+test source_runtime_cli::tests::finite_capture_rejects_authenticated_extra_and_short_blocks_without_hiding_credit ... ok
+test source_runtime_cli::tests::finite_capture_rejects_invalid_declarations_and_mismatched_or_duplicate_end ... ok
+test source_runtime_cli::tests::fixture_provisioning_rejects_nonloopback_and_bad_keys ... ok
+test source_runtime_cli::tests::host_clock_maps_to_monotonic_time_with_declared_uncertainty ... ok
+test source_runtime_cli::tests::host_udp_lost_last_report_recovers_without_replaying_pcm_or_trusting_wrong_address ... ok
+test source_runtime_cli::tests::malformed_and_wrong_key_refusals_have_distinct_real_n01_counters ... ok
+test source_runtime_cli::tests::peer_ids_and_list_grammar_are_bounded_before_opening_source_or_sockets ... ok
+test source_runtime_cli::tests::peer_map_rejects_duplicates_cross_lane_aliases_and_nonlocal_endpoints ... ok
+test source_runtime_cli::tests::receiver_phase_timing_ignores_real_decisions_and_tracks_phase_maxima ... ok
+test source_runtime_cli::tests::receiver_phase_timing_saturates_and_retains_only_first_actual_overdue ... ok
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+    Finished `test` profile [unoptimized] target(s) in 1.77s
