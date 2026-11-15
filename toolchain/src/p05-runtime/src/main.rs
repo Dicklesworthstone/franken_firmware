@@ -1406,6 +1406,116 @@ async fn wait_for_count(counter: Arc<AtomicUsize>, wanted: usize) -> bool {
 /// `drain_phase`, where `caller_driven` says that no thread but the caller's runs the runtime, so the parked tasks are waited for inside
 /// `block_on`. The tasks are spawned from the main thread in both cases, and the drain itself is `shutdown_drained`, which borrows the
 /// worker on the calling thread.
+#[derive(Debug)]
+struct PreparedResource(Arc<AtomicUsize>);
+impl Drop for PreparedResource {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+// A separate caller-driven runtime: no change to the parent probe's task limit.
+// Startup allocation is permitted; task-quota refusal is not allocator failure.
+fn prepared_cleanup_subphase() -> Result<String, String> {
+    let before = census();
+    let profile = caller_driven_profile().ok_or("cleanup_profile_overflow")?;
+    let runtime = profile
+        .builder()
+        .map_err(|e| format!("cleanup_builder={e:?}"))?
+        .root_region_limits(asupersync::record::RegionLimits {
+            max_tasks: Some(1),
+            ..Default::default()
+        })
+        .build()
+        .map_err(|e| format!("cleanup_build={e:?}"))?;
+    profile
+        .audit(&runtime)
+        .map_err(|e| format!("cleanup_profile_audit={e:?}"))?;
+    runtime
+        .configure_prepared_cleanup(1)
+        .map_err(|e| format!("cleanup_config={e:?}"))?;
+    let ran = Arc::new(AtomicUsize::new(0));
+    let released = Arc::new(AtomicUsize::new(0));
+    let resource = PreparedResource(Arc::clone(&released));
+    let callback = Arc::clone(&ran);
+    runtime
+        .prepare_async_cleanup(async move {
+            let cx = Cx::current().expect("prepared cleanup has actual task context");
+            let _ = sleep(cx.now(), Duration::from_millis(5)).await;
+            callback.fetch_add(1, Ordering::SeqCst);
+            drop(resource);
+        })
+        .map_err(|(e, _)| format!("cleanup_prepare={e:?}"))?;
+    let held_not_quiescent = !runtime.is_quiescent() && released.load(Ordering::SeqCst) == 0;
+    let parked = Arc::new(AtomicUsize::new(0));
+    let child_parked = Arc::clone(&parked);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let child_cancelled = Arc::clone(&cancelled);
+    let task = runtime
+        .handle()
+        .try_spawn(async move {
+            let cx = Cx::current().expect("ordinary task context");
+            let mut timer = pin!(sleep(cx.now(), LONG));
+            let _ = std::future::poll_fn(|waker| {
+                let result = timer.as_mut().poll(waker);
+                if result.is_pending() {
+                    child_parked.store(1, Ordering::SeqCst);
+                }
+                result
+            })
+            .await;
+            child_cancelled.store(cx.is_cancel_requested(), Ordering::SeqCst);
+        })
+        .map_err(|e| format!("cleanup_child={e:?}"))?;
+    let refused_before_drive = matches!(
+        runtime.handle().try_spawn(async {}),
+        Err(asupersync::runtime::state::SpawnError::RegionAtCapacity { limit: 1, .. })
+    );
+    // Drive this observer directly: run_async_value would spawn a SECOND
+    // ordinary root task and panic at the deliberately exhausted quota.
+    // Runtime::block_on borrows the caller-driven worker; its bookkeeping
+    // admission can fall back to the request Cx without admitting ordinary work.
+    let did_park = runtime.block_on(wait_for_count(Arc::clone(&parked), 1));
+    // This sample is between block_on calls, not inside an async callback.
+    let between = census();
+    let refused = matches!(
+        runtime.handle().try_spawn(async {}),
+        Err(asupersync::runtime::state::SpawnError::RegionAtCapacity { limit: 1, .. })
+    );
+    let drained = runtime.shutdown_drained(Duration::from_secs(5));
+    let callback_once = ran.load(Ordering::SeqCst) == 1;
+    let resource_once = released.load(Ordering::SeqCst) == 1;
+    let child_cancelled = cancelled.load(Ordering::SeqCst);
+    let quiet = runtime.is_quiescent();
+    drop(task);
+    drop(runtime);
+    let after = census();
+    let floor = before
+        .stable_task_dir()
+        .ok_or("cleanup_census_unknown_or_unstable_before")?;
+    let same_threads =
+        between.stable_task_dir() == Some(floor) && after.stable_task_dir() == Some(floor);
+    let detail = format!(
+        "prepared_scope=separate_caller_driven prepared_parked={did_park} prepared_quota_refused_before_drive={refused_before_drive} prepared_quota_refused={refused} prepared_held_not_quiescent={held_not_quiescent} prepared_callback_once={callback_once} prepared_resource_once={resource_once} prepared_child_cancelled={child_cancelled} prepared_drain_clean={} prepared_quiescent={quiet} prepared_thread_census_equal={same_threads} prepared_runtime_dropped=true",
+        drain_succeeded(&drained)
+    );
+    if did_park
+        && refused_before_drive
+        && refused
+        && held_not_quiescent
+        && callback_once
+        && resource_once
+        && child_cancelled
+        && drain_succeeded(&drained)
+        && quiet
+        && same_threads
+    {
+        Ok(detail)
+    } else {
+        Err(detail)
+    }
+}
+
 fn drain_phase_with(report: &mut Report, runtime: &Runtime, caller_driven: bool) {
     let handle = runtime.handle();
     let mut spawned = 0_usize;
@@ -1493,6 +1603,7 @@ fn drain_phase_with(report: &mut Report, runtime: &Runtime, caller_driven: bool)
         drop(tasks);
         return;
     }
+    let prepared = prepared_cleanup_subphase();
     let bound = Duration::from_secs(5);
     let drained = runtime.shutdown_drained(bound);
     // Draining a root that is already closed is itself pinned (`handle_drain_of_an_already_closed_root_preserves_bounded_teardown`):
@@ -1501,7 +1612,7 @@ fn drain_phase_with(report: &mut Report, runtime: &Runtime, caller_driven: bool)
     let cleanup = cleanup.lock().unwrap_or_else(PoisonError::into_inner);
     let witnessed = cleanup_counts(&cleanup);
     let detail = format!(
-        "tasks_spawned={spawned}/{DRAIN_TASKS} tasks_parked_before_drain={parked_count} snapshot_before_drain=({}) {} elapsed_ms={} bound_ms={} cleanup_resumed={} cleanup_unique={} cleanup_cancelled={} cleanup_before_deadline={} repeat: {}",
+        "tasks_spawned={spawned}/{DRAIN_TASKS} tasks_parked_before_drain={parked_count} snapshot_before_drain=({}) {} elapsed_ms={} bound_ms={} cleanup_resumed={} cleanup_unique={} cleanup_cancelled={} cleanup_before_deadline={} {} repeat: {}",
         snapshot.detail(),
         drain_detail(&drained),
         drained.elapsed.as_millis(),
@@ -1510,9 +1621,11 @@ fn drain_phase_with(report: &mut Report, runtime: &Runtime, caller_driven: bool)
         witnessed.1,
         witnessed.2,
         witnessed.3,
+        prepared.as_ref().unwrap_or_else(|detail| detail),
         drain_detail(&again)
     );
-    let ok = spawned == DRAIN_TASKS
+    let ok = prepared.is_ok()
+        && spawned == DRAIN_TASKS
         && parked_count == DRAIN_TASKS
         && drain_succeeded(&drained)
         && cleanup_succeeded(&cleanup, DRAIN_TASKS)
@@ -2383,6 +2496,37 @@ fn run_caller_driven_for(stated: Option<LegacyProfile>) -> Report {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn real_prepared_cleanup_runs_at_task_quota_and_releases_owned_resource() {
+        let result = super::prepared_cleanup_subphase();
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn retained_prepared_cleanup_cannot_report_quiescent() {
+        let runtime = super::caller_driven_profile().unwrap().build().unwrap();
+        runtime.configure_prepared_cleanup(1).unwrap();
+        let released = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let resource = super::PreparedResource(std::sync::Arc::clone(&released));
+        assert!(
+            runtime
+                .prepare_async_cleanup(async move {
+                    std::future::pending::<()>().await;
+                    drop(resource);
+                })
+                .is_ok()
+        );
+        assert!(!runtime.is_quiescent());
+        assert_eq!(released.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let report = runtime.shutdown_drained(std::time::Duration::ZERO);
+        assert!(
+            !super::drain_succeeded(&report),
+            "retained callback cannot certify a clean drain"
+        );
+        drop(runtime);
+        assert_eq!(released.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
     use super::*;
     use std::task::{Context, Wake};
 

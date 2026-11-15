@@ -1,0 +1,5 @@
+8efd8b1d406496fb731672699ca0bf19b4e00ac56dd7221cb9417da0845ba1bb  toolchain/src/p05-runtime/Cargo.toml
+5301bf5d0562763d82cbe494a2074dbf2e38b6f8a1898d93a17490175de60813  toolchain/src/p05-runtime/Cargo.lock
+71392c95ed8c7b7775ef13b31c88b6f8e1fb8f138c0417e63df8b1ebc2ab84ff  toolchain/src/p05-runtime/src/main.rs
+f5110ee4a3cd8242b0a7685b9968e1708b584dfb5b8d9dfaebfc7ed2dab48e76  toolchain/src/measure-p05-target.py
+9e2d1a8a16cfdd7835f59443b151a5559a688b02d904a48d3b2049184c53741d  toolchain/tests/test_measure_p05_runtime.py

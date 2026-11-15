@@ -1,0 +1,60 @@
+{
+  "ok": true,
+  "blocked": false,
+  "gates": [
+    {
+      "gate_id": "P05R-TRANSCRIPT",
+      "title": "all 32 runtime markers in the declared order",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "gate_id": "P05R-ENV",
+      "title": "runtime BEGIN and supplied ELF agree",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "gate_id": "P05R-PHASES",
+      "title": "every required operation actually reports ok",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "gate_id": "P05R-CLEANUP",
+      "title": "child-side cancellation cleanup is actually observed",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "gate_id": "P05R-CENSUS",
+      "title": "twelve complete, consistent census samples, none above the start count, the runtime drop settled",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "gate_id": "P05R-END",
+      "title": "END matches independently counted operations",
+      "status": "passed",
+      "detail": ""
+    }
+  ],
+  "observed_statuses": {
+    "ok": 30,
+    "failed": 0,
+    "unsupported": 0,
+    "partial": 0,
+    "unknown": 0
+  },
+  "profile": "caller-driven",
+  "elf": {
+    "sha256": "5e1e9f94e0156eb61a4c3e16603ee7a19869f2f8df15d2f74939be115a684a9b",
+    "bytes": 18824024,
+    "arch": "x86_64",
+    "pointer_bits": 64,
+    "source_provenance": "not_attested_by_this_runner"
+  },
+  "scope": "native x86_64 host only",
+  "artifact_delivery_exit_code": 0,
+  "native_job": "30109207290184200"
+}

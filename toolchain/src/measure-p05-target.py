@@ -988,7 +988,14 @@ def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str, profil
                           "second_admitted": "true", "third_refused": "Some(Saturated)",
                           "active_threads_while_held": "1", "pending_while_held": "1",
                           "first_finished": "true", "second_finished": "true", "ran": "2"},
-        "DRAIN": {"tasks_spawned": "4/4", "tasks_parked_before_drain": "4", "bound_ms": "5000"},
+        "DRAIN": {"tasks_spawned": "4/4", "tasks_parked_before_drain": "4", "bound_ms": "5000",
+                  "prepared_scope": "separate_caller_driven", "prepared_parked": "true",
+                  "prepared_quota_refused_before_drive": "true", "prepared_quota_refused": "true",
+                  "prepared_held_not_quiescent": "true",
+                  "prepared_callback_once": "true", "prepared_resource_once": "true",
+                  "prepared_child_cancelled": "true", "prepared_drain_clean": "true",
+                  "prepared_quiescent": "true", "prepared_thread_census_equal": "true",
+                  "prepared_runtime_dropped": "true"},
     }
     if profile == RUNTIME_SINGLE_OWNER:
         # One scheduler worker: the caps differ from the threaded profile only in the worker count, so the stack figure

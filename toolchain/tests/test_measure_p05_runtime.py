@@ -32,6 +32,14 @@ sys.modules[SPEC.name] = M
 SPEC.loader.exec_module(M)
 
 
+# Synthetic current-protocol observations, never inserted into captured guest logs.
+PREPARED_CLEANUP_FIELDS = (
+    " prepared_scope=separate_caller_driven prepared_parked=true prepared_quota_refused_before_drive=true prepared_quota_refused=true"
+    " prepared_held_not_quiescent=true prepared_callback_once=true prepared_resource_once=true"
+    " prepared_child_cancelled=true prepared_drain_clean=true prepared_quiescent=true"
+    " prepared_thread_census_equal=true prepared_runtime_dropped=true"
+)
+
 def fixture(arch="mips", *, cleanup=True):
     """Handwritten operation sequence; deliberately does not iterate the judge's expected-order table."""
     def c(phase):
@@ -65,7 +73,7 @@ def fixture(arch="mips", *, cleanup=True):
         c("after_udp"),
         "FFW_P05_RUNTIME:BLOCKING_POOL status=ok idle_threads=0 first_admitted=true first_started=true second_admitted=true third_refused=Some(Saturated) active_threads_while_held=1 pending_while_held=1 threads_held_task_dir=5 threads_held_status=5 first_finished=true second_finished=true ran=2",
         c("after_blocking_pool"),
-        "FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) " + drain + " elapsed_ms=2 bound_ms=5000" + drain_cleanup + " repeat: " + drain,
+        "FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) " + drain + " elapsed_ms=2 bound_ms=5000" + drain_cleanup + PREPARED_CLEANUP_FIELDS + " repeat: " + drain,
         c("after_drain"), c("after_runtime_drop"),
         "FFW_P05_RUNTIME:END status=done ops=23 ok=23 failed=0 unsupported=0 partial=0 unknown=0 census_samples=10",
     ]) + "\n"
@@ -221,6 +229,36 @@ class RuntimeTranscriptTests(unittest.TestCase):
         ):
             with self.subTest(plant=new):
                 self.assertFalse(self.judge(fixture().replace(old, new, 1))["ok"])
+
+    def test_all_profiles_bind_prepared_cleanup_to_initial_drain_not_repeat(self):
+        # Transcript fixtures test parser structure only, never native runtime.
+        for profile, make in ((M.RUNTIME_THREADED, fixture), (SO, single_owner_fixture),
+                              (CD, caller_driven_fixture)):
+            good = make()
+            judge = lambda text: M.judge_runtime(text, "mips", {"arch": "mips"}, profile=profile)
+            with self.subTest(profile=profile):
+                self.assertTrue(judge(good)["ok"])
+                row = next(line for line in good.splitlines() if line.startswith("FFW_P05_RUNTIME:DRAIN "))
+                first, repeat = row.split(" repeat: ", 1)
+                self.assertIn(PREPARED_CLEANUP_FIELDS, first)
+                self.assertNotIn("prepared_", repeat)
+                wrong_side = first.replace(PREPARED_CLEANUP_FIELDS, "") + " repeat: " + repeat + PREPARED_CLEANUP_FIELDS
+                self.assertFalse(judge(good.replace(row, wrong_side))["ok"])
+                for field in ("prepared_resource_once", "prepared_callback_once", "prepared_quiescent",
+                              "prepared_held_not_quiescent", "prepared_quota_refused_before_drive"):
+                    self.assertFalse(judge(good.replace(field + "=true", field + "=false"))["ok"], field)
+                self.assertFalse(judge(good.replace(PREPARED_CLEANUP_FIELDS, ""))["ok"])
+
+    def test_prepared_cleanup_requires_every_new_observation(self):
+        good = fixture()
+        self.assertTrue(self.judge(good)["ok"])
+        # Old captures remain incomplete: no observed cleanup subphase, no pass.
+        self.assertFalse(self.judge(good.replace(PREPARED_CLEANUP_FIELDS, ""))["ok"])
+        for field in PREPARED_CLEANUP_FIELDS.split():
+            key, _ = field.split("=", 1)
+            for replacement in ("", key + "=false", key + "=unknown"):
+                with self.subTest(field=field, replacement=replacement):
+                    self.assertFalse(self.judge(good.replace(field, replacement))["ok"])
 
     def test_drain_checks_both_original_and_repeated_counts(self):
         self.assertTrue(self.judge(fixture())["ok"])
@@ -1090,7 +1128,7 @@ def single_owner_fixture(arch="mips", *, cleanup=True, settle=True):
         c("after_blocking_pool"),
         "FFW_P05_RUNTIME:SINGLE_OWNER_BLOCKING_OFFLOAD status=ok held_admitted=true held_started=true async_phase=ok held_job_unfinished_during_async=true held_job_finished_after_release=true async_detail=(children=8 joined=8 sum=140 expected=140)",
         c("after_blocking_offload"),
-        "FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) " + drain + " elapsed_ms=2 bound_ms=5000" + drain_cleanup + " repeat: " + drain,
+        "FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) " + drain + " elapsed_ms=2 bound_ms=5000" + drain_cleanup + PREPARED_CLEANUP_FIELDS + " repeat: " + drain,
         c("after_drain"), c("after_runtime_drop"),
         "FFW_P05_RUNTIME:BYTE_BUDGET_REFUSAL status=ok audit_ok=true policy=BoundedBytes { max_queued: 1, max_live_bytes: 4096 } reactor=none budget_bytes=4096 declared_heap_bytes=4097 refusal=Some(ChargeTooLarge) expected_refusal=Some(ChargeTooLarge) pool_threads_after_refusal=0 refused_job_ran=false",
         "FFW_P05_RUNTIME:FIRST_USE_BACKGROUND status=ok pool_threads_before_first_job=0 pool_threads_while_job_runs=1 job_started=true job_finished=true os_threads_before=4 os_threads_during=5",
@@ -1162,7 +1200,7 @@ def caller_driven_fixture(arch="mips", *, cleanup=True, ceiling=True, settle=Tru
         c("after_blocking_refused"),
         "FFW_P05_RUNTIME:CALLER_DRIVEN_HANDLE_SPAWN_WAITS status=ok ran_before_block_on=false ran_after_block_on=true ran_on_caller=true",
         c("after_handle_spawn"),
-        "FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) " + drain + " elapsed_ms=2 bound_ms=5000" + drain_cleanup + " repeat: " + drain,
+        "FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) " + drain + " elapsed_ms=2 bound_ms=5000" + drain_cleanup + PREPARED_CLEANUP_FIELDS + " repeat: " + drain,
         c("after_drain"), c("after_runtime_drop"),
         "FFW_P05_RUNTIME:END status=done ops=30 ok=30 failed=0 unsupported=0 partial=0 unknown=0 census_samples=12",
     ]) + "\n"
