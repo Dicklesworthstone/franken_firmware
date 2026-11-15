@@ -2347,3 +2347,126 @@ mod http_eventing;
 
 #[cfg(unix)]
 mod final_feedback;
+
+// Unit-only adapter: the existing synthetic storage executes immediately.
+// ProcessStorage integration tests separately exercise actual child suspension.
+impl franken_journal::PollStorage for FaultingMedium<RamMedium> {
+    fn poll_operation(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+        operation: franken_journal::StorageOperation<'_>,
+    ) -> std::task::Poll<Result<(), franken_journal::StorageFault>> {
+        std::task::Poll::Ready(operation.execute(self))
+    }
+}
+
+#[test]
+fn owned_pending_control_publishes_relative_effect_and_deferred_ingress_is_bounded() {
+    use franken_control::channel::owner::DeferredIngressError;
+    let mut rig = prepared_owner(true);
+    let _sid = subscribe_events(
+        &mut rig,
+        franken_control::fsonos::Service::GroupRenderingControl,
+    );
+    let first = test_wire(
+        TEST_CONTROLLER,
+        1,
+        Some(0),
+        ControlCommand::AdjustGroupVolume { delta: 10 },
+    );
+    rig.owner.receive(&first).unwrap();
+    rig.owner.begin_pending_control().unwrap();
+    assert!(matches!(
+        rig.owner.step_control(),
+        Err(OwnerError::ControlPending)
+    ));
+    assert!(matches!(
+        rig.owner.receive(&first),
+        Err(IngressError::Owner(OwnerError::ControlPending))
+    ));
+    assert_eq!(
+        rig.owner.defer_control_datagram(&vec![0; 4097]),
+        Err(DeferredIngressError::TooLarge)
+    );
+    for _ in 0..8 {
+        rig.owner.defer_control_datagram(&first).unwrap();
+    }
+    assert_eq!(
+        rig.owner.defer_control_datagram(&first),
+        Err(DeferredIngressError::Full)
+    );
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let mut completed = None;
+    for turn in 0..100 {
+        if let std::task::Poll::Ready(result) = rig.owner.poll_pending_control(&mut cx) {
+            completed = Some(result.unwrap());
+            break;
+        }
+        assert!(turn < 99);
+    }
+    let completed = completed.expect("bounded model transaction");
+    assert_eq!(completed.deferred_datagrams.len(), 8);
+    assert!(matches!(
+        completed.step.control.unwrap()[0].outcome,
+        Outcome::Committed { revision: 1 }
+    ));
+    assert!(
+        completed
+            .step
+            .notifications
+            .iter()
+            .any(|event| event.body.contains("<GroupVolume>60</GroupVolume>"))
+    );
+    for bytes in completed.deferred_datagrams {
+        rig.owner.receive(&bytes).unwrap();
+    }
+    // Replayed deferred packets cannot execute the relative effect twice.
+    assert!(rig.owner.step_control().unwrap().notifications.is_empty());
+}
+
+#[test]
+fn owned_pending_control_local_stop_fences_effect_without_waiting_for_storage() {
+    let mut rig = prepared_owner(true);
+    let _sid = subscribe_events(
+        &mut rig,
+        franken_control::fsonos::Service::GroupRenderingControl,
+    );
+    let first = test_wire(
+        TEST_CONTROLLER,
+        1,
+        Some(0),
+        ControlCommand::AdjustGroupVolume { delta: 10 },
+    );
+    rig.owner.receive(&first).unwrap();
+    rig.owner.begin_pending_control().unwrap();
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(rig.owner.poll_pending_control(&mut cx).is_pending());
+    assert!(matches!(
+        rig.owner.request_stop(),
+        Ok(RenderApplication::Stopping)
+    ));
+    let mut completed = None;
+    for turn in 0..100 {
+        if let std::task::Poll::Ready(result) = rig.owner.poll_pending_control(&mut cx) {
+            completed = Some(result.unwrap());
+            break;
+        }
+        assert!(turn < 99);
+    }
+    let completed = completed.expect("cancelled model transaction returns owner");
+    assert!(matches!(
+        completed.step.control,
+        Err(franken_control::channel::pipeline::PendingStepFailure::FenceChanged { .. })
+    ));
+    assert!(
+        completed
+            .step
+            .notifications
+            .iter()
+            .all(|event| !event.body.contains("<GroupVolume>60</GroupVolume>"))
+    );
+    assert!(matches!(
+        completed.step.render,
+        Ok(RenderApplication::Stopping)
+    ));
+}

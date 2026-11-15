@@ -79,6 +79,7 @@ use super::seqfloor::SeqFloors;
 
 mod ack;
 mod boot;
+mod pending;
 mod persist;
 #[cfg(test)]
 mod profile;
@@ -87,6 +88,7 @@ mod submit_log;
 
 pub use ack::AckOutcome;
 pub use boot::{Booted, DurableBoot, Limits, Storage, StorageFault, boot_durable, reopen_durable};
+pub use pending::{FinishedDurableStep, PendingDurableStep, PendingStepFailure};
 pub use persist::{
     Cause, DevelopmentVolatile, Durable, FloorCause, HIGH_WATER_KEY, LatchedStepper,
     MemoryJournalStepper, OwnedDurable, REFUSING_FLOOR, RamMedium, Reopened, Restored,
@@ -441,6 +443,15 @@ struct Queued {
     auth: Authenticated,
     request: ControlRequest,
     accepted_ns: u64,
+}
+
+/// Validated effect, held across a durable-floor barrier. The snapshot fence
+/// prevents a delayed acknowledgement from applying a delta to changed state.
+struct PreparedEffect {
+    group_id: String,
+    epoch: u64,
+    revision: u64,
+    payload: GroupCommandPayload,
 }
 
 /// When a command settled, when it was accepted, and the session's revision at that moment.
@@ -1348,13 +1359,33 @@ impl<A: PeerAuthority> ControlChannel<A> {
         store: Option<&mut S>,
         out: &mut Vec<Settlement>,
     ) -> Outcome {
+        let prepared = match self.prepare_effect(item, now_ns, floor, session, out) {
+            Ok(prepared) => prepared,
+            Err(outcome) => return outcome,
+        };
+        self.reserve_and_apply_prepared(item, now_ns, session, store, prepared)
+    }
+
+    fn prepare_effect(
+        &mut self,
+        item: &Queued,
+        now_ns: u64,
+        floor: u64,
+        session: &mut UnifiedGroupSession,
+        out: &mut Vec<Settlement>,
+    ) -> Result<PreparedEffect, Outcome> {
+        // A resumable batch can wait between commands, including cancellation
+        // commands which settle directly without a PreparedEffect.
+        if now_ns.saturating_sub(item.accepted_ns) >= self.config.pending_ttl_ns {
+            return Err(Outcome::Refused(Refusal::Expired));
+        }
         // The authority behind this command must still stand.
         if !self.authority.is_current(&item.auth) {
-            return Outcome::Refused(Refusal::AuthorityExpired);
+            return Err(Outcome::Refused(Refusal::AuthorityExpired));
         }
         let body = item.request.body();
         if let ControlCommand::Cancel { target_seq } = body.command() {
-            return self.execute_cancel(
+            return Err(self.execute_cancel(
                 body.peer(),
                 *target_seq,
                 Settled {
@@ -1363,29 +1394,29 @@ impl<A: PeerAuthority> ControlChannel<A> {
                     revision: session.state_revision,
                 },
                 out,
-            );
+            ));
         }
 
         // G01: a group-affecting command is applied only under a live lease for this group, judged by
         // the session's own `AuthorityToken::check`. Refused here, nothing has been touched.
         if let Some(refusal) = self.lease_refusal(body.command(), item.auth.role, session, now_ns) {
-            return Outcome::Refused(refusal);
+            return Err(Outcome::Refused(refusal));
         }
 
         // A remote controller is held to the epoch and to the revision it last saw.
         if item.auth.role == PeerRole::Controller {
             let current = session.current_epoch;
             if body.epoch() < current {
-                return Outcome::Refused(Refusal::StaleEpoch {
+                return Err(Outcome::Refused(Refusal::StaleEpoch {
                     request: body.epoch(),
                     current,
-                });
+                }));
             }
             if body.epoch() > current {
-                return Outcome::Refused(Refusal::EpochAhead {
+                return Err(Outcome::Refused(Refusal::EpochAhead {
                     request: body.epoch(),
                     current,
-                });
+                }));
             }
             if let Some(observed) = body.expected_revision() {
                 let revision = session.state_revision;
@@ -1393,17 +1424,17 @@ impl<A: PeerAuthority> ControlChannel<A> {
                 // Any command naming a revision the session has not reached is refused: it was
                 // composed against some other state than this one.
                 if observed > revision || (body.command().is_relative() && observed != revision) {
-                    return Outcome::Refused(Refusal::RevisionMismatch {
+                    return Err(Outcome::Refused(Refusal::RevisionMismatch {
                         expected: observed,
                         actual: revision,
-                    });
+                    }));
                 }
                 // An absolute command stays valid however far the group has moved since, as long as it
                 // was composed after this incarnation began: absolute volume is naturally repeatable,
                 // so a client may pipeline updates and two controllers may interleave. What it may not
                 // be is older than the start of this incarnation: that is a copy that outlived a restart.
                 if observed < floor {
-                    return Outcome::Refused(Refusal::StaleRevision { observed, floor });
+                    return Err(Outcome::Refused(Refusal::StaleRevision { observed, floor }));
                 }
             }
         }
@@ -1420,9 +1451,9 @@ impl<A: PeerAuthority> ControlChannel<A> {
             },
             ControlCommand::AdjustMemberVolume { member_id, delta } => {
                 let Some(member) = session.members.get(member_id) else {
-                    return Outcome::Refused(Refusal::UnknownMember {
+                    return Err(Outcome::Refused(Refusal::UnknownMember {
                         member_id: member_id.clone(),
-                    });
+                    }));
                 };
                 GroupCommandPayload::SetMemberVolume {
                     member_id: member_id.clone(),
@@ -1446,7 +1477,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
                 irrevocable_dma_tail_ns: *irrevocable_dma_tail_ns,
             },
             // Handled above; present so the match is total without a panic.
-            ControlCommand::Cancel { .. } => return Outcome::Refused(Refusal::NotCancellable),
+            ControlCommand::Cancel { .. } => return Err(Outcome::Refused(Refusal::NotCancellable)),
         };
 
         // Never reuse the terminal session fence, including after a saturated restart.
@@ -1455,7 +1486,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
         if self.session_sequence_exhausted(session) {
             self.next_session_seq = u64::MAX;
             if !Self::silences_locally(item) {
-                return Outcome::Refused(Refusal::SequenceExhausted);
+                return Err(Outcome::Refused(Refusal::SequenceExhausted));
             }
             let operation = match body.command() {
                 ControlCommand::StopGroupPlayback {
@@ -1471,9 +1502,9 @@ impl<A: PeerAuthority> ControlChannel<A> {
                 } => franken_session::ExhaustedLocalSilence::MuteMember {
                     member_id: member_id.clone(),
                 },
-                _ => return Outcome::Refused(Refusal::SequenceExhausted),
+                _ => return Err(Outcome::Refused(Refusal::SequenceExhausted)),
             };
-            return match session.apply_exhausted_local_silence(operation) {
+            return Err(match session.apply_exhausted_local_silence(operation) {
                 Ok(franken_session::ExhaustedSilenceOutcome::Applied { revision }) => {
                     Outcome::Committed { revision }
                 }
@@ -1481,8 +1512,31 @@ impl<A: PeerAuthority> ControlChannel<A> {
                     Outcome::AlreadySilent { revision }
                 }
                 Err(error) => Outcome::Refused(Refusal::Session(error)),
-            };
+            });
         }
+
+        Ok(PreparedEffect {
+            group_id: session.group_id.clone(),
+            epoch: session.current_epoch,
+            revision: session.state_revision,
+            payload,
+        })
+    }
+
+    fn reserve_and_apply_prepared<S: FloorStore>(
+        &mut self,
+        item: &Queued,
+        now_ns: u64,
+        session: &mut UnifiedGroupSession,
+        store: Option<&mut S>,
+        prepared: PreparedEffect,
+    ) -> Outcome {
+        // Check before reserving: a delayed validation cannot consume a floor
+        // or apply an effect in another group/incarnation or after revocation.
+        if let Some(refusal) = self.prepared_refusal(item, now_ns, session, &prepared) {
+            return Outcome::Refused(refusal);
+        }
+        let body = item.request.body();
 
         // A relative command is the one kind that must never be applied twice, so its duplicate-suppression record is
         // made durable BEFORE the effect, here and not earlier (a refusal above leaves the command free to be sent
@@ -1497,6 +1551,65 @@ impl<A: PeerAuthority> ControlChannel<A> {
             self.last_internal_fault = None;
             self.store_cause = Some(StoreCause::Reservation(code));
             return Outcome::Refused(Refusal::InternalFault);
+        }
+
+        self.apply_prepared(item, now_ns, session, prepared)
+    }
+
+    fn prepared_refusal(
+        &self,
+        item: &Queued,
+        now_ns: u64,
+        session: &UnifiedGroupSession,
+        prepared: &PreparedEffect,
+    ) -> Option<Refusal> {
+        if now_ns.saturating_sub(item.accepted_ns) >= self.config.pending_ttl_ns {
+            return Some(Refusal::Expired);
+        }
+        if !self.authority.is_current(&item.auth) {
+            return Some(Refusal::AuthorityExpired);
+        }
+        if prepared.group_id != session.group_id {
+            return Some(Refusal::InternalFault);
+        }
+        if prepared.epoch < session.current_epoch {
+            return Some(Refusal::StaleEpoch {
+                request: prepared.epoch,
+                current: session.current_epoch,
+            });
+        }
+        if prepared.epoch > session.current_epoch {
+            return Some(Refusal::EpochAhead {
+                request: prepared.epoch,
+                current: session.current_epoch,
+            });
+        }
+        if prepared.revision != session.state_revision {
+            return Some(Refusal::RevisionMismatch {
+                expected: prepared.revision,
+                actual: session.state_revision,
+            });
+        }
+        self.lease_refusal(
+            item.request.body().command(),
+            item.auth.role,
+            session,
+            now_ns,
+        )
+    }
+
+    fn apply_prepared(
+        &mut self,
+        item: &Queued,
+        now_ns: u64,
+        session: &mut UnifiedGroupSession,
+        prepared: PreparedEffect,
+    ) -> Outcome {
+        // Also check after the barrier. A future pollable store can acknowledge
+        // after authority or live state changed; durable floors remain raised,
+        // but stale prepared effects must never be made visible.
+        if let Some(refusal) = self.prepared_refusal(item, now_ns, session, &prepared) {
+            return Outcome::Refused(refusal);
         }
 
         // The larger of the next counter value and base + revision. The revision only ever grows, so a
@@ -1517,7 +1630,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
         match session.apply_command(FencedControlCommand {
             epoch: session.current_epoch,
             command_seq,
-            payload,
+            payload: prepared.payload,
         }) {
             Ok(revision) => Outcome::Committed { revision },
             Err(error @ SessionError::UnknownMember { .. }) => {
@@ -1654,6 +1767,610 @@ mod tests {
         )
         .unwrap();
         p
+    }
+
+    struct PreparedFloorRecorder {
+        calls: usize,
+        fail: bool,
+        bytes: Vec<u8>,
+    }
+
+    #[derive(Default)]
+    struct PendingGate {
+        held: std::sync::atomic::AtomicBool,
+        wake: std::sync::Mutex<Option<std::task::Waker>>,
+    }
+    impl PendingGate {
+        fn release(&self) {
+            self.held.store(false, std::sync::atomic::Ordering::SeqCst);
+            if let Some(waker) = self.wake.lock().unwrap().take() {
+                waker.wake();
+            }
+        }
+    }
+    struct GatedMedium {
+        inner: franken_journal::MemStorage,
+        gate: std::sync::Arc<PendingGate>,
+    }
+    impl franken_journal::Storage for GatedMedium {
+        fn segment_bytes(&self) -> usize {
+            self.inner.segment_bytes()
+        }
+        fn read(&self, offset: usize, out: &mut [u8]) -> Result<(), StorageFault> {
+            self.inner.read(offset, out)
+        }
+        fn program(&mut self, offset: usize, bytes: &[u8]) -> Result<(), StorageFault> {
+            self.inner.program(offset, bytes)
+        }
+        fn erase(&mut self, segment: usize) -> Result<(), StorageFault> {
+            self.inner.erase(segment)
+        }
+        fn sync(&mut self) -> Result<(), StorageFault> {
+            self.inner.sync()
+        }
+    }
+    impl franken_journal::PollStorage for GatedMedium {
+        fn poll_operation(
+            &mut self,
+            cx: &mut std::task::Context<'_>,
+            op: franken_journal::StorageOperation<'_>,
+        ) -> std::task::Poll<Result<(), StorageFault>> {
+            if self.gate.held.load(std::sync::atomic::Ordering::SeqCst) {
+                *self.gate.wake.lock().unwrap() = Some(cx.waker().clone());
+                std::task::Poll::Pending
+            } else {
+                std::task::Poll::Ready(op.execute(&mut self.inner))
+            }
+        }
+    }
+
+    fn pending_delta(
+        fail_sync: bool,
+    ) -> (
+        UnifiedGroupSession,
+        PendingDurableStep<EphemeralPeers, GatedMedium>,
+        std::sync::Arc<PendingGate>,
+    ) {
+        pending_delta_with_limits(fail_sync, Limits::standard(), false)
+    }
+
+    fn pending_delta_with_limits(
+        fail_sync: bool,
+        limits: Limits,
+        following_absolute: bool,
+    ) -> (
+        UnifiedGroupSession,
+        PendingDurableStep<EphemeralPeers, GatedMedium>,
+        std::sync::Arc<PendingGate>,
+    ) {
+        let mut rig = Rig::roomy();
+        let request = rig.req(
+            "ctl-a",
+            1,
+            EPOCH,
+            Some(rig.session.state_revision),
+            adjust("kitchen", 10),
+        );
+        assert!(matches!(rig.submit(request), SubmitResult::Queued { .. }));
+        if following_absolute {
+            let request = rig.req(
+                "ctl-a",
+                2,
+                EPOCH,
+                Some(rig.session.state_revision),
+                ControlCommand::SetGroupVolume { volume: 70 },
+            );
+            assert!(matches!(rig.submit(request), SubmitResult::Queued { .. }));
+        }
+        let gate = std::sync::Arc::new(PendingGate::default());
+        let (mut journal, _) = franken_journal::Journal::open(
+            GatedMedium {
+                inner: franken_journal::MemStorage::new(limits.segment_bytes),
+                gate: std::sync::Arc::clone(&gate),
+            },
+            limits,
+        )
+        .unwrap();
+        if fail_sync {
+            let next = journal.storage().inner.ops_done();
+            journal.storage_mut().inner.sync_fail_at = Some(next + 1);
+        }
+        let pending = PendingDurableStep::new(rig.channel, journal, rig.now, &rig.session, 0);
+        (rig.session, pending, gate)
+    }
+
+    #[test]
+    fn pending_floor_capacity_refusal_preserves_health_and_later_positive_command() {
+        let mut limits = Limits::standard();
+        limits.records.value_max = 1;
+        let (mut live, mut pending, _) = pending_delta_with_limits(false, limits, true);
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        for turn in 0..100 {
+            if pending.poll_step(&mut cx, 0, &mut live, 0).is_ready() {
+                break;
+            }
+            assert!(turn < 99);
+        }
+        let Ok((channel, journal, outcome)) = pending.finish() else {
+            panic!("terminal owner");
+        };
+        let settlements = outcome.unwrap();
+        assert_eq!(settlements.len(), 2);
+        assert!(matches!(
+            settlements[0].outcome,
+            Outcome::Refused(Refusal::InternalFault)
+        ));
+        assert!(matches!(settlements[1].outcome, Outcome::Committed { .. }));
+        assert_eq!(live.members["kitchen"].volume_0_to_100, 50);
+        assert_eq!(live.group_master_volume, 70);
+        assert_eq!(channel.durability(), Durability::Healthy);
+        assert!(!journal.is_poisoned());
+        assert_eq!(
+            journal.state().marks.get(HIGH_WATER_KEY),
+            Some(&live.state_revision)
+        );
+    }
+
+    #[test]
+    fn pending_same_revision_live_mutations_are_never_overwritten() {
+        let mutations: [fn(&mut UnifiedGroupSession); 3] = [
+            |s| s.group_master_volume = 0,
+            |s| s.coordinator_id = "new-coordinator".into(),
+            |s| s.members.get_mut("kitchen").unwrap().muted = true,
+        ];
+        for mutate in mutations {
+            let (mut live, mut pending, _) = pending_delta(false);
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            assert!(pending.poll_step(&mut cx, 0, &mut live, 0).is_pending());
+            mutate(&mut live);
+            let changed = live.clone();
+            for turn in 0..100 {
+                if pending.poll_step(&mut cx, 0, &mut live, 0).is_ready() {
+                    break;
+                }
+                assert!(turn < 99);
+            }
+            let Ok((_, _, result)) = pending.finish() else {
+                panic!("terminal owner");
+            };
+            assert!(matches!(
+                result,
+                Err(PendingStepFailure::FenceChanged { .. })
+            ));
+            assert_eq!(live, changed);
+        }
+    }
+
+    #[test]
+    fn pending_durable_step_publishes_only_after_floor_and_highwater() {
+        let (mut live, mut pending, _) = pending_delta(false);
+        let before = serde_json::to_value(&live).unwrap();
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        for turn in 0..100 {
+            if pending.poll_step(&mut cx, 0, &mut live, 0).is_ready() {
+                break;
+            }
+            assert_eq!(serde_json::to_value(&live).unwrap(), before);
+            assert!(turn < 99, "bounded transaction must settle");
+        }
+        let Ok((channel, journal, outcome)) = pending.finish() else {
+            panic!("terminal owner must return");
+        };
+        assert!(outcome.is_ok());
+        assert_eq!(live.members["kitchen"].volume_0_to_100, 60);
+        assert_eq!(channel.seq_floor(&id("ctl-a")), Some(1));
+        assert_eq!(
+            journal.state().marks.get(HIGH_WATER_KEY),
+            Some(&live.state_revision)
+        );
+        let (_, recovery) =
+            franken_journal::Journal::open(journal.into_storage(), Limits::standard()).unwrap();
+        assert_eq!(recovery.source, franken_journal::Source::Segment);
+    }
+
+    fn pending_local_mute(
+        fail_sync: bool,
+    ) -> (
+        UnifiedGroupSession,
+        PendingDurableStep<EphemeralPeers, GatedMedium>,
+        std::sync::Arc<PendingGate>,
+    ) {
+        pending_local_mute_with_tail(fail_sync, false)
+    }
+
+    fn pending_local_mute_with_tail(
+        fail_sync: bool,
+        queued_stop: bool,
+    ) -> (
+        UnifiedGroupSession,
+        PendingDurableStep<EphemeralPeers, GatedMedium>,
+        std::sync::Arc<PendingGate>,
+    ) {
+        let mut rig = Rig::roomy();
+        let request = rig.req(
+            "panel",
+            1,
+            EPOCH,
+            None,
+            ControlCommand::SetMemberMute {
+                member_id: "kitchen".into(),
+                muted: true,
+            },
+        );
+        assert!(matches!(rig.submit(request), SubmitResult::Queued { .. }));
+        if queued_stop {
+            rig.channel.config.max_per_step = 1;
+            let stop = rig.req(
+                "panel",
+                2,
+                EPOCH,
+                None,
+                ControlCommand::StopGroupPlayback {
+                    now_ns: 0,
+                    irrevocable_dma_tail_ns: 500,
+                },
+            );
+            assert!(matches!(rig.submit(stop), SubmitResult::Queued { .. }));
+        }
+        let limits = Limits::standard();
+        let gate = std::sync::Arc::new(PendingGate::default());
+        let (mut journal, _) = franken_journal::Journal::open(
+            GatedMedium {
+                inner: franken_journal::MemStorage::new(limits.segment_bytes),
+                gate: std::sync::Arc::clone(&gate),
+            },
+            limits,
+        )
+        .unwrap();
+        if fail_sync {
+            let next_sync = journal.storage().inner.ops_done() + 1;
+            journal.storage_mut().inner.sync_fail_at = Some(next_sync);
+        }
+        let pending = PendingDurableStep::new(rig.channel, journal, 0, &rig.session, 0);
+        (rig.session, pending, gate)
+    }
+
+    #[test]
+    fn pending_incarnation_fence_refuses_queue_and_rolled_back_replays() {
+        let (mut live, mut pending, gate) = pending_local_mute_with_tail(false, true);
+        gate.held.store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        for turn in 0..100 {
+            assert!(pending.poll_step(&mut cx, 0, &mut live, 0).is_pending());
+            if gate.wake.lock().unwrap().is_some() {
+                break;
+            }
+            assert!(turn < 99);
+        }
+        live.group_id = "replacement".into();
+        let replacement = live.clone();
+        gate.release();
+        for turn in 0..100 {
+            if pending.poll_step(&mut cx, 0, &mut live, 0).is_ready() {
+                break;
+            }
+            assert!(turn < 99);
+        }
+        let Ok((mut channel, _, outcome)) = pending.finish() else {
+            panic!("terminal owner");
+        };
+        let Err(PendingStepFailure::FenceChanged { withheld, applied }) = outcome else {
+            panic!("fence failure");
+        };
+        assert!(applied.is_empty());
+        assert_eq!(withheld.len(), 2);
+        assert!(
+            withheld
+                .iter()
+                .all(|s| matches!(s.outcome, Outcome::Refused(Refusal::AuthorityExpired)))
+        );
+        assert_eq!(channel.pending(Lane::Priority), 0);
+        assert!(channel.step(0, &mut live).is_empty());
+        assert_eq!(live, replacement);
+        let rig = Rig::roomy();
+        for (seq, command) in [
+            (
+                1,
+                ControlCommand::SetMemberMute {
+                    member_id: "kitchen".into(),
+                    muted: true,
+                },
+            ),
+            (
+                2,
+                ControlCommand::StopGroupPlayback {
+                    now_ns: 0,
+                    irrevocable_dma_tail_ns: 500,
+                },
+            ),
+        ] {
+            let replay = rig.req("panel", seq, EPOCH, None, command);
+            assert!(matches!(
+                channel.submit(0, replay),
+                SubmitResult::Settled(Outcome::Refused(Refusal::AuthorityExpired))
+            ));
+        }
+        assert!(channel.step(0, &mut live).is_empty());
+        assert_eq!(live, replacement);
+        // A new local intention after return still provides fail-safe silence.
+        let fresh = rig.req(
+            "panel",
+            3,
+            EPOCH,
+            None,
+            ControlCommand::SetMemberMute {
+                member_id: "kitchen".into(),
+                muted: true,
+            },
+        );
+        assert!(matches!(
+            channel.submit(0, fresh),
+            SubmitResult::Queued { .. }
+        ));
+        assert!(matches!(
+            channel.step(0, &mut live)[0].outcome,
+            Outcome::Committed { .. }
+        ));
+        assert!(live.members["kitchen"].muted);
+    }
+
+    #[test]
+    fn pending_old_incarnation_silence_never_reaches_replacement_group() {
+        for change in 0..4 {
+            let (mut live, mut pending, gate) = pending_local_mute(false);
+            gate.held.store(true, std::sync::atomic::Ordering::SeqCst);
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            for turn in 0..100 {
+                assert!(pending.poll_step(&mut cx, 0, &mut live, 0).is_pending());
+                if gate.wake.lock().unwrap().is_some() {
+                    break;
+                }
+                assert!(turn < 99);
+            }
+            assert!(!live.members["kitchen"].muted);
+            match change {
+                0 => live.group_id = "replacement".into(),
+                1 => live.current_epoch += 1,
+                2 => {
+                    live.members.get_mut("kitchen").unwrap().profile_id = "replacement-board".into()
+                }
+                _ => {
+                    live.members.get_mut("kitchen").unwrap().role =
+                        franken_session::ChannelRole::LeftMono
+                }
+            }
+            let replacement = live.clone();
+            gate.release();
+            for turn in 0..100 {
+                if pending.poll_step(&mut cx, 0, &mut live, 0).is_ready() {
+                    break;
+                }
+                assert!(turn < 99);
+            }
+            let Ok((_, _, outcome)) = pending.finish() else {
+                panic!("terminal owner");
+            };
+            assert!(
+                matches!(outcome, Err(PendingStepFailure::FenceChanged {applied,..}) if applied.is_empty())
+            );
+            assert_eq!(live, replacement);
+        }
+    }
+
+    #[test]
+    fn pending_same_incarnation_storage_failure_still_applies_local_silence() {
+        let (mut live, mut pending, _) = pending_local_mute(true);
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        for turn in 0..100 {
+            if pending.poll_step(&mut cx, 0, &mut live, 0).is_ready() {
+                break;
+            }
+            assert!(turn < 99);
+        }
+        let Ok((_, journal, outcome)) = pending.finish() else {
+            panic!("terminal owner");
+        };
+        assert!(
+            matches!(outcome, Err(PendingStepFailure::Storage(StoreFailed {applied,..})) if applied.len()==1)
+        );
+        assert!(live.members["kitchen"].muted);
+        assert!(journal.is_poisoned());
+    }
+
+    #[test]
+    fn pending_stop_generation_change_drains_floor_but_never_publishes_delta() {
+        let (mut live, mut pending, gate) = pending_delta(false);
+        let before = serde_json::to_value(&live).unwrap();
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(pending.poll_step(&mut cx, 0, &mut live, 0).is_pending());
+        gate.held.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(pending.poll_step(&mut cx, 0, &mut live, 1).is_pending());
+        pending = match pending.finish() {
+            Err(pending) => pending,
+            Ok(_) => panic!("in-flight journal custody must not escape"),
+        };
+        gate.release();
+        for turn in 0..100 {
+            if pending.poll_step(&mut cx, 0, &mut live, 1).is_ready() {
+                break;
+            }
+            assert!(turn < 99);
+        }
+        let Ok((channel, journal, outcome)) = pending.finish() else {
+            panic!("cancelled owner must return");
+        };
+        assert!(matches!(
+            outcome,
+            Err(PendingStepFailure::FenceChanged { .. })
+        ));
+        assert_eq!(serde_json::to_value(&live).unwrap(), before);
+        assert_eq!(channel.seq_floor(&id("ctl-a")), Some(1));
+        assert!(matches!(channel.durability(), Durability::Failed { .. }));
+        assert!(
+            !journal.is_poisoned(),
+            "completed floor is durable; owner needs reconciliation"
+        );
+    }
+
+    #[test]
+    fn pending_storage_failure_returns_owner_without_publishing() {
+        let (mut live, mut pending, _) = pending_delta(true);
+        let before = serde_json::to_value(&live).unwrap();
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        for turn in 0..100 {
+            if pending.poll_step(&mut cx, 0, &mut live, 0).is_ready() {
+                break;
+            }
+            assert!(turn < 99);
+        }
+        let Ok((channel, journal, outcome)) = pending.finish() else {
+            panic!("failed owner must return");
+        };
+        assert!(matches!(outcome, Err(PendingStepFailure::Storage(_))));
+        assert_eq!(serde_json::to_value(&live).unwrap(), before);
+        assert!(journal.is_poisoned());
+        assert!(matches!(channel.durability(), Durability::Failed { .. }));
+    }
+    impl FloorStore for PreparedFloorRecorder {
+        fn store(&mut self, packed: &[u8]) -> Result<(), FloorNotStored> {
+            self.calls += 1;
+            if self.fail {
+                return Err(FloorNotStored {
+                    code: "prepared_test_failure",
+                });
+            }
+            self.bytes = packed.to_vec();
+            Ok(())
+        }
+    }
+
+    fn prepared_delta(rig: &mut Rig) -> (Queued, PreparedEffect) {
+        let request = rig.req(
+            "ctl-a",
+            1,
+            EPOCH,
+            Some(rig.session.state_revision),
+            adjust("kitchen", 10),
+        );
+        assert!(matches!(rig.submit(request), SubmitResult::Queued { .. }));
+        let item = rig.channel.ordinary.pop_front().unwrap();
+        let floor = rig.session.state_revision;
+        let prepared = rig
+            .channel
+            .prepare_effect(&item, rig.now, floor, &mut rig.session, &mut Vec::new())
+            .unwrap();
+        assert_eq!(
+            rig.volume("kitchen"),
+            50,
+            "preparation never applies a delta"
+        );
+        (item, prepared)
+    }
+
+    #[test]
+    fn prepared_floor_barrier_applies_only_after_successful_reservation() {
+        for fail in [false, true] {
+            let mut rig = Rig::roomy();
+            let (item, prepared) = prepared_delta(&mut rig);
+            let before_revision = rig.session.state_revision;
+            let mut store = PreparedFloorRecorder {
+                calls: 0,
+                fail,
+                bytes: Vec::new(),
+            };
+            let outcome = rig.channel.reserve_and_apply_prepared(
+                &item,
+                rig.now,
+                &mut rig.session,
+                Some(&mut store),
+                prepared,
+            );
+            assert_eq!(store.calls, 1);
+            if fail {
+                assert_eq!(outcome, Outcome::Refused(Refusal::InternalFault));
+                assert_eq!(rig.volume("kitchen"), 50);
+                assert_eq!(rig.session.state_revision, before_revision);
+                assert_eq!(rig.channel.seq_floor(&id("ctl-a")), None);
+            } else {
+                assert!(matches!(outcome, Outcome::Committed { .. }));
+                assert_eq!(rig.volume("kitchen"), 60);
+                assert_eq!(rig.channel.seq_floor(&id("ctl-a")), Some(1));
+                assert!(SeqFloors::decode(&store.bytes).is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn stale_prepared_effects_are_refused_before_floor_or_effect() {
+        for changed in ["epoch", "revision", "group", "authority", "lease"] {
+            let mut rig = Rig::roomy();
+            let (item, prepared) = prepared_delta(&mut rig);
+            match changed {
+                "epoch" => rig.session.current_epoch += 1,
+                "revision" => rig.session.state_revision += 1,
+                "group" => rig.session.group_id.push_str("-replacement"),
+                "authority" => {
+                    rig.channel.authority_mut().revoke(&id("ctl-a"));
+                }
+                "lease" => rig.now = LEASE_EXPIRY_NS,
+                _ => unreachable!(),
+            }
+            let before = serde_json::to_value(&rig.session).unwrap();
+            let next_seq = rig.channel.next_session_seq;
+            let mut store = PreparedFloorRecorder {
+                calls: 0,
+                fail: false,
+                bytes: Vec::new(),
+            };
+            let outcome = rig.channel.reserve_and_apply_prepared(
+                &item,
+                rig.now,
+                &mut rig.session,
+                Some(&mut store),
+                prepared,
+            );
+            assert!(matches!(outcome, Outcome::Refused(_)), "{changed}");
+            assert_eq!(store.calls, 0, "{changed}");
+            assert_eq!(
+                serde_json::to_value(&rig.session).unwrap(),
+                before,
+                "{changed}"
+            );
+            assert_eq!(rig.channel.next_session_seq, next_seq, "{changed}");
+        }
+    }
+
+    #[test]
+    fn prepared_effect_rechecks_live_fence_after_floor_ack() {
+        let mut rig = Rig::roomy();
+        let (item, prepared) = prepared_delta(&mut rig);
+        let mut store = PreparedFloorRecorder {
+            calls: 0,
+            fail: false,
+            bytes: Vec::new(),
+        };
+        rig.channel
+            .reserve_floor(
+                item.request.body().peer(),
+                item.request.body().seq(),
+                &mut store,
+            )
+            .unwrap();
+        rig.session.state_revision += 1;
+        let before = serde_json::to_value(&rig.session).unwrap();
+        let outcome = rig
+            .channel
+            .apply_prepared(&item, rig.now, &mut rig.session, prepared);
+        assert!(matches!(
+            outcome,
+            Outcome::Refused(Refusal::RevisionMismatch { .. })
+        ));
+        assert_eq!(serde_json::to_value(&rig.session).unwrap(), before);
+        assert_eq!(
+            rig.channel.seq_floor(&id("ctl-a")),
+            Some(1),
+            "acknowledged durable floor remains conservative"
+        );
     }
 
     /// Generous rate limits and room, so a test exercises one mechanism at a time.

@@ -151,7 +151,7 @@ pub const COMMAND_DEDUP_WINDOW: usize = 1024;
 /// eviction floor rises to it. Anything at or below the floor can no longer be proven unapplied,
 /// so it is refused (`CommandBelowWindow`) instead of being applied again. A large jump in
 /// sequence number costs one slot and cannot lock out the numbers below it.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct AppliedCommands {
     seqs: BTreeSet<u64>,
     evicted_through: Option<u64>,
@@ -241,7 +241,7 @@ pub enum ExhaustedSilenceOutcome {
 }
 
 /// Unified group state machine supporting mixed S1 (`swGen=1`) and S2 (`swGen=2`) speakers (`G01`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnifiedGroupSession {
     pub group_id: String,
     pub coordinator_id: String,

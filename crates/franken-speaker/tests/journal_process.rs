@@ -18,6 +18,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const WORKER: &str = env!("CARGO_BIN_EXE_franken-journal-worker");
 
+#[path = "journal_process/secrets.rs"]
+mod secrets;
+use secrets::TestSecrets;
+
 // Test-only panic cleanup, outside production poll code. Production explicitly
 // retains custody and never installs a blocking Drop implementation.
 struct Owned(WorkerCustody);
@@ -305,4 +309,144 @@ fn actual_child_death_fails_closed_without_publishing_or_losing_custody() {
     assert_eq!(journal.state(), &before);
     assert!(journal.is_poisoned());
     assert!(owned.0.try_reap().unwrap().is_some());
+}
+
+#[test]
+fn provisioned_owner_commits_relative_command_through_real_child() {
+    pending_owner_case(false);
+}
+
+#[test]
+fn local_stop_during_real_child_pending_commit_prevents_live_delta() {
+    pending_owner_case(true);
+}
+
+fn pending_owner_case(stop: bool) {
+    use franken_control::channel::endpoint::{FecHandled, Handled};
+    use franken_control::channel::owner::FleetControlOwner;
+    use franken_control::channel::peer::{PeerId, PeerRole, compute_proof};
+    use franken_control::channel::pipeline::{ChannelConfig, PendingStepFailure, SubmitResult};
+    use franken_control::channel::request::{ControlCommand, ControlRequest, RequestBody};
+    use franken_control::channel::wire::encode_request;
+    use franken_session::{AuthorityToken, UnifiedGroupSession};
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "ffw-owner-process-{}-{nonce}.img",
+        std::process::id()
+    ));
+    let limits = Limits::fleet_control_development();
+    let file = FileMedium::create_new(&path, &limits).unwrap();
+    let (mut owner, _) = FleetControlOwner::boot(
+        TestSecrets::fleet_control_development(),
+        file,
+        ChannelConfig::provisional(),
+    )
+    .unwrap();
+    let peer = PeerId::parse("controller").unwrap();
+    let key = b"public-test-only-controller-key-0123456789";
+    owner
+        .admit(&peer, PeerRole::Controller, key, Some(10), 1)
+        .unwrap();
+    let mut live = UnifiedGroupSession::new("grp", "coord", 10);
+    owner
+        .install_lease(&live, AuthorityToken::issue(&live, u64::MAX), 0)
+        .unwrap();
+    let body = RequestBody::new(
+        peer,
+        1,
+        10,
+        Some(live.state_revision),
+        ControlCommand::AdjustGroupVolume { delta: 10 },
+    )
+    .unwrap();
+    let proof = compute_proof(key, &body.signing_bytes());
+    let bytes = encode_request(&ControlRequest::new(body, proof)).unwrap();
+    assert!(matches!(
+        owner.receive(0, &live, &bytes).unwrap(),
+        FecHandled::Control(Handled::Request {
+            result: SubmitResult::Queued { .. },
+            ..
+        })
+    ));
+
+    let Ok((handoff, file)) = owner.into_storage_handoff() else {
+        panic!("healthy provisioned owner");
+    };
+    drop(file); // release real FileMedium custody before the worker acquires it
+    let (storage, custody) =
+        ProcessStorage::spawn_off_loop(Path::new(WORKER), &path, &limits).unwrap();
+    let mut owned = Owned(custody);
+    let (journal, recovery) = Journal::open(storage, limits.clone()).unwrap();
+    assert_eq!(recovery.source, franken_journal::Source::Segment);
+    let Ok(owner) = handoff.attach(journal) else {
+        panic!("actual recovered provisioned state must match");
+    };
+    let mut pending = owner.into_pending_step(0, &live, 0);
+    signal(owned.0.id(), "-STOP");
+    let runtime = runtime();
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let mut stalled = false;
+    let mut generation = 0;
+    bounded(
+        &runtime,
+        poll_fn(|cx| {
+            let waker = Waker::from(Arc::new(CountWake {
+                count: Arc::clone(&wakes),
+                forward: cx.waker().clone(),
+            }));
+            let mut watched = Context::from_waker(&waker);
+            let before = wakes.load(Ordering::SeqCst);
+            let result = pending.poll_step(&mut watched, 0, &mut live, generation);
+            if result.is_pending() && !stalled && wakes.load(Ordering::SeqCst) == before {
+                // No bookkeeping self-wake: real ProcessStorage is waiting for the
+                // stopped child. Local stop advances the owner's exact fence.
+                assert_eq!(live.group_master_volume, 50);
+                stalled = true;
+                generation = u64::from(stop);
+                signal(owned.0.id(), "-CONT");
+                cx.waker().wake_by_ref();
+            }
+            result
+        }),
+    );
+    assert!(stalled, "must exercise an actual blocked child operation");
+    let Ok((owner, outcome, deferred)) = pending.finish() else {
+        panic!("terminal ownership retained");
+    };
+    assert!(deferred.is_empty());
+    if stop {
+        assert!(matches!(
+            outcome,
+            Err(PendingStepFailure::FenceChanged { .. })
+        ));
+        assert_eq!(live.group_master_volume, 50);
+    } else {
+        let settlements = outcome.unwrap();
+        assert_eq!(settlements.len(), 1);
+        assert_eq!(live.group_master_volume, 60);
+    }
+    let mut storage = owner.into_storage();
+    bounded(&runtime, poll_fn(|cx| storage.poll_quiesce(cx))).unwrap();
+    owned.0.shutdown_off_loop(Duration::from_secs(2)).unwrap();
+    drop(storage);
+    let (journal, _) =
+        Journal::open(FileMedium::open_existing(&path, &limits).unwrap(), limits).unwrap();
+    assert!(
+        journal.state().records.contains_key(b"n02.seq".as_slice()),
+        "relative floor survives either outcome"
+    );
+}
+
+#[path = "journal_process/settled_owner.rs"]
+mod settled_owner;
+
+#[test]
+fn settled_owner_real_child_commit_and_stop_drain_custody_handoff() {
+    for cancel in [false, true] {
+        settled_owner::run(Path::new(WORKER), cancel);
+    }
 }

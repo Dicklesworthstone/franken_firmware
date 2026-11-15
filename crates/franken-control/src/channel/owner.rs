@@ -6,7 +6,7 @@
 
 use std::collections::BTreeSet;
 
-use franken_journal::{Journal, JournalError, Limits, Namespace, Source, Storage};
+use franken_journal::{Journal, JournalError, Limits, Namespace, PollStorage, Source, Storage};
 use franken_session::{
     AuthorityToken, ChannelRole, GroupMembership, MembershipConfig, MembershipError,
     UnifiedGroupSession,
@@ -25,6 +25,267 @@ use crate::contracts::secret_store::SecretStore;
 use crate::fsonos::{Context, Handled, HttpRequest};
 
 const PROPOSAL_MARK: &[u8] = b"n06.prop";
+
+/// A consuming storage handoff preserves the actual provisioned owner. It does
+/// not grant fresh-boot authority to a reopened nonblank journal. The caller
+/// must close/quiesce the returned storage before another backend acquires it.
+/// This value deliberately has no ingress or command execution methods.
+pub struct OwnerStorageHandoff<K: SecretStore> {
+    channel: ControlChannel<PeerDirectory<K>>,
+    endpoint: Endpoint,
+    coordinator: Option<FecCoordinator>,
+    legacy_peers: BTreeSet<PeerId>,
+    ingress_started: bool,
+    fresh_control_provisioning: bool,
+    fresh_group_constructed: bool,
+    expected_state: franken_journal::State,
+    expected_generation: u32,
+    expected_segment_bytes: usize,
+}
+
+impl<K: SecretStore> OwnerStorageHandoff<K> {
+    /// Attach only an equivalent, healthy recovered journal. A mismatch returns
+    /// both objects so the caller retains storage and can quiesce its worker.
+    /// Equality establishes logical continuity, not physical device identity.
+    #[expect(
+        clippy::result_large_err,
+        reason = "return custody on refusal without adding a recovery-path allocation"
+    )]
+    pub fn attach<S: Storage>(
+        self,
+        journal: Journal<S>,
+    ) -> Result<FleetControlOwner<K, S>, (Self, Journal<S>)> {
+        if journal.is_poisoned()
+            || journal.state() != &self.expected_state
+            || journal.generation() != self.expected_generation
+            || journal.storage().segment_bytes() != self.expected_segment_bytes
+        {
+            return Err((self, journal));
+        }
+        Ok(FleetControlOwner {
+            channel: self.channel,
+            journal,
+            endpoint: self.endpoint,
+            coordinator: self.coordinator,
+            legacy_peers: self.legacy_peers,
+            ingress_started: self.ingress_started,
+            fresh_control_provisioning: self.fresh_control_provisioning,
+            fresh_group_constructed: self.fresh_group_constructed,
+        })
+    }
+}
+
+impl<K: SecretStore, S: Storage> FleetControlOwner<K, S> {
+    /// Off-loop backend transfer, after provisioning and before an owned step.
+    /// A poisoned journal cannot establish a continuation checkpoint.
+    #[expect(
+        clippy::result_large_err,
+        reason = "return custody on refusal without adding a recovery-path allocation"
+    )]
+    pub fn into_storage_handoff(self) -> Result<(OwnerStorageHandoff<K>, S), Self> {
+        if self.journal.is_poisoned() {
+            return Err(self);
+        }
+        let expected_state = self.journal.state().clone();
+        let expected_generation = self.journal.generation();
+        let expected_segment_bytes = self.journal.storage().segment_bytes();
+        let Self {
+            channel,
+            journal,
+            endpoint,
+            coordinator,
+            legacy_peers,
+            ingress_started,
+            fresh_control_provisioning,
+            fresh_group_constructed,
+        } = self;
+        Ok((
+            OwnerStorageHandoff {
+                channel,
+                endpoint,
+                coordinator,
+                legacy_peers,
+                ingress_started,
+                fresh_control_provisioning,
+                fresh_group_constructed,
+                expected_state,
+                expected_generation,
+                expected_segment_bytes,
+            },
+            journal.into_storage(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeferredIngressError {
+    NotPending,
+    Full,
+    TooLarge,
+    Allocation,
+}
+
+/// The entire control owner is unavailable to ordinary ingress while its
+/// ledger transaction is open. Up to eight unacknowledged datagrams can wait;
+/// they are authenticated against current authority only after owner return.
+pub struct PendingFleetStep<K: SecretStore, S: Storage> {
+    pending: super::pipeline::PendingDurableStep<PeerDirectory<K>, S>,
+    endpoint: Endpoint,
+    coordinator: Option<FecCoordinator>,
+    legacy_peers: BTreeSet<PeerId>,
+    fresh_control_provisioning: bool,
+    fresh_group_constructed: bool,
+    deferred: Vec<Vec<u8>>,
+}
+
+/// Completed control ownership, step outcome, and unacknowledged ingress.
+pub type FinishedFleetStep<K, S> = (
+    FleetControlOwner<K, S>,
+    Result<Vec<Settlement>, super::pipeline::PendingStepFailure>,
+    Vec<Vec<u8>>,
+);
+
+impl<K: SecretStore, S: Storage> PendingFleetStep<K, S> {
+    pub fn fresh_group_is_healthy(&self) -> bool {
+        self.fresh_group_constructed && self.pending.channel().durability() == Durability::Healthy
+    }
+
+    pub fn session_sequence_exhausted(&self, session: &UnifiedGroupSession) -> bool {
+        self.pending.channel().session_sequence_exhausted(session)
+    }
+
+    pub fn lease_is_live(&self, session: &UnifiedGroupSession, now_ns: u64) -> bool {
+        let channel = self.pending.channel();
+        channel.lease().is_some_and(|token| {
+            token
+                .check_with_margin(session, now_ns, channel.config().lease_margin_ns)
+                .is_ok()
+        })
+    }
+
+    pub fn lease_matches(&self, expected: &AuthorityToken) -> bool {
+        self.pending.channel().lease() == Some(expected)
+    }
+}
+
+impl<K: SecretStore, S: PollStorage> PendingFleetStep<K, S> {
+    pub const MAX_DEFERRED: usize = 8;
+    pub const MAX_DATAGRAM_BYTES: usize = 4096;
+
+    /// Enqueue is not authentication, command acceptance, or a committed effect.
+    pub fn defer_datagram(&mut self, bytes: &[u8]) -> Result<(), DeferredIngressError> {
+        if self.deferred.len() == Self::MAX_DEFERRED {
+            return Err(DeferredIngressError::Full);
+        }
+        if bytes.len() > Self::MAX_DATAGRAM_BYTES {
+            return Err(DeferredIngressError::TooLarge);
+        }
+        let mut copy = Vec::new();
+        copy.try_reserve_exact(bytes.len())
+            .map_err(|_| DeferredIngressError::Allocation)?;
+        self.deferred
+            .try_reserve_exact(1)
+            .map_err(|_| DeferredIngressError::Allocation)?;
+        copy.extend_from_slice(bytes);
+        self.deferred.push(copy);
+        Ok(())
+    }
+
+    pub fn cancel(&mut self) {
+        self.pending.cancel();
+    }
+
+    pub fn poll_step(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+        now_ns: u64,
+        live: &mut UnifiedGroupSession,
+        stop_generation: u64,
+    ) -> std::task::Poll<()> {
+        self.pending.poll_step(cx, now_ns, live, stop_generation)
+    }
+
+    /// Return full ownership on success or failure. Deferred datagrams must be
+    /// received with a fresh clock/session after extraction, not backdated.
+    /// An unfinished operation returns this same owner without losing custody.
+    #[expect(
+        clippy::result_large_err,
+        reason = "return pending custody without adding a recovery-path allocation"
+    )]
+    pub fn finish(self) -> Result<FinishedFleetStep<K, S>, Self> {
+        let Self {
+            pending,
+            endpoint,
+            coordinator,
+            legacy_peers,
+            fresh_control_provisioning,
+            fresh_group_constructed,
+            deferred,
+        } = self;
+        match pending.finish() {
+            Ok((channel, journal, outcome)) => Ok((
+                FleetControlOwner {
+                    channel,
+                    journal,
+                    endpoint,
+                    coordinator,
+                    legacy_peers,
+                    ingress_started: true,
+                    fresh_control_provisioning,
+                    fresh_group_constructed,
+                },
+                outcome,
+                deferred,
+            )),
+            Err(pending) => Err(Self {
+                pending,
+                endpoint,
+                coordinator,
+                legacy_peers,
+                fresh_control_provisioning,
+                fresh_group_constructed,
+                deferred,
+            }),
+        }
+    }
+}
+
+impl<K: SecretStore, S: PollStorage> FleetControlOwner<K, S> {
+    /// Move the actual owner into one durable step; no simultaneous mutable
+    /// ledger/authority entry point survives while the step is pending.
+    pub fn into_pending_step(
+        self,
+        now_ns: u64,
+        live: &UnifiedGroupSession,
+        stop_generation: u64,
+    ) -> PendingFleetStep<K, S> {
+        let Self {
+            channel,
+            journal,
+            endpoint,
+            coordinator,
+            legacy_peers,
+            ingress_started: _,
+            fresh_control_provisioning,
+            fresh_group_constructed,
+        } = self;
+        PendingFleetStep {
+            pending: super::pipeline::PendingDurableStep::new(
+                channel,
+                journal,
+                now_ns,
+                live,
+                stop_generation,
+            ),
+            endpoint,
+            coordinator,
+            legacy_peers,
+            fresh_control_provisioning,
+            fresh_group_constructed,
+            deferred: Vec::new(),
+        }
+    }
+}
 
 // One local desired member, not a live session or a full group snapshot.
 const RECOVERY_BINDING_KEY: &[u8] = b"n02.binding";
@@ -223,7 +484,81 @@ pub struct FreshFleetGroup<K: SecretStore, S: Storage> {
     authority: AuthorityToken,
 }
 
+/// Preserves the unforgeable fresh-group bundle across an off-loop storage
+/// backend transfer; does not reconstruct authority from a recovered file.
+pub struct FreshGroupStorageHandoff<K: SecretStore> {
+    control: OwnerStorageHandoff<K>,
+    membership: GroupMembership,
+    session: UnifiedGroupSession,
+    authority: AuthorityToken,
+}
+
+impl<K: SecretStore> FreshGroupStorageHandoff<K> {
+    #[expect(
+        clippy::result_large_err,
+        reason = "return custody on refusal without adding a recovery-path allocation"
+    )]
+    pub fn attach<S: Storage>(
+        self,
+        journal: Journal<S>,
+    ) -> Result<FreshFleetGroup<K, S>, (Self, Journal<S>)> {
+        let Self {
+            control,
+            membership,
+            session,
+            authority,
+        } = self;
+        match control.attach(journal) {
+            Ok(control) => Ok(FreshFleetGroup {
+                control,
+                membership,
+                session,
+                authority,
+            }),
+            Err((control, journal)) => Err((
+                Self {
+                    control,
+                    membership,
+                    session,
+                    authority,
+                },
+                journal,
+            )),
+        }
+    }
+}
+
 impl<K: SecretStore, S: Storage> FreshFleetGroup<K, S> {
+    #[expect(
+        clippy::result_large_err,
+        reason = "return custody on refusal without adding a recovery-path allocation"
+    )]
+    pub fn into_storage_handoff(self) -> Result<(FreshGroupStorageHandoff<K>, S), Self> {
+        let Self {
+            control,
+            membership,
+            session,
+            authority,
+        } = self;
+        match control.into_storage_handoff() {
+            Ok((control, storage)) => Ok((
+                FreshGroupStorageHandoff {
+                    control,
+                    membership,
+                    session,
+                    authority,
+                },
+                storage,
+            )),
+            Err(control) => Err(Self {
+                control,
+                membership,
+                session,
+                authority,
+            }),
+        }
+    }
+
     /// Consume the bundle once. The receiving owner must not accept separately
     /// reconstructed parts as a substitute for this fresh input.
     pub fn into_parts(
@@ -850,6 +1185,65 @@ mod tests {
             Limits::fleet_control_development().segment_bytes,
         ))
         .0
+    }
+
+    #[test]
+    fn storage_handoff_preserves_provisioned_owner_without_reboot_authority() {
+        let owner = blank();
+        let fresh = owner.fresh_control_provisioning;
+        let Ok((handoff, storage)) = owner.into_storage_handoff() else {
+            panic!("healthy owner can transfer storage");
+        };
+        let (journal, recovery) =
+            Journal::open(storage, Limits::fleet_control_development()).unwrap();
+        assert_eq!(recovery.source, Source::Segment);
+        let Ok(owner) = handoff.attach(journal) else {
+            panic!("identical recovered state must preserve actual owner");
+        };
+        assert_eq!(owner.fresh_control_provisioning, fresh);
+        assert!(!owner.ingress_started);
+        assert!(owner.healthy());
+    }
+
+    #[test]
+    fn storage_handoff_rejects_changed_state_and_returns_both_owners() {
+        let Ok((handoff, storage)) = blank().into_storage_handoff() else {
+            panic!("healthy owner can transfer storage");
+        };
+        let (mut journal, _) = Journal::open(storage, Limits::fleet_control_development()).unwrap();
+        journal
+            .commit(&[franken_journal::Op::Raise {
+                key: b"changed".to_vec(),
+                value: 1,
+            }])
+            .unwrap();
+        let Err((handoff, journal)) = handoff.attach(journal) else {
+            panic!("changed journal must not inherit stale owner state");
+        };
+        assert!(handoff.fresh_control_provisioning);
+        assert_eq!(journal.state().marks.get(b"changed".as_slice()), Some(&1));
+        assert!(!journal.is_poisoned());
+    }
+
+    #[test]
+    fn fresh_bundle_handoff_preserves_actual_authority_and_membership() {
+        let fresh = fresh_group(blank()).unwrap();
+        let expected = fresh.session.clone();
+        let expected_authority = fresh.authority.clone();
+        let Ok((handoff, storage)) = fresh.into_storage_handoff() else {
+            panic!("fresh transfer");
+        };
+        let (journal, recovered) =
+            Journal::open(storage, Limits::fleet_control_development()).unwrap();
+        assert_eq!(recovered.source, Source::Segment);
+        let Ok(fresh) = handoff.attach(journal) else {
+            panic!("same recovered state");
+        };
+        let (owner, membership, session, authority) = fresh.into_parts();
+        assert_eq!(session, expected);
+        assert_eq!(authority, expected_authority);
+        assert!(owner.fresh_group_is_healthy());
+        assert!(membership.lease_is_live(&session, &authority, 0));
     }
 
     fn blank_with_config(config: ChannelConfig) -> Owner {

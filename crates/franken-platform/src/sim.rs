@@ -18,6 +18,30 @@
 use crate::ops::{KernelOps, Provenance, Timespec};
 use std::collections::{BTreeMap, VecDeque};
 
+/// Refusal from the explicitly selected host-simulation construction path.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SimulatedLayerError {
+    #[error("a simulation fixture must declare simulated provenance and no native ABI")]
+    NotSimulated,
+    #[error(transparent)]
+    Admission(#[from] crate::layer::LayerError),
+}
+
+/// Construct a host fixture without opening another device startup path.
+/// Identity is checked before admission or wake operations; the normal matrix
+/// gate still applies. Provenance is an implementer's declaration, not a
+/// security boundary against a dishonest implementation of `KernelOps`.
+/// This module is absent unless tests or the explicit `sim` feature select it.
+pub fn admit_simulated_layer<O: KernelOps>(
+    matrix: &crate::KernelCapabilityMatrix,
+    ops: O,
+) -> Result<crate::layer::PlatformLayer<O>, SimulatedLayerError> {
+    if ops.provenance() != Provenance::Simulated || ops.backend_abi().is_some() {
+        return Err(SimulatedLayerError::NotSimulated);
+    }
+    Ok(crate::layer::PlatformLayer::admit(matrix, ops)?)
+}
+
 /// Longest a [`SeededSim`] pipe holds before a write answers `EAGAIN` (the Linux default pipe size).
 const SIM_PIPE_CAPACITY: usize = 65_536;
 const ENOENT: isize = 2;
@@ -436,6 +460,80 @@ mod tests {
     use crate::{CapabilityStatus, KernelCapabilityMatrix};
 
     const KERNEL: &str = "4.9.0-0.bpo.6-powerpc";
+
+    // Any operational call is a test failure, not a fabricated kernel result.
+    struct IdentityOnly(Provenance, Option<Abi>);
+    impl KernelOps for IdentityOnly {
+        fn provenance(&self) -> Provenance {
+            self.0
+        }
+        fn backend_abi(&self) -> Option<Abi> {
+            self.1
+        }
+        fn clock_gettime_monotonic(&mut self, _: &mut Timespec) -> isize {
+            panic!("unexpected clock call")
+        }
+        fn getrandom(&mut self, _: &mut [u8], _: u32) -> isize {
+            panic!("unexpected entropy call")
+        }
+        fn open_dev_random(&mut self, _: u32) -> isize {
+            panic!("unexpected open call")
+        }
+        fn eventfd2(&mut self, _: u32, _: u32) -> isize {
+            panic!("unexpected wake call")
+        }
+        fn pipe2(&mut self, _: &mut [i32; 2], _: u32) -> isize {
+            panic!("unexpected pipe call")
+        }
+        fn write(&mut self, _: i32, _: &[u8]) -> isize {
+            panic!("unexpected write call")
+        }
+        fn read(&mut self, _: i32, _: &mut [u8]) -> isize {
+            panic!("unexpected read call")
+        }
+        fn close(&mut self, _: i32) -> isize {
+            panic!("unexpected close call")
+        }
+    }
+
+    #[test]
+    fn simulated_factory_retains_provenance_and_actual_layer_admission() {
+        let admitted = admit_simulated_layer(
+            &matrix(CapabilityStatus::Supported, CapabilityStatus::Supported),
+            SeededSim::new(11),
+        )
+        .unwrap();
+        assert_eq!(admitted.provenance(), Provenance::Simulated);
+        assert_eq!(admitted.ops().open_descriptors(), 1);
+        admitted.close().unwrap();
+    }
+
+    #[test]
+    fn simulated_factory_refuses_kernel_identity_before_operations() {
+        let matrix = matrix(CapabilityStatus::Supported, CapabilityStatus::Supported);
+        for identity in [
+            IdentityOnly(Provenance::Kernel, Some(Abi::PowerPc32)),
+            IdentityOnly(Provenance::Kernel, None),
+            IdentityOnly(Provenance::Simulated, Some(Abi::PowerPc32)),
+        ] {
+            assert!(matches!(
+                admit_simulated_layer(&matrix, identity),
+                Err(SimulatedLayerError::NotSimulated)
+            ));
+        }
+    }
+
+    #[test]
+    fn simulated_factory_does_not_bypass_missing_guest_evidence() {
+        let mut matrix = matrix(CapabilityStatus::Supported, CapabilityStatus::Supported);
+        matrix.guest_kernel_observed = None;
+        assert!(matches!(
+            admit_simulated_layer(&matrix, IdentityOnly(Provenance::Simulated, None)),
+            Err(SimulatedLayerError::Admission(
+                crate::layer::LayerError::Admission(_)
+            ))
+        ));
+    }
 
     fn matrix(getrandom: CapabilityStatus, eventfd: CapabilityStatus) -> KernelCapabilityMatrix {
         KernelCapabilityMatrix {

@@ -128,7 +128,7 @@ pub const REFUSING_FLOOR: u64 = u64::MAX;
 
 /// Monotone evidence that the channel ran out of safe session fences.
 /// This is separate from revision and from the unreadable-floor sentinel.
-const EXHAUSTED_KEY: &[u8] = b"n02.exh";
+pub(super) const EXHAUSTED_KEY: &[u8] = b"n02.exh";
 
 /// Why the mark could not be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

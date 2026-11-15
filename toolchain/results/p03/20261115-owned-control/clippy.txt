@@ -1,0 +1,12 @@
+Command (worker selector omitted for reproducibility):
+RCH_REQUIRE_REMOTE=1 rch --json --no-self-healing exec --source-content-receipt -- env CARGO_TARGET_DIR="${TMPDIR:-/tmp}/rch_ffw_pending_control" CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 cargo +1.99.0 clippy --workspace --all-targets --features franken-speaker/journal-process -j1 -- -D warnings
+
+Job: 30109207290184085
+Source receipt: b5552df66a54dc506cc495da89681c1046e6271bacabafeefeb6e4e31b9ce922
+Terminal ACK and source/tree/pair retirement: verified.
+Observed output:
+    Finished `dev` profile [unoptimized] target(s) in 1m 04s
+[RCH] remote vmi1264463 (105.4s)
+Remote command exit: 0.
+Eight source-local lint expectations were independently reviewed for custody semantics.
+They do not establish target stack fit; see README.md.

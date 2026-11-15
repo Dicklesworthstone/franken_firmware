@@ -6,13 +6,16 @@
 
 use franken_board_profile::BoardProfile;
 use franken_control::channel::endpoint::FecHandled;
-use franken_control::channel::owner::{AgreementError, FleetControlOwner, FreshFleetGroup};
-use franken_control::channel::pipeline::{Settlement, Storage, StoreFailed};
+use franken_control::channel::owner::{
+    AgreementError, FleetControlOwner, FreshFleetGroup, PendingFleetStep,
+};
+use franken_control::channel::pipeline::{PendingStepFailure, Settlement, Storage, StoreFailed};
 use franken_control::contracts::secret_store::SecretStore;
 use franken_control::fsonos::{Endpoint, Handled, HttpRequest, Notification, TransportState};
 use franken_dsp::volume::{MemberVolume, MuteReason, Role, RolePlan, VolumeError};
 use franken_hal::backend::DeviceBackend;
 use franken_hal::events::ChannelEvent;
+use franken_journal::PollStorage;
 use franken_platform::ops::KernelOps;
 use franken_session::{
     AuthorityToken, ChannelRole, GroupMembership, GroupStopMarker, GroupTime, MemberLifecycleState,
@@ -69,6 +72,7 @@ pub struct ButtonEventResult {
 
 #[derive(Debug)]
 pub enum OwnerError {
+    ControlPending,
     Runtime(ControlRuntimeError),
     Binding,
     RevisionConflict,
@@ -112,6 +116,83 @@ pub struct ControlResult<T> {
 
 /// Durable control outcome plus its separately observed render effect.
 pub type ControlStep = ControlResult<Result<Vec<Settlement>, StoreFailed>>;
+
+pub type PendingControlStep = ControlResult<Result<Vec<Settlement>, PendingStepFailure>>;
+
+/// Deferred ingress remains unaccepted until the returned datagrams are passed
+/// through `receive` with a fresh owner clock. No response is silently dropped.
+pub struct PendingControlCompletion {
+    pub step: PendingControlStep,
+    pub deferred_datagrams: Vec<Vec<u8>>,
+}
+
+/// Consuming shutdown handoff after the HAL acknowledged stop. The caller
+/// retains the complete drained renderer, control storage and event endpoint;
+/// a process backend must still be quiesced and its separate worker reaped.
+pub struct StoppedOwnerParts<
+    K: SecretStore,
+    S: Storage,
+    P: DatagramPort,
+    O: KernelOps,
+    B: DeviceBackend,
+> {
+    pub control: FleetControlOwner<K, S>,
+    pub render: NetworkRender<P, O, B>,
+    pub soap: Endpoint,
+    pub session: UnifiedGroupSession,
+}
+
+#[expect(
+    clippy::large_enum_variant,
+    reason = "reserve inline pending custody without a new allocation at each control transition"
+)]
+enum ControlSlot<K: SecretStore, S: Storage> {
+    Ready(FleetControlOwner<K, S>),
+    Pending(PendingFleetStep<K, S>),
+    // Present only while a consuming move is synchronously restored.
+    Moving,
+}
+
+impl<K: SecretStore, S: Storage> ControlSlot<K, S> {
+    fn ready_mut(&mut self) -> Result<&mut FleetControlOwner<K, S>, OwnerError> {
+        match self {
+            Self::Ready(owner) => Ok(owner),
+            _ => Err(OwnerError::ControlPending),
+        }
+    }
+
+    fn fresh_group_is_healthy(&self) -> bool {
+        match self {
+            Self::Ready(owner) => owner.fresh_group_is_healthy(),
+            Self::Pending(owner) => owner.fresh_group_is_healthy(),
+            Self::Moving => false,
+        }
+    }
+
+    fn session_sequence_exhausted(&self, session: &UnifiedGroupSession) -> bool {
+        match self {
+            Self::Ready(owner) => owner.session_sequence_exhausted(session),
+            Self::Pending(owner) => owner.session_sequence_exhausted(session),
+            Self::Moving => true,
+        }
+    }
+
+    fn lease_is_live(&self, session: &UnifiedGroupSession, now_ns: u64) -> bool {
+        match self {
+            Self::Ready(owner) => owner.lease_is_live(session, now_ns),
+            Self::Pending(owner) => owner.lease_is_live(session, now_ns),
+            Self::Moving => false,
+        }
+    }
+
+    fn lease_matches(&self, token: &AuthorityToken) -> bool {
+        match self {
+            Self::Ready(owner) => owner.lease_matches(token),
+            Self::Pending(owner) => owner.lease_matches(token),
+            Self::Moving => false,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct MembershipResult {
@@ -169,7 +250,8 @@ pub struct SettledRender<
     B: DeviceBackend,
 > {
     control_runtime: ControlRuntime,
-    control: FleetControlOwner<K, S>,
+    control: ControlSlot<K, S>,
+    stop_generation: u64,
     soap: Endpoint,
     membership: GroupMembership,
     session: UnifiedGroupSession,
@@ -279,7 +361,8 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
         soap.set_transport(TransportState::Transitioning);
         Ok(Self {
             control_runtime,
-            control,
+            control: ControlSlot::Ready(control),
+            stop_generation: 0,
             soap,
             membership,
             session,
@@ -617,6 +700,8 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
     pub fn receive(&mut self, bytes: &[u8]) -> Result<FecHandled, IngressError> {
         let now_ns = self.bounds(false).map_err(IngressError::Owner)?.latest_ns;
         self.control
+            .ready_mut()
+            .map_err(IngressError::Owner)?
             .receive(now_ns, &self.session, bytes)
             .map_err(IngressError::Control)
     }
@@ -630,7 +715,7 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
 
     fn step_control_owned(&mut self) -> Result<ControlStep, OwnerError> {
         let now_ns = self.bounds(false)?.latest_ns;
-        let control = self.control.step(now_ns, &mut self.session);
+        let control = self.control.ready_mut()?.step(now_ns, &mut self.session);
         // On store failure this sees only the live session, including actual
         // reapplied local silence. The endpoint filters unchanged variables.
         let render = self.reconcile();
@@ -658,9 +743,12 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
         request: &HttpRequest<'_>,
     ) -> Result<ControlResult<Handled>, OwnerError> {
         let now_ns = self.bounds(false)?.latest_ns;
-        let control = self
-            .control
-            .handle_soap(&mut self.soap, &mut self.session, now_ns, request);
+        let control = self.control.ready_mut()?.handle_soap(
+            &mut self.soap,
+            &mut self.session,
+            now_ns,
+            request,
+        );
         let render = self.reconcile();
         let notifications = if self.transport_dirty {
             self.transport_dirty = false;
@@ -1041,6 +1129,7 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             )
             .map_err(OwnerError::Membership)?;
         self.control
+            .ready_mut()?
             .install_lease(&self.session, control, commit_ns)
             .map_err(OwnerError::Membership)?;
         self.authority = held;
@@ -1184,6 +1273,7 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
     }
 
     pub fn request_stop(&mut self) -> Result<RenderApplication, OwnerError> {
+        self.stop_generation = self.stop_generation.saturating_add(1);
         // Also revoke when a natural EOF has already entered the shared drain
         // path. The existing idempotent HAL-stop behavior is unchanged.
         self.final_feedback_revoked = true;
@@ -1199,6 +1289,33 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             }
         }
         Ok(RenderApplication::Stopping)
+    }
+
+    /// Refuse extraction while a durable operation or hardware stop remains
+    /// unresolved. Failure returns this entire owner unchanged, retaining all
+    /// storage, rendering and DMA custody for subsequent progress.
+    /// The large inline renderer remains subject to target stack qualification.
+    #[expect(
+        clippy::result_large_err,
+        reason = "return full renderer and journal custody without adding a recovery-path allocation"
+    )]
+    pub fn into_stopped_parts(self) -> Result<StoppedOwnerParts<K, S, P, O, B>, Self> {
+        if !self.stopping
+            || self.render.render_state() != RenderState::Stopped
+            || !self.render.stop_report().acknowledged
+            || !matches!(&self.control, ControlSlot::Ready(_))
+        {
+            return Err(self);
+        }
+        let ControlSlot::Ready(control) = self.control else {
+            unreachable!("ready slot checked before consuming owner");
+        };
+        Ok(StoppedOwnerParts {
+            control,
+            render: self.render,
+            soap: self.soap,
+            session: self.session,
+        })
     }
 
     /// No timeout or command receipt is interpreted as a flush ACK.
@@ -1338,5 +1455,97 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             return Err(OwnerError::Render(error));
         }
         Ok(RenderApplication::PolicyAccepted)
+    }
+}
+
+impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBackend>
+    SettledRender<K, S, P, O, B>
+{
+    /// Begin one owned durable step. Rendering and physical local stop remain
+    /// available; ordinary mutable control ingress returns `ControlPending`.
+    pub fn begin_pending_control(&mut self) -> Result<(), OwnerError> {
+        if self.stopping || self.stop_generation == u64::MAX {
+            return Err(OwnerError::JoinState);
+        }
+        let now_ns = self.bounds(false)?.latest_ns;
+        let slot = std::mem::replace(&mut self.control, ControlSlot::Moving);
+        match slot {
+            ControlSlot::Ready(owner) => {
+                self.control = ControlSlot::Pending(owner.into_pending_step(
+                    now_ns,
+                    &self.session,
+                    self.stop_generation,
+                ));
+                Ok(())
+            }
+            other => {
+                self.control = other;
+                Err(OwnerError::ControlPending)
+            }
+        }
+    }
+
+    /// A bounded queue, not an authentication or command-acceptance response.
+    pub fn defer_control_datagram(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<(), franken_control::channel::owner::DeferredIngressError> {
+        match &mut self.control {
+            ControlSlot::Pending(pending) => pending.defer_datagram(bytes),
+            _ => Err(franken_control::channel::owner::DeferredIngressError::NotPending),
+        }
+    }
+
+    /// Poll inside the caller's actively driven Asupersync runtime. There is no
+    /// nested block_on, helper thread, or blocking storage in this owner method.
+    /// A clock failure cancels publication but still drains the accepted I/O,
+    /// retaining journal/worker custody until terminal extraction.
+    pub fn poll_pending_control(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<PendingControlCompletion, OwnerError>> {
+        let sampled = self.bounds(false);
+        let now_ns = sampled.as_ref().map_or_else(
+            |_| self.last_group_upper_ns.unwrap_or(0),
+            |bounds| bounds.latest_ns,
+        );
+        let ControlSlot::Pending(pending) = &mut self.control else {
+            return std::task::Poll::Ready(Err(OwnerError::ControlPending));
+        };
+        if sampled.is_err() {
+            pending.cancel();
+        }
+        if pending
+            .poll_step(cx, now_ns, &mut self.session, self.stop_generation)
+            .is_pending()
+        {
+            return std::task::Poll::Pending;
+        }
+        let ControlSlot::Pending(pending) =
+            std::mem::replace(&mut self.control, ControlSlot::Moving)
+        else {
+            unreachable!("pending slot retained through poll");
+        };
+        match pending.finish() {
+            Err(pending) => {
+                self.control = ControlSlot::Pending(pending);
+                cx.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+            Ok((owner, control, deferred_datagrams)) => {
+                self.control = ControlSlot::Ready(owner);
+                let render = self.reconcile();
+                let notifications = self.soap.publish(now_ns, &self.session);
+                self.transport_dirty = false;
+                std::task::Poll::Ready(Ok(PendingControlCompletion {
+                    step: ControlResult {
+                        control,
+                        render,
+                        notifications,
+                    },
+                    deferred_datagrams,
+                }))
+            }
+        }
     }
 }
