@@ -1,0 +1,78 @@
+Scope: offline native host only
+Remote command: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' cargo +1.99.0 test -p franken-speaker --test journal_process --features franken-speaker/journal-process,franken-speaker/harness --locked --offline -j1 -- '--test-threads=1' --show-output
+Native job: 30109207290184276
+Remote delivery exit: 0
+Command exit: 0
+Terminal ACK: True
+Source receipt: 5d4e627d04db3a72ea5cd8f08a7de8b89142dcbf431b5a866b84921fa1c1da45
+Nine frozen implementation inputs matched; source/tree/pair custody retired.
+
+   Compiling franken-speaker v0.1.0 (<private-path>
+
+running 17 tests
+    Finished `test` profile [unoptimized] target(s) in 8.11s
+     Running tests/journal_process.rs (<private-path>
+test accepted_http_retires_after_original_mailbox_drop_without_consuming_replacement ... ok
+test actual_cancelled_child_request_retains_custody_and_quiesces_before_recovery ... ok
+test actual_child_death_fails_closed_without_publishing_or_losing_custody ... ok
+test actual_stalled_child_yields_and_reactor_wakes_commit_before_file_reopen ... ok
+test expired_http_observer_retains_journal_until_ack_and_allows_successor ... ok
+test local_stop_during_real_child_pending_commit_prevents_live_delta ... ok
+test lost_http_observer_releases_admission_after_real_commit_and_allows_successor ... ok
+test normal_http_route_uses_real_pollable_journal_and_services_stop ... ok
+test normal_owner_turn_drains_authenticated_datagrams_with_real_child_and_stop_fence ... ok
+test owner_turn_reports_hal_stop_failure_without_losing_pending_journal ... ok
+test pending_child_operation_rebinds_from_idle_runtime_a_to_runtime_b ... ok
+test provisioned_owner_commits_relative_command_through_real_child ... ok
+test settled_owner::actual_child_get_and_signed_datagrams_take_bounded_alternating_turns ... ok
+test settled_owner::actual_child_mixed_soap_batch_retains_datagram_after_observer_loss ... ok
+test settled_owner::actual_child_mixed_stale_relative_soap_preserves_refusal_and_one_delta ... ok
+test settled_owner_real_child_commit_and_stop_drain_custody_handoff ... ok
+test startup_failure_returns_the_spawned_child_for_explicit_reaping ... ok
+
+successes:
+
+---- actual_stalled_child_yields_and_reactor_wakes_commit_before_file_reopen stdout ----
+journal parent poll elapsed_us=10
+journal parent poll elapsed_us=71
+journal parent poll elapsed_us=8
+journal parent poll elapsed_us=3
+
+---- pending_child_operation_rebinds_from_idle_runtime_a_to_runtime_b stdout ----
+journal parent poll elapsed_us=9
+journal parent poll elapsed_us=49
+journal parent poll elapsed_us=9
+journal parent poll elapsed_us=2
+
+successes:
+    accepted_http_retires_after_original_mailbox_drop_without_consuming_replacement
+    actual_cancelled_child_request_retains_custody_and_quiesces_before_recovery
+    actual_child_death_fails_closed_without_publishing_or_losing_custody
+    actual_stalled_child_yields_and_reactor_wakes_commit_before_file_reopen
+    expired_http_observer_retains_journal_until_ack_and_allows_successor
+    local_stop_during_real_child_pending_commit_prevents_live_delta
+    lost_http_observer_releases_admission_after_real_commit_and_allows_successor
+    normal_http_route_uses_real_pollable_journal_and_services_stop
+    normal_owner_turn_drains_authenticated_datagrams_with_real_child_and_stop_fence
+    owner_turn_reports_hal_stop_failure_without_losing_pending_journal
+    pending_child_operation_rebinds_from_idle_runtime_a_to_runtime_b
+    provisioned_owner_commits_relative_command_through_real_child
+    settled_owner::actual_child_get_and_signed_datagrams_take_bounded_alternating_turns
+    settled_owner::actual_child_mixed_soap_batch_retains_datagram_after_observer_loss
+    settled_owner::actual_child_mixed_stale_relative_soap_preserves_refusal_and_one_delta
+    settled_owner_real_child_commit_and_stop_drain_custody_handoff
+    startup_failure_returns_the_spawned_child_for_explicit_reaping
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.72s
+
+[W] Worker: trj | Job: j-30109207290184276
+^ Sync: 8.1 MB in 866ms (9.4 MB/s)
+[C] Compile: 12.8s
+v Artifacts: 44 B in 230ms (191 B/s)
++------------- [OK] Build Successful -------------+
+| Duration: 12.8s (v 94% faster vs previous 3.9m) |
+| Artifacts: 0 files (44 B)                       |
+| Worker: trj                                     |
+| Cache: MISS (warming cache)                     |
+| Time: 2026-11-15 05:09:19                       |
++-------------------------------------------------+

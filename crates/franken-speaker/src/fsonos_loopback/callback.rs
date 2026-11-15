@@ -10,9 +10,10 @@
 //!   both by exact string equality. Nothing is resolved, no
 //!   redirect is followed (the answer is read for its status line and the connection is closed), and no multicast, wildcard or LAN
 //!   address can be named.
-//! * **Off the control path.** The shim's HTTP worker only offers notifications to a bounded queue with a non-blocking send, after the
-//!   SOAP or GENA answer has been written. A full queue drops the notification and COUNTS it; the subscriber sees a jump in `SEQ`,
-//!   which is how GENA shows a missed event. A separate thread connects, writes and reads, in order, one connection per notification.
+//! * **Off the control path.** A bounded queue takes notifications with a non-blocking send. An attached mailbox owner may offer
+//!   before its HTTP observer returns; a response-attempt fence keeps socket delivery after the SOAP or GENA answer attempt. A full queue drops the notification and COUNTS it; the subscriber sees a jump in `SEQ`,
+//!   which is how GENA shows a missed event. The existing delivery thread waits for that fence within its stop/lifetime bounds,
+//!   then connects, writes and reads in order, one connection per notification.
 //! * **Bounded.** Queue length, bytes of one request (its exact length is summed before it is built), the connect, the whole delivery
 //!   (connect, the whole write, the status line), each read and write call, the thread's lifetime, and the join at stop. What is
 //!   still queued at stop is counted as abandoned and never sent.
@@ -24,8 +25,8 @@
 
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -201,6 +202,9 @@ pub struct CallbackReport {
     pub unframed: u32,
     /// Lost to saturation: the queue was full or closed. The subscriber sees a jump in `SEQ`.
     pub dropped: u32,
+    /// Owner offers refused without waiting for contended/poisoned accounting.
+    /// Included in offered and dropped; not queued or attempted.
+    pub admission_contended: u32,
     /// Taken into the queue.
     pub queued: u32,
     /// Answered by the callback with status 200.
@@ -239,13 +243,19 @@ fn lock(report: &Mutex<CallbackReport>) -> MutexGuard<'_, CallbackReport> {
     report.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+struct DeliveryJob {
+    request: Vec<u8>,
+    response_finished: Option<Arc<AtomicBool>>,
+}
+
 /// The shim's end of the queue. It only offers; it never connects, waits or blocks.
 #[derive(Clone)]
-pub(super) struct Outbox {
+pub(crate) struct Outbox {
     target: CallbackTarget,
     max_request_bytes: usize,
-    queue: SyncSender<Vec<u8>>,
+    queue: SyncSender<DeliveryJob>,
     report: Arc<Mutex<CallbackReport>>,
+    admission_contended: Arc<AtomicU32>,
     terminal: Arc<AtomicBool>,
 }
 
@@ -273,13 +283,42 @@ impl Outbox {
     /// Hand the core's notifications over, in the order the core produced them.
     pub(super) fn offer(&self, notifications: &[Notification]) {
         for notification in notifications {
-            self.offer_one(notification);
+            self.offer_one(notification, None);
         }
     }
 
-    fn offer_one(&self, notification: &Notification) {
+    /// Retain owner-produced updates independently of the HTTP observer.
+    /// The existing finite queue owns delivery; its worker waits for the
+    /// transport's completed response attempt before making any callback.
+    /// Owner admission never waits for report custody: contention or poison
+    /// refuses the notification with independent saturating drop accounting.
+    /// This avoids lock waiting; it is not a hard CPU/scheduling deadline.
+    pub(crate) fn offer_after(&self, notifications: &[Notification], response: &Arc<AtomicBool>) {
+        for notification in notifications {
+            let Ok(mut counts) = self.report.try_lock() else {
+                let _ = self.admission_contended.try_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |value| Some(value.saturating_add(1)),
+                );
+                continue;
+            };
+            self.offer_locked(notification, Some(Arc::clone(response)), &mut counts);
+        }
+    }
+
+    fn offer_one(&self, notification: &Notification, response_finished: Option<Arc<AtomicBool>>) {
         // The guard is held across the non-blocking send, so the counts and the queue never disagree for the delivery thread.
         let mut counts = lock(&self.report);
+        self.offer_locked(notification, response_finished, &mut counts);
+    }
+
+    fn offer_locked(
+        &self,
+        notification: &Notification,
+        response_finished: Option<Arc<AtomicBool>>,
+        counts: &mut CallbackReport,
+    ) {
         counts.offered = counts.offered.saturating_add(1);
         if notification.callback != self.target.url {
             counts.refused = counts.refused.saturating_add(1);
@@ -289,7 +328,10 @@ impl Outbox {
             counts.unframed = counts.unframed.saturating_add(1);
             return;
         };
-        match self.queue.try_send(request) {
+        match self.queue.try_send(DeliveryJob {
+            request,
+            response_finished,
+        }) {
             Ok(()) => counts.queued = counts.queued.saturating_add(1),
             Err(_) => counts.dropped = counts.dropped.saturating_add(1),
         }
@@ -299,6 +341,7 @@ impl Outbox {
 /// The delivery thread. Dropping it stops and joins it.
 pub(super) struct Deliverer {
     report: Arc<Mutex<CallbackReport>>,
+    admission_contended: Arc<AtomicU32>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     join_budget: Duration,
@@ -313,8 +356,9 @@ impl Deliverer {
         if !limits.usable() {
             return Err("the callback limits are unusable".to_string());
         }
-        let (queue, jobs) = mpsc::sync_channel::<Vec<u8>>(limits.queue);
+        let (queue, jobs) = mpsc::sync_channel::<DeliveryJob>(limits.queue);
         let report = Arc::new(Mutex::new(CallbackReport::default()));
+        let admission_contended = Arc::new(AtomicU32::new(0));
         let stop = Arc::new(AtomicBool::new(false));
         let terminal = Arc::new(AtomicBool::new(false));
         let addr = target.addr;
@@ -323,6 +367,7 @@ impl Deliverer {
             max_request_bytes: limits.max_request_bytes,
             queue,
             report: Arc::clone(&report),
+            admission_contended: Arc::clone(&admission_contended),
             terminal: Arc::clone(&terminal),
         };
         let (for_report, for_stop) = (Arc::clone(&report), Arc::clone(&stop));
@@ -338,6 +383,7 @@ impl Deliverer {
             .map_err(|error| format!("spawn: {}", error.kind()))?;
         let deliverer = Self {
             report,
+            admission_contended,
             stop,
             worker: Some(worker),
             join_budget: limits.delivery_bound().saturating_add(JOIN_SLACK),
@@ -346,7 +392,12 @@ impl Deliverer {
     }
 
     pub(super) fn report(&self) -> CallbackReport {
-        lock(&self.report).clone()
+        let mut report = lock(&self.report).clone();
+        let refused = self.admission_contended.load(Ordering::Relaxed);
+        report.admission_contended = refused;
+        report.offered = report.offered.saturating_add(refused);
+        report.dropped = report.dropped.saturating_add(refused);
+        report
     }
 
     /// Ask the thread to stop and join it within the longest one delivery can take.
@@ -386,24 +437,55 @@ impl Drop for Deliverer {
 }
 
 fn run(
-    jobs: Receiver<Vec<u8>>,
+    jobs: Receiver<DeliveryJob>,
     addr: SocketAddr,
     limits: CallbackLimits,
     stop: &AtomicBool,
     report: &Mutex<CallbackReport>,
 ) -> CallbackStop {
     let started = Instant::now();
-    let cause = loop {
+    let cause = 'delivery: loop {
         if stop.load(Ordering::SeqCst) {
             break CallbackStop::Requested;
         }
         if started.elapsed() >= limits.lifetime {
             break CallbackStop::Lifetime;
         }
-        match jobs.recv_timeout(POLL) {
-            Ok(request) => deliver(addr, &request, &limits, report),
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break CallbackStop::Closed,
+        // Rust 1.99 b940084d7: bounded try_send calls receivers.notify,
+        // which locks its waker when recv/recv_timeout has registered it. Never
+        // register this sole receiver: poll with the existing bounded sleep.
+        // Serialize slot removal with producer admission too: a consumer paused
+        // between advancing head and releasing its slot must make owner offers
+        // fail try_lock, not spin inside std's start_send on that partial read.
+        let next = {
+            let _guard = lock(report);
+            jobs.try_recv()
+        };
+        match next {
+            Ok(job) => {
+                while job
+                    .response_finished
+                    .as_ref()
+                    .is_some_and(|f| !f.load(Ordering::Acquire))
+                {
+                    let terminal = if stop.load(Ordering::SeqCst) {
+                        Some(CallbackStop::Requested)
+                    } else if started.elapsed() >= limits.lifetime {
+                        Some(CallbackStop::Lifetime)
+                    } else {
+                        None
+                    };
+                    if let Some(cause) = terminal {
+                        let mut counts = lock(report);
+                        counts.abandoned = counts.abandoned.saturating_add(1);
+                        break 'delivery cause;
+                    }
+                    thread::sleep(POLL);
+                }
+                deliver(addr, &job.request, &limits, report);
+            }
+            Err(TryRecvError::Empty) => thread::sleep(POLL),
+            Err(TryRecvError::Disconnected) => break CallbackStop::Closed,
         }
     };
     retire_queue(jobs, report, || {});
@@ -414,7 +496,7 @@ fn run(
 /// The no-op in normal delivery is also a synchronization point for tests:
 /// it observes the actual final-drain boundary, not a second queue algorithm.
 fn retire_queue(
-    jobs: Receiver<Vec<u8>>,
+    jobs: Receiver<DeliveryJob>,
     report: &Mutex<CallbackReport>,
     after_final_drain: impl FnOnce(),
 ) {
@@ -571,3 +653,36 @@ fn reason_byte(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// Test-only contention fixture. The watchdog releases a stuck report so a
+/// blocking regression fails an assertion instead of hanging the test process.
+#[cfg(test)]
+pub(crate) fn with_held_report_for_test(f: impl FnOnce(&Outbox, &str)) -> CallbackReport {
+    use std::net::{Ipv4Addr, TcpListener};
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let target = CallbackTarget::new(listener.local_addr().unwrap(), "/events").unwrap();
+    let url = target.url().to_owned();
+    let (mut delivery, outbox) = Deliverer::start(target, CallbackLimits::standard()).unwrap();
+    let report = Arc::clone(&outbox.report);
+    let released = Arc::new(AtomicBool::new(false));
+    let observed_release = Arc::clone(&released);
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel(1);
+    let holder = thread::spawn(move || {
+        let _held = lock(&report);
+        ready_tx.send(()).unwrap();
+        let _ = release_rx.recv_timeout(Duration::from_secs(2));
+        observed_release.store(true, Ordering::Release);
+    });
+    ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    f(&outbox, &url);
+    let blocked = released.load(Ordering::Acquire);
+    let _ = release_tx.send(());
+    holder.join().unwrap();
+    delivery.stop();
+    assert!(
+        !blocked,
+        "owner completion/Stop waited for held callback accounting"
+    );
+    delivery.report()
+}

@@ -1,0 +1,282 @@
+Scope: offline native host only
+Remote command: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' cargo +1.99.0 test -p franken-speaker --lib --features harness,journal-process --locked --offline -j1 -- fsonos_loopback callback_report_contention_refuses_event settled_http '--test-threads=1' --show-output
+Native job: 30109207290184278
+Remote delivery exit: 0
+Command exit: 0
+Terminal ACK: True
+Source receipt: 07bbaf00be5c016b43cdc240d7606959e477978f657f01aa70a1b78c51845804
+Nine frozen implementation inputs matched; source/tree/pair custody retired.
+
+   Compiling franken-speaker v0.1.0 (<private-path>
+
+running 114 tests
+    Finished `test` profile [unoptimized] target(s) in 31.18s
+     Running unittests src/lib.rs (<private-path>
+test fsonos_loopback::callback::tests::a_body_or_an_sid_one_byte_past_the_bound_is_refused_and_one_inside_is_not ... ok
+test fsonos_loopback::callback::tests::a_notification_for_any_other_callback_is_refused_and_nothing_connects ... ok
+test fsonos_loopback::callback::tests::a_peer_taking_one_byte_per_call_runs_out_of_the_whole_deadline_and_a_quick_one_does_not ... ok
+test fsonos_loopback::callback::tests::a_real_callback_answering_with_anything_but_a_complete_status_200_line_is_not_a_delivery ... ok
+test fsonos_loopback::callback::tests::a_real_peer_that_drains_slowly_cannot_stretch_a_delivery_past_its_bound ... ok
+test fsonos_loopback::callback::tests::a_request_over_the_byte_bound_or_with_a_header_that_cannot_be_framed_is_not_sent ... ok
+test fsonos_loopback::callback::tests::a_stalled_callback_is_bounded_and_a_full_queue_is_counted_without_blocking_the_offerer ... ok
+test fsonos_loopback::callback::tests::a_target_admits_one_plain_loopback_socket_and_path_and_nothing_else ... ok
+test fsonos_loopback::callback::tests::only_a_complete_crlf_terminated_http_1_status_200_line_is_a_delivery ... ok
+test fsonos_loopback::callback::tests::orderly_shutdown_closes_queue_before_returning_reconciled_accounting ... ok
+test fsonos_loopback::callback::tests::orderly_shutdown_serializes_live_offers_with_final_drain_and_disconnect ... ok
+test fsonos_loopback::callback::tests::owner_offer_poisoned_accounting_refuses_and_counter_saturates ... ok
+test fsonos_loopback::callback::tests::response_fence_retains_one_bounded_queue_and_preserves_sequence ... ok
+test fsonos_loopback::callback::tests::stopped_response_fence_counts_abandonment_and_full_queue_refusal ... ok
+test fsonos_loopback::callback::tests::stopping_abandons_what_is_queued_counts_it_and_later_offers_are_dropped ... ok
+test fsonos_loopback::callback::tests::stopping_with_a_join_budget_too_large_to_add_to_an_instant_does_not_panic ... ok
+test fsonos_loopback::callback::tests::the_callback_header_is_matched_by_exact_equality_only ... ok
+test fsonos_loopback::callback::tests::the_cores_notification_is_delivered_unchanged_and_counted_only_on_a_200_answer ... ok
+test fsonos_loopback::callback::tests::the_length_sum_is_checked_and_an_overflow_is_refused ... ok
+test fsonos_loopback::callback::tests::the_request_keeps_its_framing_byte_for_byte_and_the_bound_is_exact_to_the_byte ... ok
+test fsonos_loopback::callback::tests::the_write_loop_delivers_every_byte_in_order_across_short_and_interrupted_calls ... ok
+test fsonos_loopback::callback::tests::the_write_loop_ends_on_every_way_a_write_can_go_wrong ... ok
+test fsonos_loopback::callback::tests::unusable_limits_are_refused_and_the_standard_ones_are_not ... ok
+test fsonos_loopback::discovery::tests::a_malformed_datagram_is_refused_under_the_cores_fixed_word_and_never_answered ... ok
+test fsonos_loopback::discovery::tests::a_responder_nobody_asked_says_nothing ... ok
+test fsonos_loopback::discovery::tests::alternate_logical_location_is_advertised_from_the_original_loopback_socket ... ok
+test fsonos_loopback::discovery::tests::alternate_loopback_address_still_enforces_core_uuid_and_name_rules ... ok
+test fsonos_loopback::discovery::tests::an_identity_the_core_refuses_never_becomes_a_device_and_the_fixture_does ... ok
+test fsonos_loopback::discovery::tests::loopback_logical_address_changes_location_not_identity_or_document ... ok
+test fsonos_loopback::discovery::tests::malformed_and_wrong_service_datagrams_get_no_answer_and_the_search_beside_them_does ... ok
+test fsonos_loopback::discovery::tests::nonloopback_network_and_broadcast_addresses_are_refused_by_the_identity_helper ... ok
+test fsonos_loopback::discovery::tests::only_a_loopback_peer_is_judged ... ok
+test fsonos_loopback::discovery::tests::the_core_decides_what_is_answered_and_a_service_it_does_not_serve_is_silent ... ok
+test fsonos_loopback::discovery::tests::the_responder_answers_the_sender_only_from_a_loopback_socket_and_counts_what_it_read ... ok
+test fsonos_loopback::discovery::tests::the_responder_socket_bounds_writes_as_well_as_reads_and_the_responder_still_answers ... ok
+test fsonos_loopback::discovery::tests::the_responder_stops_at_its_datagram_cap_and_a_search_after_it_gets_no_answer ... ok
+test fsonos_loopback::discovery::tests::the_responder_stops_by_itself_at_its_lifetime_and_when_asked_and_when_dropped ... ok
+test fsonos_loopback::discovery::tests::unusable_limits_are_refused_and_the_standard_ones_are_not ... ok
+test fsonos_loopback::fleet_tests::failed_control_factory_refuses_start_without_legacy_fallback ... ok
+test fsonos_loopback::fleet_tests::fleet_loopback_authenticates_commits_and_restores_replay_floor ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::different_real_owner_description_must_refuse_discovery ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::disconnected_owner_refuses_discovery_without_readiness ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::explicit_logical_ip_mismatch_refuses_identical_xml_from_real_owner ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::explicit_loopback_player_uses_real_owner_metadata_and_local_sockets ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::invalid_logical_addresses_and_tailnet_never_invoke_or_attach_owner ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::legacy_discovery_and_eventing_constructor_still_serves_its_description ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::matching_real_core_is_preflighted_before_discovery_and_serves_later_get ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::missing_real_description_refuses_start_and_keeps_attachment_fenced ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::plain_mailbox_rejects_discoverable_eventing_without_owner_eventing_attachment ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::queued_work_refuses_attachment_then_real_queued_owner_get_succeeds ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::same_description_and_location_with_different_owner_cache_age_must_refuse ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::same_description_with_different_owner_location_must_refuse_discovery ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::tailnet_policy_must_not_start_local_discovery_or_invoke_owner ... ok
+test fsonos_loopback::mailbox_discovery_tests::tests::unserviced_owner_times_out_and_stays_fenced ... ok
+test fsonos_loopback::mailbox_eventing_tests::dropped_executing_observer_keeps_actual_core_event_in_real_callback_queue ... ok
+test fsonos_loopback::mailbox_eventing_tests::eventing_opt_in_without_outbox_still_refuses_without_mailbox_work ... ok
+test fsonos_loopback::mailbox_eventing_tests::opted_in_outbox_delivers_real_core_initial_notification ... ok
+test fsonos_loopback::mailbox_eventing_tests::plain_mailbox_with_real_outbox_is_refused_at_startup ... ok
+test fsonos_loopback::mailbox_tests::mailbox_adapter_preserves_committed_response_despite_render_error_and_updates_snapshot ... ok
+test fsonos_loopback::mailbox_tests::mailbox_discovery_extras_are_refused_and_plain_factory_start_still_works ... ok
+test fsonos_loopback::tests::a_boot_that_cannot_get_an_incarnation_fails_typed_and_starts_nothing ... ok
+test fsonos_loopback::tests::a_client_that_stalls_midway_is_answered_408_and_one_that_says_nothing_is_closed_unanswered ... ok
+test fsonos_loopback::tests::a_composed_shim_describes_serves_and_subscribes_on_one_endpoint_and_counts_each ... ok
+test fsonos_loopback::tests::a_composed_start_that_the_core_or_any_limits_refuse_fails_and_a_valid_one_starts ... ok
+test fsonos_loopback::tests::a_composed_tailnet_shim_describes_nothing_grants_nothing_and_offers_nothing ... ok
+test fsonos_loopback::tests::a_discoverable_start_that_the_core_or_the_limits_refuse_fails_and_a_valid_one_starts ... ok
+test fsonos_loopback::tests::a_head_parses_strictly_and_keeps_the_case_the_client_sent ... ok
+test fsonos_loopback::tests::a_head_the_shim_cannot_read_is_refused_by_the_shim_and_never_reaches_the_endpoint ... ok
+test fsonos_loopback::tests::a_restart_with_the_same_identity_answers_the_same_and_another_identity_answers_differently ... ok
+test fsonos_loopback::tests::a_restarted_shim_never_honours_an_old_sid_even_after_a_fresh_subscription ... ok
+test fsonos_loopback::tests::a_set_over_the_wire_changes_the_session_and_only_the_named_member ... ok
+test fsonos_loopback::tests::a_tailnet_connection_is_not_given_the_description_and_a_plain_shim_has_none_to_give ... ok
+test fsonos_loopback::tests::a_volume_read_over_the_wire_is_the_real_endpoints_answer_from_the_live_session ... ok
+test fsonos_loopback::tests::an_answer_is_framed_with_its_own_length_and_a_line_break_cannot_split_it ... ok
+test fsonos_loopback::tests::an_endpoint_for_a_member_that_left_the_group_answers_with_its_own_fault_not_a_made_up_volume ... ok
+test fsonos_loopback::tests::an_entropy_device_that_ends_early_is_short_and_one_that_cannot_be_read_is_unavailable ... ok
+test fsonos_loopback::tests::an_oversize_head_is_refused_and_a_body_at_the_cap_reaches_the_endpoint ... ok
+test fsonos_loopback::tests::an_unauthenticated_tailnet_connection_is_refused_by_the_endpoint_and_a_local_one_is_not ... ok
+test fsonos_loopback::tests::plant_two_boots_handed_the_same_bytes_let_a_stale_sid_remove_the_new_subscription ... ok
+test fsonos_loopback::tests::stopping_the_shim_stops_the_responder_and_neither_answers_afterwards ... ok
+test fsonos_loopback::tests::the_answer_the_description_and_the_topology_name_one_device_at_one_location ... ok
+test fsonos_loopback::tests::the_boot_key_is_the_only_input_that_makes_two_boots_ids_differ ... ok
+test fsonos_loopback::tests::the_description_is_the_cores_document_served_to_the_local_link_and_nothing_else_changes ... ok
+test fsonos_loopback::tests::the_endpoints_own_refusals_pass_through_unchanged_and_change_nothing ... ok
+test fsonos_loopback::tests::the_host_incarnation_comes_from_the_host_and_differs_between_reads ... ok
+test fsonos_loopback::tests::the_listener_is_loopback_only_and_unusable_limits_are_refused ... ok
+test fsonos_loopback::tests::the_shim_accepts_a_bounded_number_of_connections_and_then_closes_its_listener ... ok
+test fsonos_loopback::tests::the_shim_stops_by_itself_at_its_lifetime_and_dropping_it_closes_the_listener ... ok
+test fsonos_loopback::tests::the_topology_names_the_served_member_and_leaves_its_neighbour_without_a_location ... ok
+test render::tests::callback_report_contention_refuses_event_without_blocking_owner_or_stop ... ok
+test settled_http::tests::arena_preserves_empty_unicode_headers_and_binary_body_at_header_limit ... ok
+test settled_http::tests::arena_rejects_over_limit_before_copy_and_accepts_exact_byte_limit ... ok
+test settled_http::tests::attachment_and_raw_publication_never_both_succeed ... ok
+test settled_http::tests::attachment_refuses_queued_and_executing_work_but_reclaims_cancelled_queue ... ok
+test settled_http::tests::begun_handler_outliving_caller_counts_actual_reply_loss_without_replay ... ok
+test settled_http::tests::cleanup_panic_keeps_mailbox_fenced_instead_of_reopening_stale_subscriptions ... ok
+test settled_http::tests::consumed_reply_does_not_count_notifications_as_lost ... ok
+test settled_http::tests::detached_eventing_stays_fenced_until_matching_cleanup_with_no_inflight_work ... ok
+test settled_http::tests::detached_http_worker_is_not_delivery_terminal_and_cleanup_does_not_guess ... ok
+test settled_http::tests::dropped_and_expired_queued_requests_are_reclaimed_without_owner_polling ... ok
+test settled_http::tests::eventing_attachment_fences_raw_clones_and_releases_for_normal_use ... ok
+test settled_http::tests::expired_owner_service_skips_handler_but_permitted_successor_still_works ... ok
+test settled_http::tests::generic_mailbox_cannot_be_adopted_and_unbound_cleanup_is_refused ... ok
+test settled_http::tests::idle_owner_polling_does_not_refuse_sequential_publications ... ok
+test settled_http::tests::lost_reply_reports_executed_work_without_reapplying_or_retaining_capacity ... ok
+test settled_http::tests::owner_and_mailbox_association_is_two_sided_and_generic_service_cannot_bypass ... ok
+test settled_http::tests::owner_drop_disconnects_pending_work_and_refuses_later_submissions ... ok
+test settled_http::tests::paused_reply_observer_does_not_hold_owner_completion_or_capacity ... ok
+test settled_http::tests::poisoned_unpublished_mailbox_is_unavailable_instead_of_idle ... ok
+test settled_http::tests::polling_keeps_initial_expiry_and_in_wait_ready_before_deadline_edge ... ok
+test settled_http::tests::queued_reply_abandoned_after_successful_send_counts_both_vectors_once ... ok
+test settled_http::tests::reply_loss_with_no_notifications_and_counter_saturation_are_explicit ... ok
+test settled_http::tests::request_and_header_caps_refuse_before_consuming_the_single_slot ... ok
+test settled_http::tests::valid_request_reaches_one_handler_and_copies_every_transport_field ... ok
+
+successes:
+
+---- fsonos_loopback::callback::tests::orderly_shutdown_serializes_live_offers_with_final_drain_and_disconnect stdout ----
+callback-shutdown: boundary_locked=true offered=3 queued=2 abandoned=2 dropped=1 delivered=0 failed=0 reconciled=true
+
+---- fsonos_loopback::callback::tests::owner_offer_poisoned_accounting_refuses_and_counter_saturates stdout ----
+
+thread '<unnamed>' (2041183) panicked at crates/franken-speaker/src/fsonos_loopback/callback/tests.rs:1009:13:
+deliberately poison accounting, not owner control
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- settled_http::tests::cleanup_panic_keeps_mailbox_fenced_instead_of_reopening_stale_subscriptions stdout ----
+
+thread 'settled_http::tests::cleanup_panic_keeps_mailbox_fenced_instead_of_reopening_stale_subscriptions' (2043016) panicked at crates/franken-speaker/src/settled_http.rs:1478:47:
+invalidation failed
+
+---- settled_http::tests::idle_owner_polling_does_not_refuse_sequential_publications stdout ----
+idle-publication attempts=5000 accepted=5000 busy=0 failure=None serviced=Ok(5000)
+
+---- settled_http::tests::poisoned_unpublished_mailbox_is_unavailable_instead_of_idle stdout ----
+
+thread '<unnamed>' (2044416) panicked at crates/franken-speaker/src/settled_http.rs:1540:17:
+poison empty publication lock
+
+successes:
+    fsonos_loopback::callback::tests::a_body_or_an_sid_one_byte_past_the_bound_is_refused_and_one_inside_is_not
+    fsonos_loopback::callback::tests::a_notification_for_any_other_callback_is_refused_and_nothing_connects
+    fsonos_loopback::callback::tests::a_peer_taking_one_byte_per_call_runs_out_of_the_whole_deadline_and_a_quick_one_does_not
+    fsonos_loopback::callback::tests::a_real_callback_answering_with_anything_but_a_complete_status_200_line_is_not_a_delivery
+    fsonos_loopback::callback::tests::a_real_peer_that_drains_slowly_cannot_stretch_a_delivery_past_its_bound
+    fsonos_loopback::callback::tests::a_request_over_the_byte_bound_or_with_a_header_that_cannot_be_framed_is_not_sent
+    fsonos_loopback::callback::tests::a_stalled_callback_is_bounded_and_a_full_queue_is_counted_without_blocking_the_offerer
+    fsonos_loopback::callback::tests::a_target_admits_one_plain_loopback_socket_and_path_and_nothing_else
+    fsonos_loopback::callback::tests::only_a_complete_crlf_terminated_http_1_status_200_line_is_a_delivery
+    fsonos_loopback::callback::tests::orderly_shutdown_closes_queue_before_returning_reconciled_accounting
+    fsonos_loopback::callback::tests::orderly_shutdown_serializes_live_offers_with_final_drain_and_disconnect
+    fsonos_loopback::callback::tests::owner_offer_poisoned_accounting_refuses_and_counter_saturates
+    fsonos_loopback::callback::tests::response_fence_retains_one_bounded_queue_and_preserves_sequence
+    fsonos_loopback::callback::tests::stopped_response_fence_counts_abandonment_and_full_queue_refusal
+    fsonos_loopback::callback::tests::stopping_abandons_what_is_queued_counts_it_and_later_offers_are_dropped
+    fsonos_loopback::callback::tests::stopping_with_a_join_budget_too_large_to_add_to_an_instant_does_not_panic
+    fsonos_loopback::callback::tests::the_callback_header_is_matched_by_exact_equality_only
+    fsonos_loopback::callback::tests::the_cores_notification_is_delivered_unchanged_and_counted_only_on_a_200_answer
+    fsonos_loopback::callback::tests::the_length_sum_is_checked_and_an_overflow_is_refused
+    fsonos_loopback::callback::tests::the_request_keeps_its_framing_byte_for_byte_and_the_bound_is_exact_to_the_byte
+    fsonos_loopback::callback::tests::the_write_loop_delivers_every_byte_in_order_across_short_and_interrupted_calls
+    fsonos_loopback::callback::tests::the_write_loop_ends_on_every_way_a_write_can_go_wrong
+    fsonos_loopback::callback::tests::unusable_limits_are_refused_and_the_standard_ones_are_not
+    fsonos_loopback::discovery::tests::a_malformed_datagram_is_refused_under_the_cores_fixed_word_and_never_answered
+    fsonos_loopback::discovery::tests::a_responder_nobody_asked_says_nothing
+    fsonos_loopback::discovery::tests::alternate_logical_location_is_advertised_from_the_original_loopback_socket
+    fsonos_loopback::discovery::tests::alternate_loopback_address_still_enforces_core_uuid_and_name_rules
+    fsonos_loopback::discovery::tests::an_identity_the_core_refuses_never_becomes_a_device_and_the_fixture_does
+    fsonos_loopback::discovery::tests::loopback_logical_address_changes_location_not_identity_or_document
+    fsonos_loopback::discovery::tests::malformed_and_wrong_service_datagrams_get_no_answer_and_the_search_beside_them_does
+    fsonos_loopback::discovery::tests::nonloopback_network_and_broadcast_addresses_are_refused_by_the_identity_helper
+    fsonos_loopback::discovery::tests::only_a_loopback_peer_is_judged
+    fsonos_loopback::discovery::tests::the_core_decides_what_is_answered_and_a_service_it_does_not_serve_is_silent
+    fsonos_loopback::discovery::tests::the_responder_answers_the_sender_only_from_a_loopback_socket_and_counts_what_it_read
+    fsonos_loopback::discovery::tests::the_responder_socket_bounds_writes_as_well_as_reads_and_the_responder_still_answers
+    fsonos_loopback::discovery::tests::the_responder_stops_at_its_datagram_cap_and_a_search_after_it_gets_no_answer
+    fsonos_loopback::discovery::tests::the_responder_stops_by_itself_at_its_lifetime_and_when_asked_and_when_dropped
+    fsonos_loopback::discovery::tests::unusable_limits_are_refused_and_the_standard_ones_are_not
+    fsonos_loopback::fleet_tests::failed_control_factory_refuses_start_without_legacy_fallback
+    fsonos_loopback::fleet_tests::fleet_loopback_authenticates_commits_and_restores_replay_floor
+    fsonos_loopback::mailbox_discovery_tests::tests::different_real_owner_description_must_refuse_discovery
+    fsonos_loopback::mailbox_discovery_tests::tests::disconnected_owner_refuses_discovery_without_readiness
+    fsonos_loopback::mailbox_discovery_tests::tests::explicit_logical_ip_mismatch_refuses_identical_xml_from_real_owner
+    fsonos_loopback::mailbox_discovery_tests::tests::explicit_loopback_player_uses_real_owner_metadata_and_local_sockets
+    fsonos_loopback::mailbox_discovery_tests::tests::invalid_logical_addresses_and_tailnet_never_invoke_or_attach_owner
+    fsonos_loopback::mailbox_discovery_tests::tests::legacy_discovery_and_eventing_constructor_still_serves_its_description
+    fsonos_loopback::mailbox_discovery_tests::tests::matching_real_core_is_preflighted_before_discovery_and_serves_later_get
+    fsonos_loopback::mailbox_discovery_tests::tests::missing_real_description_refuses_start_and_keeps_attachment_fenced
+    fsonos_loopback::mailbox_discovery_tests::tests::plain_mailbox_rejects_discoverable_eventing_without_owner_eventing_attachment
+    fsonos_loopback::mailbox_discovery_tests::tests::queued_work_refuses_attachment_then_real_queued_owner_get_succeeds
+    fsonos_loopback::mailbox_discovery_tests::tests::same_description_and_location_with_different_owner_cache_age_must_refuse
+    fsonos_loopback::mailbox_discovery_tests::tests::same_description_with_different_owner_location_must_refuse_discovery
+    fsonos_loopback::mailbox_discovery_tests::tests::tailnet_policy_must_not_start_local_discovery_or_invoke_owner
+    fsonos_loopback::mailbox_discovery_tests::tests::unserviced_owner_times_out_and_stays_fenced
+    fsonos_loopback::mailbox_eventing_tests::dropped_executing_observer_keeps_actual_core_event_in_real_callback_queue
+    fsonos_loopback::mailbox_eventing_tests::eventing_opt_in_without_outbox_still_refuses_without_mailbox_work
+    fsonos_loopback::mailbox_eventing_tests::opted_in_outbox_delivers_real_core_initial_notification
+    fsonos_loopback::mailbox_eventing_tests::plain_mailbox_with_real_outbox_is_refused_at_startup
+    fsonos_loopback::mailbox_tests::mailbox_adapter_preserves_committed_response_despite_render_error_and_updates_snapshot
+    fsonos_loopback::mailbox_tests::mailbox_discovery_extras_are_refused_and_plain_factory_start_still_works
+    fsonos_loopback::tests::a_boot_that_cannot_get_an_incarnation_fails_typed_and_starts_nothing
+    fsonos_loopback::tests::a_client_that_stalls_midway_is_answered_408_and_one_that_says_nothing_is_closed_unanswered
+    fsonos_loopback::tests::a_composed_shim_describes_serves_and_subscribes_on_one_endpoint_and_counts_each
+    fsonos_loopback::tests::a_composed_start_that_the_core_or_any_limits_refuse_fails_and_a_valid_one_starts
+    fsonos_loopback::tests::a_composed_tailnet_shim_describes_nothing_grants_nothing_and_offers_nothing
+    fsonos_loopback::tests::a_discoverable_start_that_the_core_or_the_limits_refuse_fails_and_a_valid_one_starts
+    fsonos_loopback::tests::a_head_parses_strictly_and_keeps_the_case_the_client_sent
+    fsonos_loopback::tests::a_head_the_shim_cannot_read_is_refused_by_the_shim_and_never_reaches_the_endpoint
+    fsonos_loopback::tests::a_restart_with_the_same_identity_answers_the_same_and_another_identity_answers_differently
+    fsonos_loopback::tests::a_restarted_shim_never_honours_an_old_sid_even_after_a_fresh_subscription
+    fsonos_loopback::tests::a_set_over_the_wire_changes_the_session_and_only_the_named_member
+    fsonos_loopback::tests::a_tailnet_connection_is_not_given_the_description_and_a_plain_shim_has_none_to_give
+    fsonos_loopback::tests::a_volume_read_over_the_wire_is_the_real_endpoints_answer_from_the_live_session
+    fsonos_loopback::tests::an_answer_is_framed_with_its_own_length_and_a_line_break_cannot_split_it
+    fsonos_loopback::tests::an_endpoint_for_a_member_that_left_the_group_answers_with_its_own_fault_not_a_made_up_volume
+    fsonos_loopback::tests::an_entropy_device_that_ends_early_is_short_and_one_that_cannot_be_read_is_unavailable
+    fsonos_loopback::tests::an_oversize_head_is_refused_and_a_body_at_the_cap_reaches_the_endpoint
+    fsonos_loopback::tests::an_unauthenticated_tailnet_connection_is_refused_by_the_endpoint_and_a_local_one_is_not
+    fsonos_loopback::tests::plant_two_boots_handed_the_same_bytes_let_a_stale_sid_remove_the_new_subscription
+    fsonos_loopback::tests::stopping_the_shim_stops_the_responder_and_neither_answers_afterwards
+    fsonos_loopback::tests::the_answer_the_description_and_the_topology_name_one_device_at_one_location
+    fsonos_loopback::tests::the_boot_key_is_the_only_input_that_makes_two_boots_ids_differ
+    fsonos_loopback::tests::the_description_is_the_cores_document_served_to_the_local_link_and_nothing_else_changes
+    fsonos_loopback::tests::the_endpoints_own_refusals_pass_through_unchanged_and_change_nothing
+    fsonos_loopback::tests::the_host_incarnation_comes_from_the_host_and_differs_between_reads
+    fsonos_loopback::tests::the_listener_is_loopback_only_and_unusable_limits_are_refused
+    fsonos_loopback::tests::the_shim_accepts_a_bounded_number_of_connections_and_then_closes_its_listener
+    fsonos_loopback::tests::the_shim_stops_by_itself_at_its_lifetime_and_dropping_it_closes_the_listener
+    fsonos_loopback::tests::the_topology_names_the_served_member_and_leaves_its_neighbour_without_a_location
+    render::tests::callback_report_contention_refuses_event_without_blocking_owner_or_stop
+    settled_http::tests::arena_preserves_empty_unicode_headers_and_binary_body_at_header_limit
+    settled_http::tests::arena_rejects_over_limit_before_copy_and_accepts_exact_byte_limit
+    settled_http::tests::attachment_and_raw_publication_never_both_succeed
+    settled_http::tests::attachment_refuses_queued_and_executing_work_but_reclaims_cancelled_queue
+    settled_http::tests::begun_handler_outliving_caller_counts_actual_reply_loss_without_replay
+    settled_http::tests::cleanup_panic_keeps_mailbox_fenced_instead_of_reopening_stale_subscriptions
+    settled_http::tests::consumed_reply_does_not_count_notifications_as_lost
+    settled_http::tests::detached_eventing_stays_fenced_until_matching_cleanup_with_no_inflight_work
+    settled_http::tests::detached_http_worker_is_not_delivery_terminal_and_cleanup_does_not_guess
+    settled_http::tests::dropped_and_expired_queued_requests_are_reclaimed_without_owner_polling
+    settled_http::tests::eventing_attachment_fences_raw_clones_and_releases_for_normal_use
+    settled_http::tests::expired_owner_service_skips_handler_but_permitted_successor_still_works
+    settled_http::tests::generic_mailbox_cannot_be_adopted_and_unbound_cleanup_is_refused
+    settled_http::tests::idle_owner_polling_does_not_refuse_sequential_publications
+    settled_http::tests::lost_reply_reports_executed_work_without_reapplying_or_retaining_capacity
+    settled_http::tests::owner_and_mailbox_association_is_two_sided_and_generic_service_cannot_bypass
+    settled_http::tests::owner_drop_disconnects_pending_work_and_refuses_later_submissions
+    settled_http::tests::paused_reply_observer_does_not_hold_owner_completion_or_capacity
+    settled_http::tests::poisoned_unpublished_mailbox_is_unavailable_instead_of_idle
+    settled_http::tests::polling_keeps_initial_expiry_and_in_wait_ready_before_deadline_edge
+    settled_http::tests::queued_reply_abandoned_after_successful_send_counts_both_vectors_once
+    settled_http::tests::reply_loss_with_no_notifications_and_counter_saturation_are_explicit
+    settled_http::tests::request_and_header_caps_refuse_before_consuming_the_single_slot
+    settled_http::tests::valid_request_reaches_one_handler_and_copies_every_transport_field
+
+test result: ok. 114 passed; 0 failed; 0 ignored; 0 measured; 623 filtered out; finished in 19.83s
+
+[W] Worker: <worker> | Job: j-30109207290184278
+^ Sync: 8.1 MB in 3.1s (2.6 MB/s)
+[C] Compile: 54.9s
+v Artifacts: 44 B in 1.9s (24 B/s)
++------------- [OK] Build Successful --------------+
+| Duration: 54.9s (^ 38% slower vs previous 39.8s) |
+| Artifacts: 0 files (44 B)                        |
+| Worker: <worker>                               |
+| Cache: MISS (warming cache)                      |
+| Time: 2026-11-15 05:10:29                        |
++--------------------------------------------------+

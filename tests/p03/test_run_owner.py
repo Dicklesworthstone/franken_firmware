@@ -101,10 +101,13 @@ class OwnerRunnerTests(unittest.TestCase):
     def test_conflicting_replayed_and_wrong_count_falsifiers(self):
         good = transcript()
         row = f"test {M.REQUIRED[0]} ... ok\n"
+        count = len(M.REQUIRED)
         for bad in (good.replace(row, row + row), good.replace(row, row + row.replace("ok", "FAILED")),
-                    good.replace("6 passed", "5 passed"), good.replace("running 6 tests", "running 7 tests"),
+                    good.replace(f"{count} passed", f"{count - 1} passed"),
+                    good.replace(f"running {count} tests", f"running {count + 1} tests"),
                     good.replace("tests/journal_process.rs", "tests/unrelated.rs"),
                     good.replace(row, row.replace("ok", "ignored"))):
+            self.assertNotEqual(bad, good, "the planted failure must change the transcript")
             self.assertNotEqual(self.judge(bad)["status"], "passed")
         replay = ("Running tests/other.rs (target/debug/deps/other)\nrunning 1 test\n" + row
                   + "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured\n")

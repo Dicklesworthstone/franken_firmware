@@ -285,6 +285,8 @@ pub struct SettledRender<
     transport_dirty: bool,
     http_identity: HttpOwnerIdentity,
     pending_http: Option<crate::settled_http::PendingOwnerRequest>,
+    http_control_completion: Option<HttpControlCompletion>,
+    prefer_control: bool,
     pending_soap: Option<franken_control::fsonos::DeferredSoap>,
     pending_http_notifications: Vec<Notification>,
     pollable_http: Option<PollableHttpService<K, S, P, O, B>>,
@@ -400,6 +402,8 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             transport_dirty: true,
             http_identity: HttpOwnerIdentity::new(),
             pending_http: None,
+            http_control_completion: None,
+            prefer_control: true,
             pending_soap: None,
             pending_http_notifications: Vec::new(),
             pollable_http: None,
@@ -1344,6 +1348,7 @@ impl<K: SecretStore, S: Storage, P: DatagramPort, O: KernelOps, B: DeviceBackend
             || !self.render.stop_report().acknowledged
             || !matches!(&self.control, ControlSlot::Ready(_))
             || self.pending_http.is_some()
+            || self.http_control_completion.is_some()
         {
             return Err(self);
         }
@@ -1504,7 +1509,7 @@ impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBac
     /// Begin one owned durable step. Rendering and physical local stop remain
     /// available; ordinary mutable control ingress returns `ControlPending`.
     pub fn begin_pending_control(&mut self) -> Result<(), OwnerError> {
-        if self.pending_http.is_some() {
+        if self.pending_http.is_some() || self.http_control_completion.is_some() {
             return Err(OwnerError::ControlPending);
         }
         self.begin_pending_control_inner()
@@ -1614,10 +1619,30 @@ impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBac
     }
 }
 
+/// Independent custody of a durable HTTP batch's control outcomes. The SOAP
+/// reply may contain duplicate observations, never duplicate applications.
+/// The owner retains one bounded batch until explicitly taken, including when
+/// its HTTP observer disconnects. Deferred ingress must be re-authenticated.
+pub struct HttpControlCompletion {
+    pub control: Result<Vec<Settlement>, PendingStepFailure>,
+    pub deferred_datagrams: Vec<Vec<u8>>,
+}
+impl std::fmt::Debug for HttpControlCompletion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpControlCompletion")
+            .field("successful", &self.control.is_ok())
+            .field("settlements", &self.control.as_ref().map(Vec::len).ok())
+            .field("deferred_count", &self.deferred_datagrams.len())
+            .finish()
+    }
+}
+
 /// One finite production owner turn. Pending storage remains owned across
 /// calls; this reports neither hardware deadlines nor successful playback.
 #[derive(Debug)]
 pub struct ServiceTurn {
+    /// Independent HTTP-batch settlements, unaffected by HTTP reply delivery.
+    pub http_control: Option<HttpControlCompletion>,
     /// Complete owned datagram round, including raw deferred ingress that the
     /// caller must explicitly re-authenticate or return to its sender.
     pub control: Option<Result<PendingControlCompletion, OwnerError>>,
@@ -1631,6 +1656,13 @@ pub struct ServiceTurn {
 impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBackend>
     SettledRender<K, S, P, O, B>
 {
+    /// Take the one retained durable batch before progressing another. Direct
+    /// `service_http` consumers must drain this slot; `service_turn` returns it.
+    /// Unconsumed outcomes also prevent stopped-owner extraction.
+    pub fn take_http_control_completion(&mut self) -> Option<HttpControlCompletion> {
+        self.http_control_completion.take()
+    }
+
     /// Select pollable durability for the existing `service_http` entry point.
     /// This is a one-way mode selection; accepted pending I/O cannot be switched
     /// back to synchronous storage. The caller still owns render/Stop scheduling.
@@ -1738,53 +1770,69 @@ impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBac
                 ));
                 let _ = tick.as_mut().poll(cx);
             }
-            // An already-owned datagram round retains storage before another
-            // HTTP envelope can be taken; mailbox admission remains intact.
-            // A retained HTTP envelope is its own authority for continuation.
-            // Never associate the supplied mailbox before retiring that work.
-            let (authorized, mut http) = if self.pending_http.is_some() {
-                (true, self.poll_service_http(cx, mailbox))
-            } else {
-                match mailbox.associate_owner(&mut self.http_identity) {
-                    Err(error) => (false, std::task::Poll::Ready(Err(error))),
-                    Ok(_) if matches!(self.control, ControlSlot::Pending(_)) => {
-                        (true, std::task::Poll::Pending)
-                    }
-                    Ok(_) => (true, self.poll_service_http(cx, mailbox)),
-                }
-            };
+            // Return retained outcomes before any next admission. No await can
+            // discard this moved batch: it is returned in this very poll.
+            let mut http_control = self.take_http_control_completion();
             let mut control = None;
-            // Mailbox identity fences mailbox access, never retirement of
-            // independently authenticated, already accepted datagram work.
-            if self.pending_http.is_none()
-                && (!authorized
-                    || matches!(self.control, ControlSlot::Pending(_))
-                    || matches!(http, std::task::Poll::Ready(Ok(HttpService::Idle))))
-            {
-                if matches!(&self.control, ControlSlot::Ready(owner) if owner.has_pending_control())
+            let mut http = std::task::Poll::Pending;
+            if http_control.is_none() {
+                // An owned HTTP continuation precedes ANY incoming mailbox
+                // access. Otherwise alternate actual HTTP intake and accepted
+                // datagram batches. Foreign mailboxes never change arbitration.
+                let accepted = matches!(&self.control, ControlSlot::Ready(owner)
+                    if owner.has_pending_control());
+                let datagram_turn = self.pending_http.is_none()
+                    && (matches!(self.control, ControlSlot::Pending(_))
+                        || (accepted && self.prefer_control));
+                let authorized;
+                if self.pending_http.is_some() {
+                    authorized = true;
+                    http = self.poll_service_http(cx, mailbox);
+                } else {
+                    match mailbox.associate_owner(&mut self.http_identity) {
+                        Err(error) => {
+                            authorized = false;
+                            http = std::task::Poll::Ready(Err(error));
+                        }
+                        Ok(_) => {
+                            authorized = true;
+                            if !datagram_turn {
+                                http = self.poll_service_http(cx, mailbox);
+                            }
+                        }
+                    }
+                }
+                if matches!(http, std::task::Poll::Ready(Ok(HttpService::Replied
+                    | HttpService::ReplyLost | HttpService::Expired))) {
+                    self.prefer_control = true;
+                }
+                // Identity fences mailbox access, never independently accepted
+                // datagram retirement. Idle HTTP also yields its unused turn.
+                if self.pending_http.is_none()
+                    && (datagram_turn || !authorized
+                        || matches!(http, std::task::Poll::Ready(Ok(HttpService::Idle))))
                 {
-                    match self
-                        .bounds(false)
-                        .and_then(|bounds| self.begin_pending_control_at(bounds.latest_ns))
-                    {
-                        Ok(()) => {}
-                        Err(error) => control = Some(Err(error)),
+                    if matches!(&self.control, ControlSlot::Ready(owner) if owner.has_pending_control()) {
+                        match self.bounds(false)
+                            .and_then(|bounds| self.begin_pending_control_at(bounds.latest_ns)) {
+                            Ok(()) => {}
+                            Err(error) => control = Some(Err(error)),
+                        }
+                    }
+                    if let ControlSlot::Pending(pending) = &mut self.control {
+                        if self.stopping { pending.cancel(); }
+                        if authorized { http = std::task::Poll::Pending; }
+                        if let std::task::Poll::Ready(result) = self.poll_pending_control_inner(cx) {
+                            self.prefer_control = false;
+                            control = Some(result);
+                        }
                     }
                 }
-                if let ControlSlot::Pending(pending) = &mut self.control {
-                    if self.stopping {
-                        pending.cancel();
-                    }
-                    if authorized {
-                        http = std::task::Poll::Pending;
-                    }
-                    if let std::task::Poll::Ready(result) = self.poll_pending_control_inner(cx) {
-                        control = Some(result);
-                    }
-                }
+                http_control = self.take_http_control_completion();
             }
-            if control.is_some() || http.is_ready() {
+            if http_control.is_some() || control.is_some() || http.is_ready() {
                 return std::task::Poll::Ready(ServiceTurn {
+                    http_control,
                     control,
                     http: match http {
                         std::task::Poll::Ready(result) => Some(result),
@@ -1798,6 +1846,7 @@ impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBac
             }
             if deadline.as_mut().poll(cx).is_ready() {
                 return std::task::Poll::Ready(ServiceTurn {
+                    http_control: None,
                     control: None,
                     http: None,
                     render: render.take().unwrap(),
@@ -1818,6 +1867,9 @@ impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBac
     ) -> std::task::Poll<Result<HttpService, HttpMailboxError>> {
         use franken_control::fsonos::PreparedSoap;
         use std::task::Poll;
+        if self.http_control_completion.is_some() {
+            return Poll::Pending;
+        }
         // A retained envelope already carries its authorized owner/response
         // custody. Retire that work even when the original mailbox has gone;
         // do not access or consume a replacement mailbox during continuation.
@@ -1910,11 +1962,19 @@ impl<K: SecretStore, S: PollStorage, P: DatagramPort, O: KernelOps, B: DeviceBac
         let command = self.pending_soap.take().unwrap();
         self.pending_http_notifications
             .extend(completion.step.notifications);
-        match self
-            .soap
-            .finish_round(command, completion.step.control, now, &self.session)
-        {
-            PreparedSoap::Ready(control) => {
+        let prepared =
+            self.soap
+                .observe_round(command, &completion.step.control, now, &self.session);
+        self.http_control_completion = Some(HttpControlCompletion {
+            control: completion.step.control,
+            deferred_datagrams: completion.deferred_datagrams,
+        });
+        match prepared {
+            PreparedSoap::Ready(mut control) => {
+                // Older rounds published before finish_soap. Preserve that
+                // order, including per-SID SEQ wrap, without sorting/cloning.
+                self.pending_http_notifications
+                    .append(&mut control.notifications);
                 let request = self.pending_http.take().unwrap();
                 Poll::Ready(Ok(request.complete(OwnedHttpReply {
                     result: Ok(ControlResult {

@@ -1,0 +1,18 @@
+{
+  "scope": "Ten v3 frozen files compared to original receipt entries and current bytes; not full-tree or signed compiler attestation.",
+  "native_job": "30109207290184287",
+  "command": "env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' cargo +1.99.0 test -p franken-control -p franken-speaker --features franken-speaker/journal-process,franken-speaker/harness --locked --offline --no-fail-fast -j1 -- '--test-threads=1' --show-output",
+  "command_sha256": "474b73e05f05160f4e4d2dcf08bf8e6e3a5c61382a92a2ec8392c4e320601619",
+  "command_exit_code": 0,
+  "original_receipt_root": "5a3eecdbd6a2a610bb74dd0df67eb1b076365508c68521df66e8def73cd0fbde",
+  "original_source_content_roots": [
+    "c8a75dfccbce2e60a4a9cd9b5502418df235d727798bf0d4cb9d74e3dbaad658"
+  ],
+  "matched_source_file_count": 10,
+  "terminal_acknowledged": true,
+  "strict_remote": true,
+  "sources_released": true,
+  "tree_retired": true,
+  "pair_released": true,
+  "retired": true
+}

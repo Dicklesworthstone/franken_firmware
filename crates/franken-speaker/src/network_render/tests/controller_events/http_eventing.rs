@@ -978,7 +978,7 @@ fn get_volume_request() -> String {
 }
 
 #[test]
-fn committed_owner_response_after_http_timeout_counts_actual_undelivered_event() {
+fn committed_owner_response_after_http_timeout_delivers_event_independently_of_reply() {
     let DelayedFixture {
         mut owner,
         armed,
@@ -1050,10 +1050,29 @@ fn committed_owner_response_after_http_timeout_counts_actual_undelivered_event()
         server.with_session(|s| (s.state_revision, s.members[TEST_MEMBER].volume_0_to_100)),
         (2, 65)
     );
+    // The lost HTTP observation must not own the only copy of the committed
+    // event. The transport already attempted its 504 before this notification.
+    let (committed_stream, committed) = accept_notification(&listener);
+    assert_notification(&committed, &sid, "1", "65");
+    assert!(committed.contains("<FrankenStateRevision>2</FrankenStateRevision>"));
+    acknowledge_notification(committed_stream);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let report = server.callback_report().unwrap();
+        if report.reconciled() && report.delivered == 2 {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(2));
+    }
+    // Bounded duplicate observation, not a universal exactly-once guarantee.
     no_callback_within(&listener, Duration::from_millis(200));
     let report = server.callback_report().unwrap();
-    assert_eq!(report.offered, 1);
-    assert_eq!(report.delivered, 1);
+    assert_eq!(report.offered, 2);
+    assert_eq!(report.delivered, 2);
+    assert_eq!(report.dropped, 0);
+    assert_eq!(report.abandoned, 0);
+    assert_eq!(report.failed, 0);
     assert_eq!(client.diagnostics().lost_notifications, 1);
     let unsubscribe = event_request("UNSUBSCRIBE", &[("SID", &sid)]);
     let (result, ended) = call_delayed_owner(&mut owner, &mut mailbox, &server, unsubscribe);

@@ -1,0 +1,22 @@
+Original failed attempt (not overwritten)
+Native job: 30109207290184250
+Remote command: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' cargo +1.99.0 test -p franken-speaker --test journal_process --features franken-speaker/journal-process --locked --offline -j1 -- '--test-threads=1' --show-output
+Remote command exit: 101
+
+   Compiling franken-speaker v0.1.0 (<private-path>
+
+running 16 tests
+    Finished `test` profile [unoptimized] target(s) in 2.58s
+     Running tests/journal_process.rs (<private-path>
+
+thread 'accepted_http_retires_after_original_mailbox_drop_without_consuming_replacement' (1852590) has overflowed its stack
+fatal runtime error: stack overflow, aborting
+error: test failed, to rerun pass `-p franken-speaker --test journal_process`
+
+Caused by:
+  process didn't exit successfully: `<private-path> --test-threads=1 --show-output` (signal: 6, SIGABRT: process abort signal)
+
+[W] Worker: trj | Job: j-30109207290184250
+^ Sync: 8.1 MB in 943ms (8.6 MB/s)
+[C] Compile: 5.9s
+Artifacts: skipped

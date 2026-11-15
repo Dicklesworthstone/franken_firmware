@@ -1,0 +1,32 @@
+Command: python3 -B -m unittest discover -s tests/p03 -v
+Scope: runner mechanics, not Rust runtime or device qualification.
+test_actual_bounded_capture_drains_all_bytes_and_exposes_loss (test_run_owner.OwnerRunnerTests.test_actual_bounded_capture_drains_all_bytes_and_exposes_loss) ... ok
+test_conflicting_replayed_and_wrong_count_falsifiers (test_run_owner.OwnerRunnerTests.test_conflicting_replayed_and_wrong_count_falsifiers) ... FAIL
+test_early_identity_is_visible_before_python_child_exit (test_run_owner.OwnerRunnerTests.test_early_identity_is_visible_before_python_child_exit) ... $PYTHON/lib/python3.15/subprocess.py:1313: ResourceWarning: subprocess 92231 is still running
+  _warn("subprocess %s is still running" % self.pid,
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_interleaved_stderr_metadata_does_not_end_stdout_block (test_run_owner.OwnerRunnerTests.test_interleaved_stderr_metadata_does_not_end_stdout_block) ... ok
+test_missing_malformed_conflicting_and_unbound_receipts (test_run_owner.OwnerRunnerTests.test_missing_malformed_conflicting_and_unbound_receipts) ... ok
+test_mutated_nested_digest_with_recomputed_outer_is_rejected (test_run_owner.OwnerRunnerTests.test_mutated_nested_digest_with_recomputed_outer_is_rejected) ... ok
+test_real_python_exit_and_timeout_are_never_passes (test_run_owner.OwnerRunnerTests.test_real_python_exit_and_timeout_are_never_passes) ... $PYTHON/lib/python3.15/subprocess.py:1313: ResourceWarning: subprocess 92606 is still running
+  _warn("subprocess %s is still running" % self.pid,
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_remote_command_and_positive_full_surface (test_run_owner.OwnerRunnerTests.test_remote_command_and_positive_full_surface) ... ok
+test_required_positive_and_every_missing_case (test_run_owner.OwnerRunnerTests.test_required_positive_and_every_missing_case) ... ok
+test_zero_tests_failure_timeout_and_missing_terminal (test_run_owner.OwnerRunnerTests.test_zero_tests_failure_timeout_and_missing_terminal) ... ok
+
+======================================================================
+FAIL: test_conflicting_replayed_and_wrong_count_falsifiers (test_run_owner.OwnerRunnerTests.test_conflicting_replayed_and_wrong_count_falsifiers)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$PROJECT/tests/p03/test_run_owner.py", line 108, in test_conflicting_replayed_and_wrong_count_falsifiers
+    self.assertNotEqual(self.judge(bad)["status"], "passed")
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' == 'passed'
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.657s
+
+FAILED (failures=1)

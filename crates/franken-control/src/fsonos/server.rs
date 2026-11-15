@@ -733,19 +733,31 @@ impl Endpoint {
         }
     }
 
-    /// Consume an actual durable round. No success is fabricated for pending
-    /// commands, withheld effects, or a terminal journal failure.
+    /// Complete a durable round with the original consuming API.
     pub fn finish_round(
         &mut self,
-        mut pending: DeferredSoap,
+        pending: DeferredSoap,
         result: Result<Vec<Settlement>, crate::channel::pipeline::PendingStepFailure>,
+        now_ns: u64,
+        session: &UnifiedGroupSession,
+    ) -> PreparedSoap {
+        self.observe_round(pending, &result, now_ns, session)
+    }
+
+    /// Observe an actual durable round while its owner retains independent
+    /// settlement custody. No success is fabricated for pending
+    /// commands, withheld effects, or a terminal journal failure.
+    pub fn observe_round(
+        &mut self,
+        mut pending: DeferredSoap,
+        result: &Result<Vec<Settlement>, crate::channel::pipeline::PendingStepFailure>,
         now_ns: u64,
         session: &UnifiedGroupSession,
     ) -> PreparedSoap {
         let (settled, failed) = match result {
             Ok(settled) => (settled, false),
             Err(crate::channel::pipeline::PendingStepFailure::Storage(failed)) => {
-                (failed.applied, true)
+                (&failed.applied, true)
             }
             Err(crate::channel::pipeline::PendingStepFailure::FenceChanged { applied, .. }) => {
                 (applied, true)
@@ -754,9 +766,9 @@ impl Endpoint {
         let mut found = None;
         for item in settled {
             if item.peer == pending.peer && item.seq == pending.seq {
-                found = Some(item.outcome);
+                found = Some(item.outcome.clone());
             } else {
-                pending.settled_others.push(item);
+                pending.settled_others.push(item.clone());
             }
         }
         pending.rounds_left = pending.rounds_left.saturating_sub(1);

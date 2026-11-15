@@ -1,0 +1,18 @@
+{
+  "scope": "Ten v3 frozen implementation/test files matched original RCH receipt entries; not full-tree or signed compiler attestation.",
+  "native_job": "30109207290184286",
+  "command": "env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' cargo +1.99.0 test -p franken-speaker --lib --features harness,journal-process --locked --offline -j1 -- committed_owner_response_after_http_timeout_delivers_event_independently_of_reply '--test-threads=1' --show-output",
+  "command_sha256": "481c3fc4800a6462cc7666890536ad6f1ba8633303729d2665a709d2faeaff9a",
+  "command_exit_code": 0,
+  "original_receipt_root": "c85b607809ce739d12956c9b2e71dd609db46b929d3e225675512cf741fda198",
+  "original_source_content_roots": [
+    "392eefede9436fabdbf9f329f50add501930b243e2750b29f6d447110cc1d626"
+  ],
+  "matched_source_file_count": 10,
+  "terminal_acknowledged": true,
+  "strict_remote": true,
+  "sources_released": true,
+  "tree_retired": true,
+  "pair_released": true,
+  "retired": true
+}

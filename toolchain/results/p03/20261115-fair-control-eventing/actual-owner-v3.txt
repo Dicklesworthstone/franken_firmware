@@ -1,0 +1,34 @@
+Scope: offline native host only, v3 ten frozen files
+Remote command: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' cargo +1.99.0 test -p franken-speaker --lib --features harness,journal-process --locked --offline -j1 -- committed_owner_response_after_http_timeout_delivers_event_independently_of_reply '--test-threads=1' --show-output
+Native job: 30109207290184286
+Command and delivery exit: 0
+Terminal ACK and source/tree/pair retirement: verified
+Original source receipt: c85b607809ce739d12956c9b2e71dd609db46b929d3e225675512cf741fda198
+
+
+
+   Compiling franken-speaker v0.1.0 (<private-path>
+    Finished `test` profile [unoptimized] target(s) in 27.33s
+
+running 1 test
+     Running unittests src/lib.rs (<private-path>
+test network_render::tests::controller_events::http_eventing::committed_owner_response_after_http_timeout_delivers_event_independently_of_reply ... ok
+
+successes:
+
+successes:
+    network_render::tests::controller_events::http_eventing::committed_owner_response_after_http_timeout_delivers_event_independently_of_reply
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 736 filtered out; finished in 1.45s
+
+[W] Worker: <worker> | Job: j-30109207290184286
+^ Sync: 8.1 MB in 2.8s (2.9 MB/s)
+[C] Compile: 32.1s
+v Artifacts: 43 B in 1.8s (24 B/s)
++-------------- [OK] Build Successful --------------+
+| Duration: 32.1s (^ 146% slower vs previous 13.1s) |
+| Artifacts: 0 files (43 B)                         |
+| Worker: <worker>                                |
+| Cache: MISS (warming cache)                       |
+| Time: 2026-11-15 05:15:01                         |
++---------------------------------------------------+

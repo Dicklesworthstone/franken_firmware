@@ -1,0 +1,223 @@
+Original failed attempt (not overwritten)
+Native job: 30109207290184271
+Remote command: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' cargo +1.99.0 test -p franken-speaker --lib --features harness,journal-process --locked --offline -j1 -- fsonos_loopback callback_report_contention_refuses_event '--test-threads=1' --show-output
+Remote command exit: 101
+
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling libc v0.2.191
+   Compiling cfg-if v1.0.5
+   Compiling typenum v1.20.1
+   Compiling syn v2.0.119
+   Compiling getrandom v0.4.3
+   Compiling hybrid-array v0.4.15
+   Compiling rand_core v0.10.1
+   Compiling zeroize_derive v1.5.0
+   Compiling zeroize v1.9.1
+   Compiling crypto-common v0.2.2
+   Compiling cmov v0.5.4
+   Compiling ctutils v0.4.8
+   Compiling block-buffer v0.12.1
+   Compiling syn v3.0.10
+   Compiling serde_core v1.0.229
+   Compiling autocfg v1.5.1
+   Compiling cpufeatures v0.3.1
+   Compiling serde v1.0.229
+   Compiling serde_derive v1.0.229
+   Compiling num-traits v0.2.19
+   Compiling zmij v1.0.23
+   Compiling bitflags v2.13.2
+   Compiling const-oid v0.10.3
+   Compiling serde_json v1.0.154
+   Compiling memchr v2.8.3
+   Compiling digest v0.11.3
+   Compiling version_check v0.9.5
+   Compiling itoa v1.0.19
+   Compiling generic-array v0.14.7
+   Compiling smallvec v1.16.5
+   Compiling thiserror v2.0.21
+   Compiling thiserror-impl v2.0.21
+   Compiling log v0.4.35
+   Compiling sha2 v0.11.1
+   Compiling hex v0.4.3
+   Compiling num-complex v0.4.6
+   Compiling bytemuck v1.25.2
+   Compiling lazy_static v1.5.1
+   Compiling symphonia-core v0.6.1
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling franken-board-profile v0.1.0 (<private-path>
+   Compiling inout v0.2.6
+   Compiling regex-lite v0.1.9
+   Compiling symphonia-metadata v0.6.1
+   Compiling base64ct v1.8.3
+   Compiling semver v1.0.28
+   Compiling zerocopy v0.8.63
+   Compiling rustc_version v0.4.1
+   Compiling pem-rfc7468 v0.7.0
+   Compiling symphonia-common v0.6.1
+   Compiling cipher v0.5.2
+   Compiling universal-hash v0.6.1
+   Compiling getrandom v0.2.17
+   Compiling const-oid v0.9.6
+   Compiling rustix v1.1.6
+   Compiling der v0.7.10
+   Compiling rand_core v0.6.4
+   Compiling curve25519-dalek v4.1.3
+   Compiling signature v2.2.0
+   Compiling hmac v0.13.0
+   Compiling anyhow v1.0.104
+   Compiling rustversion v1.0.23
+   Compiling linux-raw-sys v0.12.1
+   Compiling cpubits v0.1.1
+   Compiling cpufeatures v0.2.17
+   Compiling ppv-lite86 v0.2.21
+   Compiling spki v0.7.3
+   Compiling memoffset v0.9.1
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling crossbeam-utils v0.8.23
+   Compiling cfg_aliases v0.2.2
+   Compiling either v1.19.0
+   Compiling parking_lot_core v0.9.12
+   Compiling subtle v2.6.1
+   Compiling itertools v0.15.0
+   Compiling nix v0.31.3
+   Compiling pkcs8 v0.10.2
+   Compiling rand_chacha v0.3.1
+   Compiling sha2 v0.10.9
+   Compiling polyval v0.7.3
+   Compiling ed25519 v2.2.3
+   Compiling aead v0.6.1
+   Compiling errno v0.3.15
+   Compiling bincode-next v3.1.2
+   Compiling signal-hook v0.4.6
+   Compiling portable-atomic v1.15.0
+   Compiling scopeguard v1.2.0
+   Compiling fastrand v2.5.0
+   Compiling virtue-next v0.1.3
+   Compiling crc32fast v1.5.5
+   Compiling bincode_derive-next v3.1.2
+   Compiling lock_api v0.4.14
+   Compiling signal-hook-registry v1.4.8
+   Compiling ed25519-dalek v2.2.0
+   Compiling ghash v0.6.0
+   Compiling rapidhash v4.5.1
+   Compiling prost-derive v0.14.6
+   Compiling rand v0.8.8
+   Compiling signatory v0.27.1
+   Compiling aes v0.9.4
+   Compiling poly1305 v0.9.1
+   Compiling ctr v0.10.1
+   Compiling chacha20 v0.10.2
+   Compiling symphonia-codec-vorbis v0.6.1
+   Compiling symphonia-codec-alac v0.6.1
+   Compiling symphonia-format-ogg v0.6.1
+   Compiling symphonia-codec-aac v0.6.1
+   Compiling symphonia-bundle-mp3 v0.6.1
+   Compiling franken-evidence v0.6.0 (https://github.com/Dicklesworthstone/asupersync?rev=36141e21fd2b47cf931e4c131949dfb1b764875e#36141e21)
+   Compiling rmp v0.8.15
+   Compiling franken-kernel v0.6.0 (https://github.com/Dicklesworthstone/asupersync?rev=36141e21fd2b47cf931e4c131949dfb1b764875e#36141e21)
+   Compiling pin-project-internal v1.1.13
+   Compiling once_cell v1.21.4
+   Compiling tinyvec v1.13.3
+   Compiling allocator-api2 v0.2.21
+   Compiling futures-core v0.3.34
+   Compiling pin-project-lite v0.2.17
+   Compiling data-encoding v2.11.1
+   Compiling pastey v0.2.3
+   Compiling asupersync v0.6.2 (https://github.com/Dicklesworthstone/asupersync?rev=36141e21fd2b47cf931e4c131949dfb1b764875e#36141e21)
+   Compiling parking v2.2.1
+   Compiling futures-io v0.3.34
+   Compiling unty-next v0.1.2
+   Compiling foldhash v0.2.0
+   Compiling equivalent v1.0.3
+   Compiling franken-atomic v0.1.0 (<private-path>
+   Compiling bytes v1.12.1
+   Compiling prost v0.14.6
+   Compiling franken-platform v0.1.0 (<private-path>
+   Compiling hashbrown v0.17.1
+   Compiling futures-lite v2.6.1
+   Compiling nkeys v0.4.5
+   Compiling unicode-normalization v0.1.26
+   Compiling tempfile v3.27.0
+   Compiling pin-project v1.1.13
+   Compiling franken-decision v0.6.0 (https://github.com/Dicklesworthstone/asupersync?rev=36141e21fd2b47cf931e4c131949dfb1b764875e#36141e21)
+   Compiling rmp-serde v1.3.1
+   Compiling symphonia v0.6.1
+   Compiling chacha20poly1305 v0.11.0
+   Compiling aes-gcm v0.11.1
+   Compiling parking_lot v0.12.5
+   Compiling crossbeam-queue v0.3.14
+   Compiling xattr v1.7.0
+   Compiling polling v3.11.0
+   Compiling franken-clock v0.1.0 (<private-path>
+   Compiling franken-dsp v0.1.0 (<private-path>
+   Compiling franken-session v0.1.0 (<private-path>
+   Compiling sha1 v0.11.0
+   Compiling sysinfo v0.39.6
+   Compiling socket2 v0.6.5
+   Compiling slab v0.4.12
+   Compiling franken-journal v0.1.0 (<private-path>
+   Compiling base64 v0.23.1
+   Compiling franken-control v0.1.0 (<private-path>
+   Compiling franken-stream v0.1.0 (<private-path>
+   Compiling franken-codec v0.1.0 (<private-path>
+   Compiling franken-platform-linux v0.1.0 (<private-path>
+   Compiling franken-hal v0.1.0 (<private-path>
+   Compiling franken-test-support v0.1.0 (<private-path>
+   Compiling franken-speaker v0.1.0 (<private-path>
+error[E0624]: associated function `empty` is private
+    --> crates/franken-speaker/src/render.rs:3476:49
+     |
+3476 |                         response: HttpResponse::empty(200),
+     |                                                 ^^^^^ private associated function
+     |
+    ::: crates/franken-control/src/fsonos/server.rs:149:5
+     |
+ 149 |     fn empty(status: u16) -> Self {
+     |     ----------------------------- private associated function defined here
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u32>::fetch_update`: renamed to `try_update` for consistency
+   --> crates/franken-speaker/src/fsonos_loopback/callback.rs:299:50
+    |
+299 |                 let _ = self.admission_contended.fetch_update(
+    |                                                  ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+299 -                 let _ = self.admission_contended.fetch_update(
+299 +                 let _ = self.admission_contended.try_update(
+    |
+
+error[E0308]: mismatched types
+   --> crates/franken-speaker/src/fsonos_loopback/callback/tests.rs:844:37
+    |
+844 |         late_offerer.queue.try_send(Vec::new()),
+    |                            -------- ^^^^^^^^^^ expected `DeliveryJob`, found `Vec<_>`
+    |                            |
+    |                            arguments to this method are incorrect
+    |
+    = note: expected struct `DeliveryJob`
+               found struct `Vec<_>`
+help: the return type of this call is `Vec<_>` due to the type of the argument passed
+   --> crates/franken-speaker/src/fsonos_loopback/callback/tests.rs:844:9
+    |
+844 |         late_offerer.queue.try_send(Vec::new()),
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^----------^
+    |                                     |
+    |                                     this argument influences the return type of `try_send`
+note: method defined here
+   --> /rustc/b940084d7eb6a299eb4bfeb8e34901bc051e7ac4/library/std/src/sync/mpsc.rs:767:11
+
+Some errors have detailed explanations: E0308, E0624.
+For more information about an error, try `rustc --explain E0308`.
+warning: `franken-speaker` (lib test) generated 1 warning
+error: could not compile `franken-speaker` (lib test) due to 2 previous errors; 1 warning emitted
+
+[W] Worker: <worker> | Job: j-30109207290184271
+^ Sync: 8.1 MB in 3.2s (2.6 MB/s)
+[C] Compile: 450.3s
+Artifacts: skipped

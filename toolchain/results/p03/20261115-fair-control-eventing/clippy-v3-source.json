@@ -1,0 +1,18 @@
+{
+  "scope": "Ten v3 frozen implementation/test files matched original RCH receipt entries; not full-tree or signed compiler attestation.",
+  "native_job": "30109207290184285",
+  "command": "env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_DEV_DEBUG=0' cargo +1.99.0 clippy --workspace --all-targets --features franken-speaker/journal-process,franken-speaker/harness --locked --offline -j1 -- -D warnings",
+  "command_sha256": "99e1d8b00225ea36c12e1030ef0c13f4bbfa36daec7cb93905b55a6ec1a4d6be",
+  "command_exit_code": 0,
+  "original_receipt_root": "f20166a53518b510f87cb17b8e29286379fc191458f12f218459e605bc0b8315",
+  "original_source_content_roots": [
+    "3ecb557c39d6454c5abf3137f129c8a75de5072b1492430ecee85588a4339e6e"
+  ],
+  "matched_source_file_count": 10,
+  "terminal_acknowledged": true,
+  "strict_remote": true,
+  "sources_released": true,
+  "tree_retired": true,
+  "pair_released": true,
+  "retired": true
+}

@@ -1,0 +1,78 @@
+Original failed attempt (not overwritten)
+Native job: 30109207290184266
+Remote command: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' cargo +1.99.0 test -p franken-speaker --test journal_process --features franken-speaker/journal-process --locked --offline -j1 -- '--test-threads=1' --show-output
+Remote command exit: 101
+
+   Compiling franken-speaker v0.1.0 (<private-path>
+
+running 16 tests
+test accepted_http_retires_after_original_mailbox_drop_without_consuming_replacement ... ok
+test actual_cancelled_child_request_retains_custody_and_quiesces_before_recovery ... ok
+test actual_child_death_fails_closed_without_publishing_or_losing_custody ... ok
+test actual_stalled_child_yields_and_reactor_wakes_commit_before_file_reopen ... ok
+    Finished `test` profile [unoptimized] target(s) in 2.56s
+     Running tests/journal_process.rs (<private-path>
+test expired_http_observer_retains_journal_until_ack_and_allows_successor ... ok
+test local_stop_during_real_child_pending_commit_prevents_live_delta ... ok
+test lost_http_observer_releases_admission_after_real_commit_and_allows_successor ... ok
+test normal_http_route_uses_real_pollable_journal_and_services_stop ... ok
+test normal_owner_turn_drains_authenticated_datagrams_with_real_child_and_stop_fence ... ok
+test owner_turn_reports_hal_stop_failure_without_losing_pending_journal ... ok
+test pending_child_operation_rebinds_from_idle_runtime_a_to_runtime_b ... ok
+test provisioned_owner_commits_relative_command_through_real_child ... ok
+test settled_owner::actual_child_get_and_signed_datagrams_take_bounded_alternating_turns ... ok
+test settled_owner::actual_child_mixed_soap_batch_retains_datagram_after_observer_loss ... FAILED
+error: test failed, to rerun pass `-p franken-speaker --test journal_process`
+test settled_owner_real_child_commit_and_stop_drain_custody_handoff ... ok
+test startup_failure_returns_the_spawned_child_for_explicit_reaping ... ok
+
+successes:
+
+---- actual_stalled_child_yields_and_reactor_wakes_commit_before_file_reopen stdout ----
+journal parent poll elapsed_us=9
+journal parent poll elapsed_us=47
+journal parent poll elapsed_us=9
+journal parent poll elapsed_us=2
+
+---- pending_child_operation_rebinds_from_idle_runtime_a_to_runtime_b stdout ----
+journal parent poll elapsed_us=10
+journal parent poll elapsed_us=49
+journal parent poll elapsed_us=10
+journal parent poll elapsed_us=2
+
+successes:
+    accepted_http_retires_after_original_mailbox_drop_without_consuming_replacement
+    actual_cancelled_child_request_retains_custody_and_quiesces_before_recovery
+    actual_child_death_fails_closed_without_publishing_or_losing_custody
+    actual_stalled_child_yields_and_reactor_wakes_commit_before_file_reopen
+    expired_http_observer_retains_journal_until_ack_and_allows_successor
+    local_stop_during_real_child_pending_commit_prevents_live_delta
+    lost_http_observer_releases_admission_after_real_commit_and_allows_successor
+    normal_http_route_uses_real_pollable_journal_and_services_stop
+    normal_owner_turn_drains_authenticated_datagrams_with_real_child_and_stop_fence
+    owner_turn_reports_hal_stop_failure_without_losing_pending_journal
+    pending_child_operation_rebinds_from_idle_runtime_a_to_runtime_b
+    provisioned_owner_commits_relative_command_through_real_child
+    settled_owner::actual_child_get_and_signed_datagrams_take_bounded_alternating_turns
+    settled_owner_real_child_commit_and_stop_drain_custody_handoff
+    startup_failure_returns_the_spawned_child_for_explicit_reaping
+
+failures:
+
+---- settled_owner::actual_child_mixed_soap_batch_retains_datagram_after_observer_loss stdout ----
+
+thread 'settled_owner::actual_child_mixed_soap_batch_retains_datagram_after_observer_loss' (2000938) panicked at crates/franken-speaker/tests/journal_process/settled_owner.rs:889:13:
+assertion `left == right` failed
+  left: 500
+ right: 200
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+failures:
+    settled_owner::actual_child_mixed_soap_batch_retains_datagram_after_observer_loss
+
+test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.68s
+
+[W] Worker: trj | Job: j-30109207290184266
+^ Sync: 8.1 MB in 1.0s (7.9 MB/s)
+[C] Compile: 6.3s
+Artifacts: skipped

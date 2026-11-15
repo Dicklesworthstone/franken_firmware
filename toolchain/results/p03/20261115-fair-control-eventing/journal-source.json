@@ -1,0 +1,18 @@
+{
+  "scope": "Nine frozen implementation files matched original RCH receipt entries, not full-tree or signed compiler attestation.",
+  "native_job": "30109207290184276",
+  "command": "env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' cargo +1.99.0 test -p franken-speaker --test journal_process --features franken-speaker/journal-process,franken-speaker/harness --locked --offline -j1 -- '--test-threads=1' --show-output",
+  "command_sha256": "31bd04afcdfd70e096f88c1087fdb9661a01919b60a8bb4e9f915f4faf5a81d2",
+  "command_exit_code": 0,
+  "original_receipt_root": "5d4e627d04db3a72ea5cd8f08a7de8b89142dcbf431b5a866b84921fa1c1da45",
+  "original_source_content_roots": [
+    "6233961180a3558ac1e53d23e16be77794b124051aef6dd4a4b7a13c82ae2a84"
+  ],
+  "matched_source_file_count": 9,
+  "terminal_acknowledged": true,
+  "strict_remote": true,
+  "sources_released": true,
+  "tree_retired": true,
+  "pair_released": true,
+  "retired": true
+}

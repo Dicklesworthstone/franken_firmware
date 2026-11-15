@@ -52,7 +52,7 @@ use franken_session::{
 use crate::control_adapter::ControlPlane;
 use crate::settled_http::{AttachedHttpMailboxClient, HttpMailboxClient, HttpMailboxError};
 
-mod callback;
+pub(crate) mod callback;
 mod discovery;
 mod incarnation;
 
@@ -306,6 +306,10 @@ pub trait HttpControl {
 
     fn directory_mut(&mut self) -> &mut Directory;
 
+    /// Called after the actual response write attempt, including failed writes
+    /// and timeout replies. It releases any response-before-NOTIFY fence.
+    fn response_finished(&mut self) {}
+
     /// Whether this worker may configure discovery and event-delivery extras.
     /// A mailbox-owned endpoint must be configured at its actual owner instead.
     fn supports_extras(&self) -> bool {
@@ -393,6 +397,8 @@ pub fn mailbox_control(client: HttpMailboxClient) -> Box<dyn HttpControl> {
         directory: Directory::default(),
         eventing_opt_in: false,
         attachment: None,
+        event_outbox: None,
+        response_fence: None,
     })
 }
 
@@ -407,14 +413,18 @@ pub fn mailbox_control(client: HttpMailboxClient) -> Box<dyn HttpControl> {
 /// owner calls `SettledRender::release_http_eventing` to invalidate old SIDs.
 ///
 /// This carries HTTP-produced notifications only. Other owner methods return
-/// caller-owned vectors. Replies abandoned before consumption count their
-/// actual notification losses; those events are not retried or delivered.
+/// caller-owned vectors. HTTP-produced notifications go directly from the
+/// owner into the bounded callback queue, behind the response-write fence.
+/// Reply-observation losses and callback delivery accounting are independent;
+/// callback failures are counted and are not retried.
 pub fn mailbox_eventing_control(client: HttpMailboxClient) -> Box<dyn HttpControl> {
     Box::new(MailboxControl {
         client,
         directory: Directory::default(),
         eventing_opt_in: true,
         attachment: None,
+        event_outbox: None,
+        response_fence: None,
     })
 }
 
@@ -425,6 +435,8 @@ struct MailboxControl {
     directory: Directory,
     eventing_opt_in: bool,
     attachment: Option<AttachedHttpMailboxClient>,
+    event_outbox: Option<callback::Outbox>,
+    response_fence: Option<Arc<AtomicBool>>,
 }
 
 impl HttpControl for MailboxControl {
@@ -456,7 +468,21 @@ impl HttpControl for MailboxControl {
             return refusal;
         }
         let submitted = match &self.attachment {
-            Some(attached) => attached.submit(request),
+            Some(attached) => {
+                if self.response_fence.is_some() {
+                    return mailbox_fault(503, false);
+                }
+                let fence = Arc::new(AtomicBool::new(false));
+                self.response_fence = Some(Arc::clone(&fence));
+                attached.submit_with_delivery(
+                    request,
+                    self.event_outbox
+                        .as_ref()
+                        .expect("attached delivery")
+                        .clone(),
+                    fence,
+                )
+            }
             None => self.client.submit(request),
         };
         let reply = match submitted.and_then(|pending| pending.wait()) {
@@ -481,10 +507,23 @@ impl HttpControl for MailboxControl {
                 // failed. Preserve its real response instead of inviting a
                 // relative retry by rewriting a committed result as a fault.
                 let mut handled = result.control;
-                handled.notifications.extend(result.notifications);
+                if self.attachment.is_some() {
+                    // Already offered exactly once by the actual owner, behind
+                    // this response's fence. Do not dispatch these observations
+                    // a second time through Worker::offer.
+                    handled.notifications.clear();
+                } else {
+                    handled.notifications.extend(result.notifications);
+                }
                 handled
             }
             Err(_) => mailbox_fault(500, false),
+        }
+    }
+
+    fn response_finished(&mut self) {
+        if let Some(fence) = self.response_fence.take() {
+            fence.store(true, Ordering::Release);
         }
     }
 
@@ -503,12 +542,21 @@ impl HttpControl for MailboxControl {
         if !self.eventing_opt_in || self.attachment.is_some() {
             return Err("control owner does not admit transport-local extras".into());
         }
+        self.event_outbox = Some(delivery._outbox.clone());
         self.attachment = Some(
             self.client
                 .attach_eventing(delivery._outbox.terminal_fence())
                 .map_err(|_| "owner eventing attachment is unavailable".to_string())?,
         );
         Ok(())
+    }
+}
+
+impl Drop for MailboxControl {
+    fn drop(&mut self) {
+        // Transport termination is a completed/aborted response attempt, never
+        // proof the peer received it. The delivery worker still owns accounting.
+        self.response_finished();
     }
 }
 
@@ -1283,6 +1331,7 @@ impl Worker {
         };
         // Events go out after the answer, never before it: a controller learns its SID from the SUBSCRIBE answer first. They are
         // the core's, so they are offered whatever became of the write; the delivery thread does the sending, off this path.
+        self.plane.response_finished();
         self.offer(&handled.notifications);
         outcome
     }
@@ -1311,6 +1360,7 @@ impl Worker {
             self.plane
                 .handle_request(&mut session, self.now_ns, &request)
         };
+        self.plane.response_finished();
         self.offer(&handled.notifications);
         let response = &handled.response;
         if response.status != 200 {

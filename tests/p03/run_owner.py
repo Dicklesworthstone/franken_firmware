@@ -34,6 +34,9 @@ REQUIRED = (
     "normal_http_route_uses_real_pollable_journal_and_services_stop",
     "accepted_http_retires_after_original_mailbox_drop_without_consuming_replacement",
     "normal_owner_turn_drains_authenticated_datagrams_with_real_child_and_stop_fence",
+    "settled_owner::actual_child_get_and_signed_datagrams_take_bounded_alternating_turns",
+    "settled_owner::actual_child_mixed_soap_batch_retains_datagram_after_observer_loss",
+    "settled_owner::actual_child_mixed_stale_relative_soap_preserves_refusal_and_one_delta",
 )
 
 

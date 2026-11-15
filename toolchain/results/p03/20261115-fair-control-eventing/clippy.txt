@@ -1,0 +1,43 @@
+Scope: offline native host only
+Remote command: env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_DEV_DEBUG=0' cargo +1.99.0 clippy --workspace --all-targets --features franken-speaker/journal-process,franken-speaker/harness --locked --offline -j1 -- -D warnings
+Native job: 30109207290184277
+Remote delivery exit: 0
+Command exit: 0
+Terminal ACK: True
+Source receipt: 5337fb609374ffc881425622e67325be5eeaacc83f55052e5444b9322ef54187
+Nine frozen implementation inputs matched; source/tree/pair custody retired.
+
+    Checking franken-speaker v0.1.0 (<private-path>
+    Checking franken-alloc-probe v0.1.0 (<private-path>
+   Compiling curve25519-dalek v5.0.0
+    Checking signature v3.0.0
+    Checking ed25519 v3.0.0
+    Checking ed25519-dalek v3.0.0
+    Checking franken-baseline v0.1.0 (<private-path>
+    Checking franken-update v0.1.0 (<private-path>
+    Checking franken-platform-linux v0.1.0 (<private-path>
+    Checking franken-platform v0.1.0 (<private-path>
+    Checking franken-control v0.1.0 (<private-path>
+    Checking franken-session v0.1.0 (<private-path>
+    Checking franken-codec v0.1.0 (<private-path>
+    Checking franken-stream v0.1.0 (<private-path>
+    Checking franken-journal v0.1.0 (<private-path>
+    Checking franken-clock v0.1.0 (<private-path>
+    Checking franken-dsp v0.1.0 (<private-path>
+    Checking franken-hal v0.1.0 (<private-path>
+    Checking franken-board-profile v0.1.0 (<private-path>
+    Checking franken-test-support v0.1.0 (<private-path>
+    Checking franken-atomic v0.1.0 (<private-path>
+    Finished `dev` profile [unoptimized] target(s) in 35.67s
+
+[W] Worker: hz2 | Job: j-30109207290184277
+^ Sync: 8.1 MB in 3.2s (2.5 MB/s)
+[C] Compile: 39.8s
+v Artifacts: 44 B in 1.9s (23 B/s)
++-------------- [OK] Build Successful --------------+
+| Duration: 39.8s (^ 210% slower vs previous 12.8s) |
+| Artifacts: 0 files (44 B)                         |
+| Worker: hz2                                       |
+| Cache: MISS (warming cache)                       |
+| Time: 2026-11-15 05:10:13                         |
++---------------------------------------------------+

@@ -800,6 +800,7 @@ fn orderly_shutdown_closes_queue_before_returning_reconciled_accounting() {
         max_request_bytes: bounds.max_request_bytes,
         queue,
         report: Arc::clone(&report),
+        admission_contended: Arc::new(AtomicU32::new(0)),
         terminal: Arc::new(AtomicBool::new(false)),
     };
     let late_offerer = outbox.clone();
@@ -840,7 +841,10 @@ fn orderly_shutdown_closes_queue_before_returning_reconciled_accounting() {
     // Even direct queue admission can no longer accept anything. The normal
     // late-offer path must count a drop rather than grow the retired queue.
     assert!(matches!(
-        late_offerer.queue.try_send(Vec::new()),
+        late_offerer.queue.try_send(DeliveryJob {
+            request: Vec::new(),
+            response_finished: None,
+        }),
         Err(mpsc::TrySendError::Disconnected(_))
     ));
     late_offerer.offer(&[notification(&url, 3, BODY)]);
@@ -866,6 +870,7 @@ fn orderly_shutdown_serializes_live_offers_with_final_drain_and_disconnect() {
         max_request_bytes: limits().max_request_bytes,
         queue,
         report: Arc::clone(&report),
+        admission_contended: Arc::new(AtomicU32::new(0)),
         terminal: Arc::new(AtomicBool::new(false)),
     };
     outbox.offer(&[notification(&url, 0, BODY), notification(&url, 1, BODY)]);
@@ -937,4 +942,91 @@ fn orderly_shutdown_serializes_live_offers_with_final_drain_and_disconnect() {
     assert!(settled.reconciled());
     drop(settled);
     assert!(matches!(listening.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
+}
+
+#[test]
+fn response_fence_retains_one_bounded_queue_and_preserves_sequence() {
+    let listening = listener();
+    let target = target_of(&listening, "/events");
+    let url = target.url().to_owned();
+    let (mut deliverer, outbox) = Deliverer::start(target, limits()).unwrap();
+    let response = Arc::new(AtomicBool::new(false));
+    outbox.offer_after(&[notification(&url, 0, BODY)], &response);
+    // A later already-released response must not overtake the blocked SID SEQ.
+    outbox.offer(&[notification(&url, 1, BODY)]);
+    assert!(accept_within(&listening, Duration::from_millis(30)).is_none());
+    response.store(true, Ordering::Release);
+    let received = serve(listening, vec![OK, OK]).join().unwrap();
+    assert!(String::from_utf8_lossy(&received[0]).contains("SEQ: 0\r\n"));
+    assert!(String::from_utf8_lossy(&received[1]).contains("SEQ: 1\r\n"));
+    let end = Instant::now() + Duration::from_secs(2);
+    while deliverer.report().delivered != 2 {
+        assert!(Instant::now() < end);
+        thread::sleep(POLL);
+    }
+    deliverer.stop();
+    let report = deliverer.report();
+    assert_eq!(report.offered, 2);
+    assert_eq!(report.delivered, 2);
+    assert!(report.reconciled());
+}
+
+#[test]
+fn stopped_response_fence_counts_abandonment_and_full_queue_refusal() {
+    let listening = listener();
+    let target = target_of(&listening, "/events");
+    let url = target.url().to_owned();
+    let mut bounds = limits();
+    bounds.queue = 1;
+    let (mut deliverer, outbox) = Deliverer::start(target, bounds).unwrap();
+    let response = Arc::new(AtomicBool::new(false));
+    // One in worker plus one queued, at most. The other offers are counted
+    // saturation refusals, never callbacks and never an unbounded backlog.
+    for seq in 0..8 {
+        outbox.offer_after(&[notification(&url, seq, BODY)], &response);
+    }
+    assert!(accept_within(&listening, Duration::from_millis(30)).is_none());
+    deliverer.stop();
+    let report = deliverer.report();
+    assert_eq!(report.offered, 8);
+    assert!((1..=2).contains(&report.queued));
+    assert_eq!(report.delivered, 0);
+    assert_eq!(report.queued, report.abandoned);
+    assert_eq!(report.dropped, 8 - report.queued);
+    assert!(report.reconciled());
+}
+
+#[test]
+fn owner_offer_poisoned_accounting_refuses_and_counter_saturates() {
+    let listening = listener();
+    let target = target_of(&listening, "/events");
+    let url = target.url().to_owned();
+    let (mut delivery, outbox) = Deliverer::start(target, limits()).unwrap();
+    let report = Arc::clone(&outbox.report);
+    assert!(
+        thread::spawn(move || {
+            let _guard = report.lock().unwrap();
+            panic!("deliberately poison accounting, not owner control");
+        })
+        .join()
+        .is_err()
+    );
+    let response = Arc::new(AtomicBool::new(true));
+    outbox.offer_after(&[notification(&url, 0, BODY)], &response);
+    let first = delivery.report();
+    assert_eq!(first.offered, 1);
+    assert_eq!(first.dropped, 1);
+    assert_eq!(first.admission_contended, 1);
+    assert_eq!(first.queued, 0);
+    outbox
+        .admission_contended
+        .store(u32::MAX, Ordering::Relaxed);
+    outbox.offer_after(&[notification(&url, 1, BODY)], &response);
+    delivery.stop();
+    let saturated = delivery.report();
+    assert_eq!(saturated.offered, u32::MAX);
+    assert_eq!(saturated.dropped, u32::MAX);
+    assert_eq!(saturated.admission_contended, u32::MAX);
+    assert!(saturated.reconciled());
+    assert!(accept_within(&listening, Duration::from_millis(20)).is_none());
 }

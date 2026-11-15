@@ -1,0 +1,18 @@
+{
+  "scope": "Nine frozen implementation files matched original RCH receipt entries, not full-tree or signed compiler attestation.",
+  "native_job": "30109207290184278",
+  "command": "env 'CARGO_INCREMENTAL=0' 'CARGO_PROFILE_TEST_DEBUG=0' cargo +1.99.0 test -p franken-speaker --lib --features harness,journal-process --locked --offline -j1 -- fsonos_loopback callback_report_contention_refuses_event settled_http '--test-threads=1' --show-output",
+  "command_sha256": "8180106e8991849ce24a366a8bdb60da038ebb48d7329b8657bda0bb75a4a650",
+  "command_exit_code": 0,
+  "original_receipt_root": "07bbaf00be5c016b43cdc240d7606959e477978f657f01aa70a1b78c51845804",
+  "original_source_content_roots": [
+    "5cf3d0efa82200f3fe7791fef94342e40d85cdb5fd41eddebbe4b0ad756377c7"
+  ],
+  "matched_source_file_count": 9,
+  "terminal_acknowledged": true,
+  "strict_remote": true,
+  "sources_released": true,
+  "tree_retired": true,
+  "pair_released": true,
+  "retired": true
+}

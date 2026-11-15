@@ -3432,6 +3432,96 @@ mod tests {
     }
 
     #[test]
+    fn callback_report_contention_refuses_event_without_blocking_owner_or_stop() {
+        use crate::fsonos_loopback::callback;
+        use crate::settled_http::{
+            HttpMailboxConfig, HttpOwnerIdentity, HttpService, OwnedHttpReply, http_mailbox,
+        };
+        use crate::settled_render::{ControlResult, OwnerError};
+        use franken_control::fsonos::{
+            Handled, HttpRequest, HttpResponse, Ingress, Notification, Service,
+        };
+        use franken_session::UnifiedGroupSession;
+        use std::net::{IpAddr, Ipv4Addr};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+        let (mut renderer, _probe, _) = started();
+        let (mut source, mut timing) = (ToneSource::new(), timing(1, &[], &[]));
+        let report = callback::with_held_report_for_test(|outbox, callback| {
+            let (client, mut mailbox) =
+                http_mailbox(HttpMailboxConfig::new(4096, 8, Duration::from_secs(1)).unwrap())
+                    .unwrap();
+            let attached = client
+                .attach_eventing(Arc::new(AtomicBool::new(false)))
+                .unwrap();
+            let request = HttpRequest {
+                method: "POST",
+                path: "/control",
+                peer_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                ingress: Ingress::LocalLegacy,
+                headers: &[],
+                body: &[],
+            };
+            let response_finished = Arc::new(AtomicBool::new(false));
+            let pending = attached
+                .submit_with_delivery(&request, outbox.clone(), Arc::clone(&response_finished))
+                .unwrap();
+            let mut identity = HttpOwnerIdentity::new();
+            let permit = mailbox.associate_owner(&mut identity).unwrap();
+            let request = mailbox.take_owned(&permit).unwrap().unwrap();
+            let service = request.complete(OwnedHttpReply {
+                result: Ok(ControlResult {
+                    control: Handled {
+                        response: HttpResponse {
+                            status: 200,
+                            headers: Vec::new(),
+                            body: String::new(),
+                        },
+                        notifications: vec![Notification {
+                            sid: "uuid:synthetic-contention".into(),
+                            service: Service::RenderingControl,
+                            callback: callback.into(),
+                            seq: 0,
+                            body: "<e:propertyset/>".into(),
+                        }],
+                        settled_others: Vec::new(),
+                    },
+                    render: Err(OwnerError::Clock),
+                    notifications: Vec::new(),
+                }),
+                session: UnifiedGroupSession::new("synthetic-group", "synthetic-owner", 1),
+            });
+            assert_eq!(service, HttpService::Replied);
+            assert_eq!(
+                pending
+                    .wait()
+                    .unwrap()
+                    .result
+                    .unwrap()
+                    .control
+                    .response
+                    .status,
+                200
+            );
+            response_finished.store(true, Ordering::Release);
+            // Same caller advances actual render Stop while callback accounting
+            // remains held. HAL and sample source are explicit existing fixtures.
+            renderer.control_port().send(Control::Stop).unwrap();
+            renderer.tick(&mut source, &mut timing);
+            assert_eq!(renderer.state(), RenderState::Draining);
+            run_until_stopped(&mut renderer, &mut source, &mut timing);
+            assert_eq!(renderer.state(), RenderState::Stopped);
+        });
+        assert_eq!(report.offered, 1);
+        assert_eq!(report.admission_contended, 1);
+        assert_eq!(report.dropped, 1);
+        assert_eq!(report.queued, 0);
+        assert_eq!(report.delivered, 0);
+        assert!(report.reconciled());
+    }
+
+    #[test]
     fn a_blocked_management_request_cannot_hold_the_render_owners_lock() {
         let (mut l, _probe, _) = started();
         let port = l.control_port();

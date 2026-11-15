@@ -10,7 +10,7 @@ use std::net::IpAddr;
 #[cfg(any(test, feature = "harness"))]
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
@@ -196,7 +196,27 @@ impl Drop for Permit {
     }
 }
 
+#[derive(Default)]
+struct RequestDelivery {
+    #[cfg(any(test, feature = "harness"))]
+    event: Option<(crate::fsonos_loopback::callback::Outbox, Arc<AtomicBool>)>,
+}
+impl RequestDelivery {
+    fn offer(&self, reply: &OwnedHttpReply) {
+        #[cfg(any(test, feature = "harness"))]
+        if let Some((outbox, response)) = &self.event
+            && let Ok(result) = &reply.result
+        {
+            outbox.offer_after(&result.control.notifications, response);
+            outbox.offer_after(&result.notifications, response);
+        }
+        #[cfg(not(any(test, feature = "harness")))]
+        let _ = (self, reply);
+    }
+}
+
 struct Envelope {
+    delivery: RequestDelivery,
     request: OwnedRequest,
     reply: SyncSender<TrackedReply>,
     cancelled: Arc<AtomicBool>,
@@ -220,6 +240,7 @@ impl PendingOwnerRequest {
         self.envelope.expired()
     }
     pub(crate) fn complete(self, reply: OwnedHttpReply) -> HttpService {
+        self.envelope.delivery.offer(&reply);
         let reply = TrackedReply {
             reply: Some(reply),
             shared: Arc::clone(&self.shared),
@@ -361,6 +382,21 @@ pub(crate) struct AttachedHttpMailboxClient {
 
 #[cfg(any(test, feature = "harness"))]
 impl AttachedHttpMailboxClient {
+    pub(crate) fn submit_with_delivery(
+        &self,
+        request: &HttpRequest<'_>,
+        outbox: crate::fsonos_loopback::callback::Outbox,
+        response_finished: Arc<AtomicBool>,
+    ) -> Result<PendingHttp, HttpMailboxError> {
+        self.client.submit_delivery(
+            request,
+            true,
+            RequestDelivery {
+                event: Some((outbox, response_finished)),
+            },
+        )
+    }
+    #[cfg(test)]
     pub(crate) fn submit(
         &self,
         request: &HttpRequest<'_>,
@@ -484,6 +520,15 @@ impl HttpMailboxClient {
         request: &HttpRequest<'_>,
         attached: bool,
     ) -> Result<PendingHttp, HttpMailboxError> {
+        self.submit_delivery(request, attached, RequestDelivery::default())
+    }
+
+    fn submit_delivery(
+        &self,
+        request: &HttpRequest<'_>,
+        attached: bool,
+        delivery: RequestDelivery,
+    ) -> Result<PendingHttp, HttpMailboxError> {
         self.config.validate(request)?;
         if !self.shared.connected.load(Ordering::Acquire) {
             return Err(HttpMailboxError::Disconnected);
@@ -526,6 +571,7 @@ impl HttpMailboxClient {
             return Err(HttpMailboxError::Busy);
         }
         *slot = Some(Envelope {
+            delivery,
             request: owned,
             reply,
             cancelled: Arc::clone(&cancelled),
@@ -544,17 +590,41 @@ impl HttpMailboxClient {
 impl PendingHttp {
     /// Wait only on the HTTP/control transport side, never on the renderer.
     pub fn wait(self) -> Result<OwnedHttpReply, HttpMailboxError> {
-        let remaining = self.deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
+        self.wait_polling(std::thread::sleep)
+    }
+
+    fn wait_polling(
+        self,
+        mut pause: impl FnMut(Duration),
+    ) -> Result<OwnedHttpReply, HttpMailboxError> {
+        // Preserve the initial expiry rule even when a reply is already queued.
+        if self
+            .deadline
+            .saturating_duration_since(Instant::now())
+            .is_zero()
+        {
             return Err(HttpMailboxError::TimeoutOutcomeUnknown);
         }
-        self.reply
-            .recv_timeout(remaining)
-            .map(TrackedReply::consume)
-            .map_err(|error| match error {
-                RecvTimeoutError::Timeout => HttpMailboxError::TimeoutOutcomeUnknown,
-                RecvTimeoutError::Disconnected => HttpMailboxError::Disconnected,
-            })
+        loop {
+            // Rust 1.99 b940084d7: recv_timeout registers a SyncWaker whose
+            // mutex is taken by the owner's try_send. This sole receiver never
+            // registers. Capacity is one, sent once: there is no reused slot
+            // whose consumer could pause between head advance and release.
+            // Like std's timed receive, test readiness before expiry after
+            // entering the wait, so a queued boundary reply is still observed.
+            match self.reply.try_recv() {
+                Ok(reply) => return Ok(reply.consume()),
+                Err(TryRecvError::Disconnected) => return Err(HttpMailboxError::Disconnected),
+                Err(TryRecvError::Empty) => {}
+            }
+            let remaining = self.deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(HttpMailboxError::TimeoutOutcomeUnknown);
+            }
+            // Poll only on the transport thread, capped by the original absolute
+            // deadline. Scheduling can overshoot; no hard timing bound is claimed.
+            pause(remaining.min(Duration::from_millis(1)));
+        }
     }
 }
 
@@ -754,8 +824,10 @@ impl HttpMailboxOwner {
         if envelope.expired() {
             return Ok(HttpService::Expired);
         }
+        let owned = envelope.request.with_view(handler);
+        envelope.delivery.offer(&owned);
         let reply = TrackedReply {
-            reply: Some(envelope.request.with_view(handler)),
+            reply: Some(owned),
             shared: Arc::clone(&self.shared),
         };
         Ok(if envelope.reply.try_send(reply).is_ok() {
@@ -1540,5 +1612,100 @@ mod tests {
         assert_eq!(accepted + busy, ATTEMPTS);
         assert_eq!(busy, 0, "idle owner polling must not cause a false Busy");
         assert_eq!(serviced.unwrap(), accepted);
+    }
+
+    #[test]
+    fn paused_reply_observer_does_not_hold_owner_completion_or_capacity() {
+        let (client, mut mailbox) = http_mailbox(config()).unwrap();
+        let pending = client.submit(&request()).unwrap();
+        let mut identity = HttpOwnerIdentity::new();
+        let permit = mailbox.associate_owner(&mut identity).unwrap();
+        let accepted = mailbox.take_owned(&permit).unwrap().unwrap();
+        let (paused_tx, paused_rx) = mpsc::sync_channel(1);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+        let observer = std::thread::spawn(move || {
+            pending.wait_polling(|duration| {
+                assert!(duration <= Duration::from_millis(1));
+                paused_tx.send(()).unwrap();
+                resume_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            })
+        });
+        paused_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        // Actual one-shot reply path. The receiver is deliberately paused
+        // after an empty poll; no internal standard-library lock is mocked.
+        assert_eq!(
+            accepted.complete(reply_with_notifications()),
+            HttpService::Replied
+        );
+        let successor = client
+            .submit(&request())
+            .expect("owner released capacity before observer resumed");
+        assert_eq!(client.diagnostics(), HttpMailboxDiagnostics::default());
+        resume_tx.send(()).unwrap();
+        let response = observer.join().unwrap().unwrap();
+        assert_eq!(response.result.unwrap().control.response.status, 200);
+        let next = mailbox.take_owned(&permit).unwrap().unwrap();
+        assert_eq!(next.complete(reply()), HttpService::Replied);
+        assert!(successor.wait().is_ok());
+        assert_eq!(client.diagnostics(), HttpMailboxDiagnostics::default());
+    }
+
+    #[test]
+    fn polling_keeps_initial_expiry_and_in_wait_ready_before_deadline_edge() {
+        let (client, mut owner) = http_mailbox(config()).unwrap();
+        let mut initially_expired = client.submit(&request()).unwrap();
+        assert_eq!(
+            owner.service_one(|_| reply_with_notifications()),
+            Ok(HttpService::Replied)
+        );
+        initially_expired.deadline = Instant::now();
+        assert!(matches!(
+            initially_expired.wait(),
+            Err(HttpMailboxError::TimeoutOutcomeUnknown)
+        ));
+        assert_eq!(
+            client.diagnostics(),
+            HttpMailboxDiagnostics {
+                lost_replies: 1,
+                lost_notifications: 3
+            }
+        );
+
+        let mut pending = client.submit(&request()).unwrap();
+        pending.deadline = Instant::now() + Duration::from_millis(20);
+        let deadline = pending.deadline;
+        let response = pending
+            .wait_polling(|duration| {
+                assert!(duration <= Duration::from_millis(1));
+                assert_eq!(owner.service_one(|_| reply()), Ok(HttpService::Replied));
+                std::thread::sleep(
+                    deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(1),
+                );
+            })
+            .unwrap();
+        assert_eq!(response.result.unwrap().control.response.status, 200);
+        assert_eq!(client.diagnostics().lost_replies, 1);
+
+        let mut empty = client.submit(&request()).unwrap();
+        empty.deadline = Instant::now() + Duration::from_millis(20);
+        let deadline = empty.deadline;
+        assert!(matches!(
+            empty.wait_polling(|duration| {
+                assert!(duration <= Duration::from_millis(1));
+                std::thread::sleep(
+                    deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(1),
+                );
+            }),
+            Err(HttpMailboxError::TimeoutOutcomeUnknown)
+        ));
+        // Timeout cancels queued work; it must not later apply the abandoned request.
+        assert_eq!(
+            owner.service_one(|_| panic!("expired queued work")),
+            Ok(HttpService::Expired)
+        );
+        let fresh = client.submit(&request()).unwrap();
+        assert_eq!(owner.service_one(|_| reply()), Ok(HttpService::Replied));
+        assert!(fresh.wait().is_ok());
+        assert_eq!(client.diagnostics().lost_replies, 1);
     }
 }
