@@ -1,0 +1,4 @@
+Actual caller command:
+env 'CARGO_INCREMENTAL=0' cargo +nightly-2026-08-31 build --release --locked --offline -j1 --manifest-path toolchain/src/p05-runtime/Cargo.toml --target mips-unknown-linux-musl -Z 'build-std=core,alloc,std,panic_abort' --config 'target.mips-unknown-linux-musl.linker="toolchain/linker/zig-cc-mips-be"' --config 'target.mips-unknown-linux-musl.rustflags=["-C","target-feature=+crt-static","-C","link-self-contained=no"]'
+Outer environment: RCH_REQUIRE_REMOTE=1 RCH_ALLOW_FOREIGN_ARTIFACTS=1
+    Finished `release` profile [optimized] target(s) in 16m 40s

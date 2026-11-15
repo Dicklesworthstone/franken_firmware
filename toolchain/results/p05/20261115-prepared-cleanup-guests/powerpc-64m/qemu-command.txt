@@ -1,0 +1,1 @@
+qemu-system-ppc -M g3beige -cpu G3 -m 64M -nographic -no-reboot -nic none -kernel '$CAPTURE/vmlinux.runtime-snapshot' -initrd '$CAPTURE/runtime.cpio.gz' -append 'console=ttyPZ0,38400 rdinit=/init panic=-1'

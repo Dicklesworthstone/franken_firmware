@@ -1,0 +1,1 @@
+qemu-system-mips -M malta -cpu 24Kf -m 32M -nographic -no-reboot -nic none -kernel '$CAPTURE/vmlinux.runtime-snapshot' -initrd '$CAPTURE/runtime.cpio.gz' -append 'console=ttyS0,38400 rdinit=/init panic=-1'

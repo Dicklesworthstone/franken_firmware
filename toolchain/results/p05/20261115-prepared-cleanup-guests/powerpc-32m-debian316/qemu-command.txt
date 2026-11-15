@@ -1,0 +1,1 @@
+qemu-system-ppc -M g3beige -cpu G3 -m 32M -nographic -no-reboot -nic none -bios '$INPUTS/bios' -kernel '$INPUTS/kernel' -initrd '$INPUTS/initramfs' -append 'console=ttyPZ0,38400 rdinit=/init panic=-1'

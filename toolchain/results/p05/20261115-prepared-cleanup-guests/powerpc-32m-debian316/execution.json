@@ -1,0 +1,52 @@
+{
+  "stdout": "a26757419bb987e9075c652da11feb772d1759f4dde440f328d6734595f1e3e6",
+  "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "returncode": 0,
+  "stop_reason": null,
+  "elapsed_seconds": 4.200165415881202,
+  "input_hashes_unchanged": true,
+  "capture_method": "existing run-qemu-verification.py capture_guest; no wrapper kill on runtime END",
+  "command": [
+    "qemu-system-ppc",
+    "-M",
+    "g3beige",
+    "-cpu",
+    "G3",
+    "-m",
+    "32M",
+    "-nographic",
+    "-no-reboot",
+    "-nic",
+    "none",
+    "-bios",
+    "$INPUTS/bios",
+    "-kernel",
+    "$INPUTS/kernel",
+    "-initrd",
+    "$INPUTS/initramfs",
+    "-append",
+    "console=ttyPZ0,38400 rdinit=/init panic=-1"
+  ],
+  "profile": "candidate1a-ppc32-debian3.16-explicit-openbios",
+  "input_sha256": {
+    "kernel": "0e20e7ffd30fd89a2967131bd1d9100bb29384590a481ce4214f6c88c883b1c7",
+    "bios": "032884eab588cd8d45903ed7be718f7a23fecaa4fc45c2dbf18c1220f13218ef",
+    "initramfs": "f79122a037b3266f9d922cbd1db3a1f6c7f4fc38ec20c9596b1154cf757deff1",
+    "runtime": "68ed731c0044aceeb6b1bcd0691198ec4955f8b489485349cc57319388a9b1e3",
+    "supervisor": "faf5f35a17b11047092a907be5e3ae86097d82682fa44bdb0534b46235caf721",
+    "qemu": "c2f7edde06c77ac35f5a3a93b3848c8681eb000217048e88b86ff22883dc94bf"
+  },
+  "checker_sha256": {
+    "toolchain/src/measure-p05-target.py": "f5110ee4a3cd8242b0a7685b9968e1708b584dfb5b8d9dfaebfc7ed2dab48e76",
+    "toolchain/src/run-qemu-verification.py": "d0d6db9ad808c03fec3970378af593872e8dc813b63e866ecc1eefb8fa29f0f7",
+    "toolchain/src/mkinitramfs.py": "65d911f66097f466ff23aaaba85e18ffd77b6727f649b0eb54d6d19f0edb486b",
+    "toolchain/src/speaker_expect.py": "350abb73d8fe897159df133cec1e97ba55f10c64d44e2946d7ea0d558f9769d6",
+    "toolchain/src/platform_expect.py": "995bf9df395c445f5b3addeeccce456baa23a9e34a94aa284ec1134697cc8bd4"
+  },
+  "timeout_seconds": 600,
+  "capture_cap_bytes": 1048576,
+  "qemu_version": "QEMU emulator version 11.1.3",
+  "stdout_bytes": 18315,
+  "stderr_bytes": 0,
+  "scope": "One captured generic PPC32 guest; seven supplied-transcript analysis gates are separate from this execution record, never an invented eighth analyzer gate."
+}

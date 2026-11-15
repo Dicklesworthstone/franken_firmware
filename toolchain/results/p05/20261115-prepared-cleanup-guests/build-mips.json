@@ -1,0 +1,22 @@
+{
+  "native_job": "30109207290184222",
+  "command": "env 'CARGO_INCREMENTAL=0' cargo +nightly-2026-08-31 build --release --locked --offline -j1 --manifest-path toolchain/src/p05-runtime/Cargo.toml --target mips-unknown-linux-musl -Z 'build-std=core,alloc,std,panic_abort' --config 'target.mips-unknown-linux-musl.linker=\"toolchain/linker/zig-cc-mips-be\"' --config 'target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]'",
+  "command_sha256": "6ca8db087d0d63a421bff331de10b501604a7a6e81960857eca235c40de28655",
+  "command_exit_code": 0,
+  "strict_remote": true,
+  "terminal_acknowledged": true,
+  "original_source_receipt_sha256": "f2c65bd9cc6ddc068aebb62c4385bf8efcd377c86282d3477cbba4864855abcc",
+  "original_receipt_root": "57277733f5fcfc456e74640ebf377dd5905392b68d52a83a713155db52b039e4",
+  "original_content_root": "94cb26c27f252e189bdebdc209227272c4cb751004a96cc4d900ed99b4a10f8a",
+  "source_file_count": 1722,
+  "source_bytes": 53240400,
+  "all_source_files_compared_to_immutable_export": true,
+  "qualified_upstream_revision": "1a144aa5696f600665e083df601ae4974f6950b5",
+  "receipt_note": "Reduced public observation; original digests refer to private unmodified receipts, not this reduced JSON. Digest consistency is not a signature or independent compiler attestation.",
+  "custody": {
+    "sources_released": true,
+    "tree_retired": true,
+    "pair_released": true,
+    "retired": true
+  }
+}

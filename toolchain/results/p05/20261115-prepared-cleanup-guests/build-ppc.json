@@ -1,0 +1,22 @@
+{
+  "native_job": "30109207290184223",
+  "command": "env 'CARGO_INCREMENTAL=0' cargo +nightly-2026-08-31 build --release --locked --offline -j1 --manifest-path toolchain/src/p05-runtime/Cargo.toml --target powerpc-unknown-linux-musl -Z 'build-std=core,alloc,std,panic_abort' --config 'target.powerpc-unknown-linux-musl.linker=\"toolchain/linker/zig-cc-powerpc-be\"' --config 'target.powerpc-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]'",
+  "command_sha256": "d51d425ad4e4b401f0b116c1791d0171a78b6ebeedfafad34ac6de5f4c2aeebe",
+  "command_exit_code": 0,
+  "strict_remote": true,
+  "terminal_acknowledged": true,
+  "original_source_receipt_sha256": "65993222dce85c02f62934efddb25be75bc228c0160877c1025fd6256492cebe",
+  "original_receipt_root": "c40efade697c92ca26d0d317f9f829efc13147f1d06922a8f02c4907433394fa",
+  "original_content_root": "1ade812089f00b5c43c54ed81f7693d8e09fc76592aa626b54de1a95c1d7d29c",
+  "source_file_count": 1722,
+  "source_bytes": 53240400,
+  "all_source_files_compared_to_immutable_export": true,
+  "qualified_upstream_revision": "1a144aa5696f600665e083df601ae4974f6950b5",
+  "receipt_note": "Reduced public observation; original digests refer to private unmodified receipts, not this reduced JSON. Digest consistency is not a signature or independent compiler attestation.",
+  "custody": {
+    "sources_released": true,
+    "tree_retired": true,
+    "pair_released": true,
+    "retired": true
+  }
+}

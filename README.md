@@ -113,6 +113,7 @@ Evidence lives in `toolchain/results/` with committed serial logs.
 | asupersync legacy runtime on BE-PPC | | the initial `AtomicU64` compile blocker has been addressed; P05 remains open for its bounded-runtime acceptance and target evidence (`docs/contracts/p05.md`) |
 | Caller-driven Asupersync probe under the E07 supervisor | BE-MIPS and BE-PPC, 64 MiB generic QEMU guests | actual execution: both complete 30 operations with one observed process thread; [serial logs and receipts](toolchain/results/p05/20261109-caller-driven-guests/RUN.md) |
 | Same caller-driven probe at 32 MiB | BE-MIPS / BE-PPC | MIPS completes; PowerPC stops in the early Linux/Open Firmware allocation path before userspace and times out. The failed capture is retained; production RAM fit remains unqualified. |
+| New immutable prepared-cleanup consumer | BE-MIPS at 32/64 MiB; BE-PPC at 64 MiB and a separate Debian 3.16/OpenBIOS 32 MiB profile | Each completes 30 operations with twelve single-thread census samples. [Commands, serial logs and qualification limits](toolchain/results/p05/20261115-prepared-cleanup-guests/RUN.md). These generic guests do not qualify production RAM fit; the older 4.9/32 MiB failure remains recorded. |
 
 These are cross-build and emulation results on generic QEMU machines (Malta,
 g3beige). They show the toolchain and boot path work for the two big-endian
