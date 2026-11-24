@@ -27,6 +27,47 @@ generations (S1 and S2), one target codebase.
 
 ---
 
+## Build and test
+
+Start with the host executable. Use a Linux host or VM with a C linker, Git,
+Python 3.11+ and [rustup](https://rust-lang.org/install). The
+[complete build guide](docs/BUILDING.md) includes fresh Ubuntu setup, an exact
+source revision, release builds, feature selection, tests, and the optional
+MIPS/PowerPC cross-build and QEMU recipes.
+
+```bash
+git clone https://github.com/Dicklesworthstone/franken_firmware.git
+cd franken_firmware
+rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+cargo +1.99.0 fetch --locked
+cargo +1.99.0 build --locked --workspace --target-dir target
+./target/debug/franken-speaker --catalog
+./target/debug/franken-speaker --services
+```
+
+The catalog command prints JSON; the service report describes the selected
+features. These commands need no Sonos firmware, `.aa` files, private captures,
+QEMU, or sibling repository checkout. Keep the committed `Cargo.lock`: `--locked`
+refuses dependency drift. For an exact source replay, use the revision in the
+guide before building.
+
+To exercise the host workspace, including the opt-in harness and journal worker:
+
+```bash
+cargo +1.99.0 test --locked --workspace --target-dir target \
+  --features franken-speaker/harness,franken-speaker/journal-process \
+  -- --test-threads=1
+```
+
+The Cargo commands above describe a human-operated build. Agents and the
+maintainer verification workflow must use the strict remote execution policy
+in [AGENTS.md](AGENTS.md); see [remote verification](docs/BUILDING.md#remote-verification).
+
+For QEMU, follow [the bootstrap recipe](docs/BUILDING.md#qemu-bootstrap).
+It boots a repository-built PID-1 probe on generic Malta and g3beige machines.
+The repository does not provide an emulated Sonos board or a ready-made Sonos
+speaker on the LAN.
+
 ## Why
 
 Sonos hardware lasts for years; the software around it does not keep up. The
